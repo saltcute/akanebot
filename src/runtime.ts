@@ -51,6 +51,8 @@ export type RuntimeOptions = {
     memoryStore: MemoryStore;
     embedder: Embedder;
     memorySettings: MemorySettings;
+    /** Reads and decides, but never posts anything. */
+    shadow?: boolean;
 };
 
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
@@ -82,7 +84,7 @@ export class Runtime {
         this.#adapters = new Map(options.adapters.map((adapter) => [adapter.platform, adapter]));
         this.#gateRng = options.rng.fork("gate");
         this.#competenceRng = options.rng.fork("competence");
-        this.guard = new SendGuard({ clock: options.clock, trace: options.trace, limits: options.limits });
+        this.guard = new SendGuard({ clock: options.clock, trace: options.trace, limits: options.limits, shadow: options.shadow ?? false });
         const attend: Attend = (lease) => this.#attend(lease);
         this.body = new BodyActor({ clock: options.clock, trace: options.trace, attend });
         this.#persona = options.persona;
@@ -235,7 +237,7 @@ export class Runtime {
         const outcome = await this.guard.sendUrgent(channel.adapter, channel.ref, text);
         if (outcome.kind === "sent") {
             channel.perception.recordOwn(ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), this.#persona.name));
-        } else {
+        } else if (!(outcome.kind === "blocked" && outcome.reason === "shadow")) {
             this.#alert("crisis_send_failed", { channel: key, outcome });
         }
     }
@@ -349,6 +351,10 @@ export class Runtime {
         lease.setState("sending");
         for (const text of bursts) {
             const outcome = await this.guard.send(channel.adapter, channel.ref, text, { signal: lease.signal });
+            if (outcome.kind === "blocked" && outcome.reason === "shadow") {
+                perception.settle(seenSeq);
+                continue;
+            }
             if (outcome.kind !== "sent") return;
             // Settled on the first send, so a reply cut short partway is never answered a second time.
             perception.settle(seenSeq);

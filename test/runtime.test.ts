@@ -32,6 +32,7 @@ type Setup = {
     store?: MemoryControlStore;
     extract?: FakeResponder;
     memoryStore?: MemoryStore;
+    shadow?: boolean;
 };
 
 const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
@@ -124,6 +125,7 @@ async function setup(options: Setup) {
         memoryStore,
         embedder: new NullEmbedder(),
         memorySettings: { segmentGapMs: 20 * 60_000, maxSegmentMessages: 60, rawRetentionMs: 30 * 86_400_000, dailyWritesPerUser: 30 },
+        ...(options.shadow ? { shadow: true } : {}),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -657,5 +659,34 @@ describe("memory in the running agent", () => {
         const { settle, trace } = await setup({ memoryStore, persona: { timezone: "UTC" } });
         await settle(2 * 86_400_000);
         expect(trace.ofKind("memory.consolidated")).toHaveLength(2);
+    });
+});
+
+describe("shadow mode", () => {
+    it("decides and composes but posts nothing, and shows what it would have said", async () => {
+        const { adapter, reply, trace, settle } = await setup({ shadow: true });
+        adapter.say("alice", "hi");
+        await settle();
+        expect(reply.calls).toHaveLength(1);
+        expect(adapter.sent).toEqual([]);
+        expect(trace.ofKind("send.shadow").map((event) => event.detail?.text)).toEqual(["哈哈"]);
+    });
+
+    it("treats a message as dealt with, and leaves unsent words out of the conversation", async () => {
+        const { adapter, reply, settle } = await setup({ shadow: true });
+        adapter.say("alice", "one");
+        await settle();
+        adapter.say("alice", "two");
+        await settle();
+        expect(chatLines(reply.calls[1]?.transcript)).toEqual(["alice: one", "--- new ---", "alice: two"]);
+    });
+
+    it("doesn't post crisis responses or command confirmations either", async () => {
+        const { adapter, trace, settle } = await setup({ shadow: true });
+        adapter.say("alice", "我真的不想活了");
+        adapter.say("admin", "/gabriel status");
+        await settle();
+        expect(adapter.sent).toEqual([]);
+        expect(trace.ofKind("alert").map((event) => event.detail?.reason)).not.toContain("crisis_send_failed");
     });
 });

@@ -17,7 +17,7 @@ export type GuardLimits = {
 
 export type Observation = "new" | "duplicate" | "self_echo" | "backlog";
 
-type BlockReason = "aborted" | "rate_limited" | "share_breaker" | "bot_loop";
+type BlockReason = "aborted" | "rate_limited" | "share_breaker" | "bot_loop" | "shadow";
 type Speaker = "self" | "bot" | "human";
 
 export type SendOutcome =
@@ -39,13 +39,15 @@ export class SendGuard {
     #recent = new Map<string, Speaker[]>();
     #tokens: number;
     #lastRefill: number;
+    #shadow: boolean;
 
-    constructor(options: { clock: Clock; trace: DecisionTrace; limits: GuardLimits }) {
+    constructor(options: { clock: Clock; trace: DecisionTrace; limits: GuardLimits; shadow?: boolean }) {
         this.#clock = options.clock;
         this.#trace = options.trace;
         this.#limits = options.limits;
         this.#tokens = options.limits.bucketCapacity;
         this.#lastRefill = options.clock.now();
+        this.#shadow = options.shadow ?? false;
     }
 
     /** Classifies an incoming event. Only "new" messages may reach perception. */
@@ -75,6 +77,10 @@ export class SendGuard {
 
     async #deliver(adapter: Adapter, channel: ChannelRef, text: string, options: SendOptions): Promise<SendOutcome> {
         const key = channelKey(channel);
+        if (this.#shadow) {
+            this.#trace.record("send.shadow", { channel: key, detail: { text } });
+            return { kind: "blocked", reason: "shadow" };
+        }
         try {
             const { messageId } = await adapter.send(channel, text, options);
             this.#remember(ownKey(channel, messageId));
