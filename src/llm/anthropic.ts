@@ -1,0 +1,97 @@
+// biome-ignore-all lint/style/useNamingConvention: these objects are the Anthropic API wire format
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import type { ZodType } from "zod";
+import type { BackendCapabilities, LlmBackend, LlmRequest, LlmResult, Usage } from "./backend.ts";
+import type { BackendFactory } from "./registry.ts";
+
+const REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/** `effort`, `thinking` and `refusalFallback` come from the role's `options` in config. */
+export class AnthropicBackend implements LlmBackend {
+    readonly capabilities: BackendCapabilities = { promptCache: true, structured: "native", trailingSystem: true };
+    #client: Anthropic;
+    #model: string;
+
+    constructor(client: Anthropic, model: string) {
+        this.#client = client;
+        this.#model = model;
+    }
+
+    async generate<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
+        try {
+            const message = await this.#send(request);
+            return toResult(message, request.schema);
+        } catch (error) {
+            return toError(error);
+        }
+    }
+
+    #send<T>(request: LlmRequest<T>): Promise<Anthropic.Message> {
+        const { effort, thinking, refusalFallback } = request.options;
+        const outputConfig = {
+            ...(effort ? { effort } : {}),
+            ...(request.schema ? { format: zodOutputFormat(request.schema as never) } : {}),
+        };
+        const messages: unknown[] = [{ role: "user", content: request.transcript }];
+        // A trailing system message carries the changing state without disturbing the cached prefix.
+        if (request.volatile) messages.push({ role: "system", content: request.volatile });
+        const params = {
+            model: this.#model,
+            max_tokens: request.maxOutput,
+            ...(request.stable ? { system: [{ type: "text", text: request.stable, cache_control: { type: "ephemeral" } }] } : {}),
+            ...(Object.keys(outputConfig).length > 0 ? { output_config: outputConfig } : {}),
+            ...(thinking ? { thinking } : {}),
+            messages,
+        };
+        const callOptions = { signal: request.signal, timeout: REQUEST_TIMEOUT_MS };
+        if (refusalFallback) {
+            const beta = { ...params, fallbacks: "default", betas: [REFUSAL_FALLBACK_BETA] };
+            return this.#client.beta.messages.create(beta as never, callOptions) as unknown as Promise<Anthropic.Message>;
+        }
+        return this.#client.messages.create(params as never, callOptions) as unknown as Promise<Anthropic.Message>;
+    }
+}
+
+export const anthropicFactory: BackendFactory = (_config, model) => new AnthropicBackend(new Anthropic(), model);
+
+function toResult<T>(message: Anthropic.Message, schema: ZodType<T> | undefined): LlmResult<T> {
+    const usage = toUsage(message.usage);
+    if (message.stop_reason === "refusal") return { kind: "refused", usage };
+    if (message.stop_reason === "max_tokens") return { kind: "truncated", usage };
+    const text = message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+    if (!schema) return { kind: "ok", text, usage };
+    let raw: unknown;
+    try {
+        raw = JSON.parse(text);
+    } catch {
+        return { kind: "error", retryable: false, detail: "structured response was not JSON" };
+    }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) return { kind: "error", retryable: false, detail: `structured response failed its schema: ${parsed.error.message}` };
+    return { kind: "ok", text, data: parsed.data, usage };
+}
+
+function toUsage(usage: Anthropic.Usage): Usage {
+    return {
+        // Cache writes count as plain input here, which slightly understates their cost.
+        inputTokens: usage.input_tokens + (usage.cache_creation_input_tokens ?? 0),
+        cachedInputTokens: usage.cache_read_input_tokens ?? 0,
+        outputTokens: usage.output_tokens,
+    };
+}
+
+function toError<T>(error: unknown): LlmResult<T> {
+    if (error instanceof Anthropic.APIUserAbortError) return { kind: "error", retryable: false, detail: "aborted" };
+    if (error instanceof Anthropic.APIConnectionError) return { kind: "error", retryable: true, detail: error.message };
+    if (error instanceof Anthropic.APIError) {
+        const status = error.status ?? 0;
+        return {
+            kind: "error",
+            retryable: status === 408 || status === 409 || status === 429 || status >= 500,
+            detail: `${status}: ${error.message}`,
+        };
+    }
+    return { kind: "error", retryable: false, detail: String(error) };
+}
