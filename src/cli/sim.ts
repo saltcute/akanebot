@@ -137,7 +137,7 @@ console.log(
     `Type "name: message" to speak as someone, or just a message to speak as "you". @${persona.name} or @${persona.aliases[0] ?? persona.name} addresses it.`,
 );
 console.log(
-    `Commands: /close ends the conversation so it gets remembered, /sleep runs the nightly job, /memories, /why [id], /cost, /trace, /verbose, /away, /back, /quit. Control, typed as "admin: ...": ${config.control.commandPrefix} mute|unmute|kill|resume|status\n`,
+    `Commands: /react <name> <emoji> reacts to her last message, /close ends the conversation so it gets remembered, /sleep runs the nightly job, /memories, /why [id], /cost, /trace, /verbose, /away, /back, /quit. Control, typed as "admin: ...": ${config.control.commandPrefix} mute|unmute|kill|resume|status\n`,
 );
 
 const input = createInterface({ input: process.stdin });
@@ -145,7 +145,11 @@ for await (const raw of input) {
     const line = raw.trim();
     if (line === "") continue;
     if (line === "/quit") break;
-    if (line === "/close") {
+    if (line.startsWith("/react ")) {
+        const [, speaker, emoji] = line.split(/\s+/);
+        const lastSent = adapter.sent.at(-1);
+        if (speaker && emoji && lastSent) adapter.reactFrom(speaker, lastSent.messageId, emoji);
+    } else if (line === "/close") {
         await runtime.memory.closeSegment("cli:group");
     } else if (line === "/sleep") {
         console.log(await runtime.memory.consolidateNow());

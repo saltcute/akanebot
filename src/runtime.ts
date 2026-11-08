@@ -1,4 +1,4 @@
-import type { Adapter, ChannelRef, ChatMessage, Platform } from "./adapters/types.ts";
+import type { Adapter, ChannelRef, ChatMessage, Platform, ReactionEvent } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type Lease } from "./body/actor.ts";
 import { dayState } from "./body/life.ts";
@@ -180,7 +180,14 @@ export class Runtime {
     }
 
     async start(): Promise<void> {
-        await Promise.all(this.#options.adapters.map((adapter) => adapter.start((message) => this.#onMessage(message))));
+        await Promise.all(
+            this.#options.adapters.map((adapter) =>
+                adapter.start(
+                    (message) => this.#onMessage(message),
+                    (event) => this.#onReaction(event),
+                ),
+            ),
+        );
         this.memory.start();
         this.#routine?.start();
     }
@@ -240,7 +247,10 @@ export class Runtime {
 
     #forgetUser(user: string): void {
         this.memory.forgetUser(user);
-        for (const channel of this.#channels.values()) channel.perception.purge((message) => userKey(message) === user);
+        for (const channel of this.#channels.values()) {
+            channel.perception.purge((message) => userKey(message) === user);
+            channel.perception.purgeReactionsBy(user);
+        }
     }
 
     #admit(channel: Channel, message: ChatMessage): void {
@@ -311,6 +321,21 @@ export class Runtime {
         } else if (!(outcome.kind === "blocked" && outcome.reason === "shadow")) {
             this.#alert("crisis_send_failed", { channel: key, outcome });
         }
+    }
+
+    /** Reactions are context for the next time it reads the chat. They never wake it up. */
+    #onReaction(event: ReactionEvent): void {
+        const key = channelKey(event);
+        if (event.isSelf || this.#state.killed || !this.#allowedChannels.has(key)) return;
+        const user = `${event.platform}:${event.reactor.id}`;
+        if (this.#state.isOptedOut(user)) return;
+        const reaction = { emoji: event.emoji, by: event.reactor.displayName, byUser: user };
+        const noted = this.#channel(event).perception.noteReaction(event.messageId, reaction, event.removed);
+        this.#options.trace.record("reaction.seen", {
+            channel: key,
+            messageId: event.messageId,
+            detail: { emoji: event.emoji, noted, removed: event.removed },
+        });
     }
 
     #channel(ref: ChannelRef): Channel {

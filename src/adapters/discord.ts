@@ -1,5 +1,5 @@
-import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
-import type { Adapter, ChannelRef, ChatMessage, SendOptions } from "./types.ts";
+import { Client, Events, GatewayIntentBits, type Message, type MessageReaction, Partials, type User } from "discord.js";
+import type { Adapter, ChannelRef, ChatMessage, ReactionEvent, SendOptions } from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
@@ -47,8 +47,41 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
     };
 }
 
+/** Works on partial objects: a reaction may be on a message the client has never cached. */
+export function toReactionEvent(
+    reaction: Pick<MessageReaction, "emoji" | "message">,
+    user: User,
+    selfId: string,
+    removed: boolean,
+): ReactionEvent | undefined {
+    const emoji = reaction.emoji.name;
+    if (!emoji || !reaction.message.guildId) return undefined;
+    return {
+        platform: "discord",
+        channelId: reaction.message.channelId,
+        messageId: reaction.message.id,
+        emoji,
+        reactor: {
+            id: user.id,
+            displayName: reaction.message.guild?.members.cache.get(user.id)?.displayName ?? user.displayName,
+            isBot: Boolean(user.bot),
+        },
+        isSelf: user.id === selfId,
+        removed,
+    };
+}
+
 export function createDiscordClient(): Client {
-    return new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+    return new Client({
+        intents: [
+            GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.MessageContent,
+            GatewayIntentBits.GuildMessageReactions,
+        ],
+        // Without these, reactions on messages sent before the bot started are never delivered.
+        partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
+    });
 }
 
 export class DiscordAdapter implements Adapter {
@@ -67,8 +100,24 @@ export class DiscordAdapter implements Adapter {
         return this.#client.user?.tag;
     }
 
-    async start(onMessage: (message: ChatMessage) => void): Promise<void> {
+    async start(onMessage: (message: ChatMessage) => void, onReaction?: (event: ReactionEvent) => void): Promise<void> {
         const client = this.#client;
+        const handleReaction = async (
+            reaction: Pick<MessageReaction, "emoji" | "message">,
+            user: User | { partial: true; fetch(): Promise<User> },
+            removed: boolean,
+        ) => {
+            try {
+                const selfId = client.user?.id;
+                const fullUser = user.partial ? await user.fetch() : user;
+                const event = selfId ? toReactionEvent(reaction, fullUser, selfId, removed) : undefined;
+                if (event) onReaction?.(event);
+            } catch (error) {
+                this.#onStatus("reaction_failed", String(error));
+            }
+        };
+        client.on(Events.MessageReactionAdd, (reaction, user) => void handleReaction(reaction, user as User, false));
+        client.on(Events.MessageReactionRemove, (reaction, user) => void handleReaction(reaction, user as User, true));
         client.on(Events.MessageCreate, (message) => {
             try {
                 const selfId = client.user?.id;

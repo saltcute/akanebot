@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../adapters/types.ts";
+import type { ChatMessage, MessageReaction } from "../adapters/types.ts";
 import type { Candidate } from "../body/actor.ts";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
 
@@ -69,6 +69,22 @@ export class ChannelPerception {
 
     purge(shouldRemove: (message: ChatMessage) => boolean): void {
         this.#window = this.#window.filter((entry) => !shouldRemove(entry.message));
+    }
+
+    /** Attaches to the message rather than adding a line, so a pile of reactions can't push real chat out of the window. */
+    noteReaction(messageId: string, reaction: MessageReaction, removed: boolean): boolean {
+        const entry = this.#window.find((candidate) => candidate.message.messageId === messageId);
+        if (!entry) return false;
+        const others = (entry.message.reactions ?? []).filter((item) => item.emoji !== reaction.emoji || item.byUser !== reaction.byUser);
+        entry.message = { ...entry.message, reactions: removed ? others : [...others, reaction] };
+        return true;
+    }
+
+    purgeReactionsBy(user: string): void {
+        for (const entry of this.#window) {
+            if (entry.message.reactions)
+                entry.message = { ...entry.message, reactions: entry.message.reactions.filter((item) => item.byUser !== user) };
+        }
     }
 
     window(): readonly ChatMessage[] {

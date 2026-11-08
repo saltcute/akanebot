@@ -1,6 +1,6 @@
-import type { Client, Message } from "discord.js";
+import { type Client, GatewayIntentBits, type Message, type MessageReaction, Partials, type User } from "discord.js";
 import { describe, expect, it } from "vitest";
-import { DiscordAdapter, toChatMessage } from "../src/adapters/discord.ts";
+import { createDiscordClient, DiscordAdapter, toChatMessage, toReactionEvent } from "../src/adapters/discord.ts";
 
 const SELF = "999";
 
@@ -95,6 +95,55 @@ describe("toChatMessage", () => {
 
     it("skips messages with nothing to read", () => {
         expect(toChatMessage(discordMessage({ cleanContent: "" }), SELF)).toBeUndefined();
+    });
+});
+
+describe("toReactionEvent", () => {
+    const user = { id: "u1", bot: false, displayName: "global name" } as unknown as User;
+    const reactionOn = (overrides: Record<string, unknown> = {}, emojiName: string | null = "👍") =>
+        ({
+            emoji: { name: emojiName },
+            message: {
+                id: "m1",
+                channelId: "c1",
+                guildId: "g1",
+                guild: { members: { cache: new Map([["u1", { displayName: "server nick" }]]) } },
+                ...overrides,
+            },
+        }) as unknown as MessageReaction;
+
+    it("maps a reaction, preferring the server nickname", () => {
+        expect(toReactionEvent(reactionOn(), user, SELF, false)).toEqual({
+            platform: "discord",
+            channelId: "c1",
+            messageId: "m1",
+            emoji: "👍",
+            reactor: { id: "u1", displayName: "server nick", isBot: false },
+            isSelf: false,
+            removed: false,
+        });
+    });
+
+    it("works when the message was never cached", () => {
+        expect(toReactionEvent(reactionOn({ guild: null }), user, SELF, false)?.reactor.displayName).toBe("global name");
+    });
+
+    it("flags its own reactions and removals", () => {
+        const self = { id: SELF, bot: true, displayName: "me" } as unknown as User;
+        expect(toReactionEvent(reactionOn(), self, SELF, true)).toMatchObject({ isSelf: true, removed: true });
+    });
+
+    it("ignores direct messages and reactions it can't name", () => {
+        expect(toReactionEvent(reactionOn({ guildId: null }), user, SELF, false)).toBeUndefined();
+        expect(toReactionEvent(reactionOn({}, null), user, SELF, false)).toBeUndefined();
+    });
+});
+
+describe("createDiscordClient", () => {
+    it("asks for reaction events and tolerates uncached messages", () => {
+        const client = createDiscordClient();
+        expect(client.options.intents.has(GatewayIntentBits.GuildMessageReactions)).toBe(true);
+        expect(client.options.partials).toEqual(expect.arrayContaining([Partials.Message, Partials.Reaction, Partials.User]));
     });
 });
 

@@ -8,6 +8,7 @@ export const NEW_MESSAGES_MARKER = "--- new ---";
 
 const MAX_NAME_CHARS = 32;
 const MAX_LOOKUP_CHARS = 400;
+const MAX_REACTIONS_SHOWN = 6;
 const MAX_REACTION_QUOTE_CHARS = 40;
 export const OWN_REACTION_PREFIX = "[reacted";
 
@@ -29,6 +30,7 @@ How to behave:
 - A line reading ${NEW_MESSAGES_MARKER} separates what you've already seen from what's new. You already answered or chose to let go of everything above it, so respond only to what's below it. Don't go back and answer older messages unless the new ones bring them up.
 - <memories>, when present, is what happens to come to mind. It's fuzzy, like anyone's memory, and may be wrong or incomplete. Don't recite it, only bring something up if it's natural, and if you can't remember something, just say so.
 - A line from you like ${OWN_REACTION_PREFIX} 👍 to alice: "..."] means you put that emoji reaction on their message. You did that and you remember doing it. It's an action, so never type that format yourself.
+- {reactions: 👍 alice} after a message means those people put that emoji on it. Reactions are something you can see, not something anyone said.
 - <lookup>, when present, is what you just skimmed online. You only half understand it. Use it in your own words and never cite it or paste a link.
 - <people>, when present, is how you feel about who's talking. Let it shape your tone and never mention it.
 - Don't repeat a joke or phrase you used a moment ago, though you do have your usual verbal habits.
@@ -51,10 +53,17 @@ export function renderTranscript(window: readonly ChatMessage[], persona: Person
     const formatTime = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, hour: "2-digit", minute: "2-digit" });
     const lines = window.map((message) => {
         const name = message.isSelf ? `${persona.name} (you)` : sanitizeName(message.sender.displayName);
-        return `[${formatTime.format(message.sentAt)}] ${name}: ${skim(message.text, persona.maxCharsRead)}`;
+        return `[${formatTime.format(message.sentAt)}] ${name}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
     });
     if (firstNewIndex > 0) lines.splice(firstNewIndex, 0, NEW_MESSAGES_MARKER);
     return `<chat>\n${lines.join("\n")}\n</chat>`;
+}
+
+function renderReactions(reactions: ChatMessage["reactions"]): string {
+    if (!reactions?.length) return "";
+    const shown = reactions.slice(0, MAX_REACTIONS_SHOWN).map(({ emoji, by }) => `${sanitizeName(emoji)} ${sanitizeName(by)}`);
+    const more = reactions.length - shown.length;
+    return ` {reactions: ${shown.join(", ")}${more > 0 ? `, and ${more} more` : ""}}`;
 }
 
 /** How the agent's own emoji reaction appears in its view of the chat. */

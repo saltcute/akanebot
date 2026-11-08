@@ -1,5 +1,5 @@
 import type { Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, SendOptions } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, ReactionEvent, SendOptions } from "./types.ts";
 
 const SELF_ID = "gabriel";
 
@@ -13,6 +13,7 @@ export class CliAdapter implements Adapter {
     readonly #mentions: readonly string[];
     readonly #print: (line: string) => void;
     #onMessage: ((message: ChatMessage) => void) | undefined;
+    #onReaction: ((event: ReactionEvent) => void) | undefined;
     #nextId = 1;
 
     constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void }) {
@@ -22,8 +23,9 @@ export class CliAdapter implements Adapter {
         this.#print = options.print ?? (() => {});
     }
 
-    async start(onMessage: (message: ChatMessage) => void): Promise<void> {
+    async start(onMessage: (message: ChatMessage) => void, onReaction?: (event: ReactionEvent) => void): Promise<void> {
         this.#onMessage = onMessage;
+        this.#onReaction = onReaction;
     }
 
     async stop(): Promise<void> {
@@ -52,6 +54,19 @@ export class CliAdapter implements Adapter {
             isBacklog: false,
         });
         return messageId;
+    }
+
+    /** Someone in the simulated group reacts to a message. */
+    reactFrom(speaker: string, messageId: string, emoji: string, removed = false, channelId = "group"): void {
+        this.#onReaction?.({
+            platform: this.platform,
+            channelId,
+            messageId,
+            emoji,
+            reactor: { id: speaker, displayName: speaker, isBot: false },
+            isSelf: false,
+            removed,
+        });
     }
 
     async send(channel: ChannelRef, text: string, options: SendOptions = {}): Promise<{ messageId: string }> {
