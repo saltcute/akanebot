@@ -49,7 +49,13 @@ const rng = new Rng(clock.now());
 let verbose = true;
 const trace = new DecisionTrace(clock, { sink: (event) => verbose && printTraceEvent(event) });
 const cost = new CostMeter({ clock, prices: config.prices, dailyBudgetUsd: config.dailyBudgetUsd });
-const adapter = new CliAdapter({ clock, selfName: persona.name, aliases: persona.aliases, print: (line) => console.log(line) });
+const adapter = new CliAdapter({
+    clock,
+    selfName: persona.name,
+    aliases: persona.aliases,
+    print: (line) => console.log(line),
+    idPrefix: `${clock.now().toString(36)}-`,
+});
 
 const fakeFactory: BackendFactory = (_config, model) =>
     new FakeBackend((request) => {

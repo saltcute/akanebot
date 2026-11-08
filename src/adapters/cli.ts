@@ -10,15 +10,18 @@ export class CliAdapter implements Adapter {
     readonly reactions: { messageId: string; emoji: string }[] = [];
     readonly #clock: Clock;
     readonly #selfName: string;
+    /** Keeps IDs unique across simulator runs that share a database. */
+    readonly #idPrefix: string;
     readonly #mentions: readonly string[];
     readonly #print: (line: string) => void;
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #onReaction: ((event: ReactionEvent) => void) | undefined;
     #nextId = 1;
 
-    constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void }) {
+    constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void; idPrefix?: string }) {
         this.#clock = options.clock;
         this.#selfName = options.selfName;
+        this.#idPrefix = options.idPrefix ?? "";
         this.#mentions = [options.selfName, ...(options.aliases ?? [])].map((name) => `@${name.toLowerCase()}`);
         this.#print = options.print ?? (() => {});
     }
@@ -34,7 +37,7 @@ export class CliAdapter implements Adapter {
 
     /** Someone in the simulated group says something. Returns the new message's ID. */
     say(speaker: string, rawText: string, channelId = "group"): string {
-        const messageId = `m${this.#nextId++}`;
+        const messageId = `${this.#idPrefix}m${this.#nextId++}`;
         // "[img:https://...]" stands in for attaching a picture.
         const images = [...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : []));
         const text = rawText.replace(/\[img:\S+?\]/g, "[image]");
@@ -70,7 +73,7 @@ export class CliAdapter implements Adapter {
     }
 
     async send(channel: ChannelRef, text: string, options: SendOptions = {}): Promise<{ messageId: string }> {
-        const messageId = `m${this.#nextId++}`;
+        const messageId = `${this.#idPrefix}m${this.#nextId++}`;
         this.sent.push({
             channelId: channel.channelId,
             text,
