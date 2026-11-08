@@ -8,7 +8,7 @@ import { Rng } from "./lib/rng.ts";
 import { DecisionTrace } from "./lib/trace.ts";
 import { appendTraceEvent, deleteTracesBefore } from "./lib/trace-file.ts";
 import { createEmbedder } from "./llm/embedder.ts";
-import { BACKEND_FACTORIES } from "./llm/factories.ts";
+import { BACKEND_FACTORIES, createSearchBackend } from "./llm/factories.ts";
 import { LlmRegistry } from "./llm/registry.ts";
 import { TRACE_DIRECTORY } from "./main-settings.ts";
 import { MemoryStore } from "./memory/store.ts";
@@ -74,6 +74,7 @@ const runtime = new Runtime({
     shadow: config.shadow,
     pacing: config.pacing,
     routine: true,
+    search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
 });
 
 const stopWatching = watchPersona({

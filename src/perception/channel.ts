@@ -62,6 +62,11 @@ export class ChannelPerception {
         if (this.#window.length > this.#timing.windowSize) this.#window.shift();
     }
 
+    /** Swaps a message's text for a richer version, such as once a picture has been looked at. */
+    annotate(messageId: string, text: string): void {
+        for (const entry of this.#window) if (entry.message.messageId === messageId) entry.message = { ...entry.message, text };
+    }
+
     purge(shouldRemove: (message: ChatMessage) => boolean): void {
         this.#window = this.#window.filter((entry) => !shouldRemove(entry.message));
     }

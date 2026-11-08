@@ -11,7 +11,8 @@ import { decideToSpeak } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
-import { AnthropicBackend } from "../src/llm/anthropic.ts";
+import { AnthropicBackend, AnthropicSearch } from "../src/llm/anthropic.ts";
+import type { Usage } from "../src/llm/backend.ts";
 import { loadPersona, parsePersona } from "../src/persona/loader.ts";
 import { exceedsCodeLimit, toBursts } from "../src/reply/bursts.ts";
 import { renderReplyInstructions, renderTranscript } from "../src/reply/prompt.ts";
@@ -294,8 +295,66 @@ describe("AnthropicBackend", () => {
         expect(fallback.calls).toHaveLength(0);
     });
 
+    it("passes images along with the text", async () => {
+        const { llm, calls } = backend(text("一只猫"));
+        await llm.generate({ ...request, images: [{ url: "https://x/y.png" }] });
+        const first = (calls[0]?.messages as unknown[] | undefined)?.[0];
+        expect(first).toEqual({
+            role: "user",
+            content: [
+                { type: "image", source: { type: "url", url: "https://x/y.png" } },
+                { type: "text", text: "chat" },
+            ],
+        });
+    });
+
     it("turns unexpected exceptions into a result instead of throwing", async () => {
         const client = { messages: { create: async () => Promise.reject(new Error("boom")) } } as unknown as Anthropic;
         await expect(new AnthropicBackend(client, "m").generate(request)).resolves.toMatchObject({ kind: "error", retryable: false });
+    });
+});
+
+describe("AnthropicSearch", () => {
+    const signal = new AbortController().signal;
+    const usage = { input_tokens: 10, output_tokens: 7, server_tool_use: { web_search_requests: 2 } };
+
+    function run(message: unknown) {
+        const seen: Usage[] = [];
+        const calls: Record<string, unknown>[] = [];
+        const client = {
+            messages: {
+                create: async (params: Record<string, unknown>) => {
+                    calls.push(params);
+                    return message;
+                },
+            },
+        } as unknown as Anthropic;
+        return { calls, seen, search: new AnthropicSearch({ client, model: "m", maxUses: 2, onUsage: (u) => seen.push(u) }) };
+    }
+
+    it("keeps only the text after the last search, and counts the searches", async () => {
+        const { search, seen, calls } = run({
+            stop_reason: "end_turn",
+            usage,
+            content: [
+                { type: "text", text: "let me check" },
+                { type: "web_search_tool_result", content: [] },
+                { type: "text", text: "the gist" },
+            ],
+        });
+        await expect(search.search("topic", signal)).resolves.toEqual({ kind: "found", note: "the gist" });
+        expect(seen[0]?.webSearches).toBe(2);
+        expect(calls[0]).toMatchObject({ tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 2 }] });
+    });
+
+    it("reports nothing on an unfinished turn, an empty note or an error", async () => {
+        await expect(run({ stop_reason: "pause_turn", usage, content: [] }).search.search("t", signal)).resolves.toEqual({ kind: "nothing" });
+        await expect(run({ stop_reason: "end_turn", usage, content: [{ type: "text", text: " " }] }).search.search("t", signal)).resolves.toEqual({
+            kind: "nothing",
+        });
+        const client = { messages: { create: async () => Promise.reject(new Error("x")) } } as unknown as Anthropic;
+        await expect(new AnthropicSearch({ client, model: "m", maxUses: 1, onUsage: () => {} }).search("t", signal)).resolves.toEqual({
+            kind: "nothing",
+        });
     });
 });

@@ -7,7 +7,7 @@ import { CostMeter } from "../lib/cost.ts";
 import { Rng } from "../lib/rng.ts";
 import { DecisionTrace } from "../lib/trace.ts";
 import { createEmbedder, NullEmbedder } from "../llm/embedder.ts";
-import { BACKEND_FACTORIES } from "../llm/factories.ts";
+import { BACKEND_FACTORIES, createSearchBackend } from "../llm/factories.ts";
 import { FakeBackend } from "../llm/fake.ts";
 import { type BackendFactory, LlmRegistry, llmConfigSchema } from "../llm/registry.ts";
 import { MemoryStore } from "../memory/store.ts";
@@ -29,6 +29,8 @@ const CANNED_GATE = JSON.stringify({
     highStakes: false,
     possibleCrisis: false,
     towardMe: "neutral",
+    lookUp: "",
+    quickReaction: "",
     privateThought: "(fake backend)",
 });
 
@@ -52,6 +54,7 @@ const adapter = new CliAdapter({ clock, selfName: persona.name, aliases: persona
 const fakeFactory: BackendFactory = (_config, model) =>
     new FakeBackend((request) => {
         if (model === "scripted-crisis") return "(fake crisis response)";
+        if (model === "scripted-vision") return "(a picture)";
         if (model === "scripted-extract") return JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
         if (model === "scripted-consolidate") return JSON.stringify({ replaced: [] });
         if (model !== "scripted-gate") return JSON.stringify({ messages: [rng.pick(CANNED_REPLIES)] });
@@ -66,6 +69,7 @@ const llm = useFake
                   reply: { backend: "fake", model: "scripted" },
                   technical: { backend: "fake", model: "scripted" },
                   crisis: { backend: "fake", model: "scripted-crisis" },
+                  vision: { backend: "fake", model: "scripted-vision" },
                   extract: { backend: "fake", model: "scripted-extract" },
                   consolidate: { backend: "fake", model: "scripted-consolidate" },
               },
@@ -95,6 +99,7 @@ const runtime = new Runtime({
     controlStore: new MemoryControlStore(),
     // Off by default so you can test at any hour and without waiting.
     routine: process.argv.includes("--routine"),
+    ...(useFake ? {} : { search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)) }),
     ...(process.argv.includes("--paced") ? { pacing: config.pacing } : {}),
     // A separate database, so testing here never touches what the live bot remembers.
     memoryStore: new MemoryStore(useFake ? ":memory:" : SIM_DATABASE),

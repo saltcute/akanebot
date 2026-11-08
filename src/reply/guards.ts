@@ -70,6 +70,24 @@ export class SendGuard {
         return this.#deliver(adapter, channel, text, options);
     }
 
+    /** A reaction counts against the rate limit but not as talking. */
+    async react(adapter: Adapter, channel: ChannelRef, messageId: string, emoji: string): Promise<boolean> {
+        const key = channelKey(channel);
+        if (this.#shadow) {
+            this.#trace.record("send.shadow", { channel: key, messageId, detail: { text: `(reacts ${emoji})` } });
+            return true;
+        }
+        if (!adapter.react || !this.#takeToken()) return false;
+        try {
+            await adapter.react(channel, messageId, emoji);
+            this.#trace.record("send.reacted", { channel: key, messageId, detail: { emoji } });
+            return true;
+        } catch (error) {
+            this.#trace.record("send.failed", { channel: key, messageId, detail: { error: String(error) } });
+            return false;
+        }
+    }
+
     /** Cosmetic, so a failure here is ignored. */
     async typing(adapter: Adapter, channel: ChannelRef): Promise<void> {
         if (this.#shadow) return;

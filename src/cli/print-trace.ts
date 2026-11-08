@@ -27,6 +27,8 @@ export function printTraceEvent(event: TraceEvent): void {
         for (const item of recalled) console.log(`  [recall ${item.score.toFixed(2)}${item.detailed ? "" : " gist only"}] ${item.gist}`);
     } else if (event.kind === "memory.extracted") {
         console.log(`  [memory] wrote ${detail.written} from ${detail.messages} messages`);
+    } else if (event.kind === "search.done") {
+        console.log(`  [looked up "${detail.query}"] ${detail.note || "(found nothing)"}`);
     } else if (event.kind === "send.shadow") {
         console.log(`  [would say] ${detail.text}`);
     } else if (event.kind === "gate.decision") {

@@ -28,7 +28,16 @@ export class Vitals {
 
     spend(amount: number): void {
         const today = this.#today();
-        this.#store.setMeta(BATTERY_KEY, JSON.stringify({ date: today.date, used: today.used + amount }));
+        this.#store.setMeta(BATTERY_KEY, JSON.stringify({ ...today, used: today.used + amount }));
+    }
+
+    searchesToday(): number {
+        return this.#today().searches ?? 0;
+    }
+
+    noteSearch(): void {
+        const today = this.#today();
+        this.#store.setMeta(BATTERY_KEY, JSON.stringify({ ...today, searches: (today.searches ?? 0) + 1 }));
     }
 
     /** Whether this person's last direct question to it was left unanswered. */
@@ -44,10 +53,10 @@ export class Vitals {
         this.#ignoredAt.delete(key);
     }
 
-    #today(): { date: string; used: number } {
+    #today(): { date: string; used: number; searches?: number } {
         const date = localTime(this.#clock.now() - DAY_ROLLOVER_MS, this.#persona().timezone).date;
         const saved = this.#store.getMeta(BATTERY_KEY);
-        const parsed = saved ? (JSON.parse(saved) as { date: string; used: number }) : undefined;
+        const parsed = saved ? (JSON.parse(saved) as { date: string; used: number; searches?: number }) : undefined;
         return parsed?.date === date ? parsed : { date, used: 0 };
     }
 }

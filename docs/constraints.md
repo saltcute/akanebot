@@ -17,4 +17,6 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `forgetfulness` | How strong a memory must be to come to mind. Higher recalls less | Active |
 | `socialBattery` | Messages per day before it gets short with people, then stops joining in | Active |
 | `dailyLife` | One is picked each morning and colours the whole day | Active |
-| `search` | Curiosity and daily search cap | Validated, milestone 6 |
+| `search` | How curious it is about unfamiliar topics, and how many searches a day | Active |
+| `lowEffort` | Chance of reacting with an emoji instead of writing something | Active |
+| `reactions` | The only emoji it reacts with | Active |

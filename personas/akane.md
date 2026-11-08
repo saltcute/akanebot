@@ -30,6 +30,9 @@ skills: # 1 = barely heard of it，3 = passed the course，5 = specialist
 slipRate: 0.25 # chance of a mistake when working something out at the edge of its skill
 maxCodeLines: 12 # never sends a snippet longer than this
 
+lowEffort: 0.15 # chance of just reacting with an emoji instead of writing something
+reactions: ["👍", "😭", "🤔", "👀", "💀", "🫡"] # the only emoji she reacts with
+
 dailyLife: # one is picked each morning and stays true all day
   - 昨晚没睡好
   - 今天有实验课，有点烦

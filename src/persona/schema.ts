@@ -42,6 +42,8 @@ export const personaSettingsSchema = z.strictObject({
     search: z.strictObject({ curiosity: unit, dailyCap: z.number().int().min(0) }),
     skills: z.record(z.string(), z.number().int().min(1).max(5)),
     slipRate: unit,
+    lowEffort: unit.default(0),
+    reactions: z.array(z.string().min(1)).default([]),
     dailyLife: z.array(z.string().min(1)).default([]),
     maxCodeLines: z.number().int().positive(),
 });

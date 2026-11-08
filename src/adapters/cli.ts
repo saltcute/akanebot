@@ -7,6 +7,7 @@ const SELF_ID = "gabriel";
 export class CliAdapter implements Adapter {
     readonly platform = "cli" as const;
     readonly sent: { channelId: string; text: string; messageId: string; replyToMessageId?: string }[] = [];
+    readonly reactions: { messageId: string; emoji: string }[] = [];
     readonly #clock: Clock;
     readonly #selfName: string;
     readonly #mentions: readonly string[];
@@ -30,8 +31,11 @@ export class CliAdapter implements Adapter {
     }
 
     /** Someone in the simulated group says something. Returns the new message's ID. */
-    say(speaker: string, text: string, channelId = "group"): string {
+    say(speaker: string, rawText: string, channelId = "group"): string {
         const messageId = `m${this.#nextId++}`;
+        // "[img:https://...]" stands in for attaching a picture.
+        const images = [...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : []));
+        const text = rawText.replace(/\[img:\S+?\]/g, "[image]");
         const lowered = text.toLowerCase();
         const mentionsSelf = this.#mentions.some((mention) => lowered.includes(mention));
         this.#onMessage?.({
@@ -40,6 +44,7 @@ export class CliAdapter implements Adapter {
             messageId,
             sender: { id: speaker, displayName: speaker, isBot: false },
             text,
+            ...(images.length > 0 ? { images } : {}),
             sentAt: this.#clock.now(),
             mentionsSelf,
             repliesToSelf: false,
@@ -75,4 +80,9 @@ export class CliAdapter implements Adapter {
     }
 
     async sendTyping(): Promise<void> {}
+
+    async react(_channel: ChannelRef, messageId: string, emoji: string): Promise<void> {
+        this.reactions.push({ messageId, emoji });
+        this.#print(`${this.#selfName} reacted ${emoji} to ${messageId}`);
+    }
 }

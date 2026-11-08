@@ -89,7 +89,8 @@ export class MemoryStore {
     constructor(path: string) {
         if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
         this.#db = new DatabaseSync(path);
-        this.#db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+        // The busy timeout lets `pnpm memory` run alongside the live bot.
+        this.#db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
         this.#db.exec(SCHEMA);
     }
 
@@ -109,6 +110,10 @@ export class MemoryStore {
             message.sentAt,
             attended ? 1 : 0,
         );
+    }
+
+    updateText(channel: string, messageId: string, text: string): void {
+        this.#run("UPDATE rawLog SET text = ? WHERE channel = ? AND messageId = ?", text, channel, messageId);
     }
 
     markAttended(channel: string, messageIds: readonly string[]): void {

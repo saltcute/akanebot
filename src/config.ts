@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pricesSchema } from "./lib/cost.ts";
 import { embedderConfigSchema } from "./llm/embedder.ts";
 import { llmConfigSchema } from "./llm/registry.ts";
+import { searchConfigSchema } from "./llm/search.ts";
 import { pacingSchema } from "./reply/timing.ts";
 
 export const appConfigSchema = z.strictObject({
@@ -31,6 +32,7 @@ export const appConfigSchema = z.strictObject({
         })
         .prefault({}),
     embedder: embedderConfigSchema,
+    search: searchConfigSchema,
     memory: z.strictObject({
         path: z.string().min(1).default("data/memory.db"),
         /** A conversation counts as over after this many minutes without anything attended. */

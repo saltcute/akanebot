@@ -14,6 +14,8 @@ export const gateFeaturesSchema = z.object({
     highStakes: z.boolean(),
     possibleCrisis: z.boolean(),
     towardMe: z.enum(["friendly", "neutral", "hostile"]),
+    lookUp: z.string(),
+    quickReaction: z.string(),
     privateThought: z.string(),
 });
 
@@ -34,6 +36,8 @@ Fields:
 - highStakes: does it involve commands someone may run, security, health, legal or money?
 - possibleCrisis: does someone in the new messages seem to be in real danger (suicide, self-harm, being harmed, a medical emergency)? Hyperbole and jokes don't count.
 - towardMe: how the new messages treat ${persona.name}. Use neutral if they aren't directed at them.
+- lookUp: if this involves something ${persona.name} wouldn't know and would be curious about, a few generic search words for it. No names or personal details of anyone in the chat. Otherwise empty.
+- quickReaction: one emoji from ${persona.reactions.join(" ") || "(none)"} that would fit as a reaction to the latest message, or empty.
 - privateThought: one short line of what ${persona.name} privately thinks, in their voice. They know these people only online, so it never assumes being together in person.
 
 Profile of ${persona.name}:

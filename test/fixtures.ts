@@ -16,6 +16,8 @@ export const PERSONA: Persona = {
     skills: { dataStructures: 3, web: 4, mathProofs: 2 },
     slipRate: 0.25,
     maxCodeLines: 12,
+    lowEffort: 0,
+    reactions: ["👍", "😭"],
     dailyLife: [],
     prose: "# Who I am\n小茜",
 };
@@ -32,6 +34,8 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         highStakes: false,
         possibleCrisis: false,
         towardMe: "neutral",
+        lookUp: "",
+        quickReaction: "",
         privateThought: "嗯",
         ...overrides,
     };
