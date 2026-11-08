@@ -1,0 +1,20 @@
+node_modules/
+coverage/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+config.yaml
+
+# Chat logs, memory databases and other runtime state
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# NapCat / QQ login sessions
+napcat/
+.napcat/
+QQ/
