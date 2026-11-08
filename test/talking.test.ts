@@ -150,6 +150,15 @@ describe("splitBursts", () => {
         expect(splitBursts("看\n```\nx\ny\n```\n懂了吗")).toEqual(["看", "```\nx\ny\n```", "懂了吗"]);
     });
 
+    it("strips wrapper tags the model echoes back", () => {
+        expect(splitBursts("<chat-reply>看你拿来干啥\n写前端用 ts</chat-reply>")).toEqual(["看你拿来干啥", "写前端用 ts"]);
+        expect(splitBursts("<reply>嗯</reply>")).toEqual(["嗯"]);
+    });
+
+    it("leaves real HTML alone", () => {
+        expect(splitBursts("你少了个 <div> 的闭合")).toEqual(["你少了个 <div> 的闭合"]);
+    });
+
     it("treats the silence token as nothing to say", () => {
         expect(splitBursts("[silence]")).toEqual([]);
     });

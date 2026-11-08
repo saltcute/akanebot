@@ -1,10 +1,12 @@
 import { SILENCE_TOKEN } from "./prompt.ts";
 
 const MAX_BURSTS = 4;
+/** Models sometimes echo the transcript's tag style around a reply. Only these names, so HTML in code answers survives. */
+const STRAY_WRAPPER_TAG = /<\/?(?:chat[\w-]*|reply|response|message|output)>/gi;
 
 /** Each output line is one chat message, except that a fenced code block stays in one piece. */
 export function splitBursts(text: string): string[] {
-    const trimmed = text.trim();
+    const trimmed = text.replace(STRAY_WRAPPER_TAG, "").trim();
     if (trimmed === "" || trimmed.includes(SILENCE_TOKEN)) return [];
     const bursts: string[] = [];
     let fence: string[] | undefined;
