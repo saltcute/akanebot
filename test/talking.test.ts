@@ -13,7 +13,7 @@ import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
 import { AnthropicBackend } from "../src/llm/anthropic.ts";
 import { loadPersona, parsePersona } from "../src/persona/loader.ts";
-import { exceedsCodeLimit, splitBursts } from "../src/reply/bursts.ts";
+import { exceedsCodeLimit, toBursts } from "../src/reply/bursts.ts";
 import { renderReplyInstructions, renderTranscript } from "../src/reply/prompt.ts";
 import { features, PERSONA } from "./fixtures.ts";
 
@@ -152,28 +152,34 @@ describe("renderTranscript", () => {
 
 describe("splitBursts", () => {
     it("splits lines and drops blanks", () => {
-        expect(splitBursts("a\n\n b \n")).toEqual(["a", "b"]);
+        expect(toBursts(["a\n\n b \n"])).toEqual(["a", "b"]);
     });
 
     it("keeps fenced code together", () => {
-        expect(splitBursts("看\n```\nx\ny\n```\n懂了吗")).toEqual(["看", "```\nx\ny\n```", "懂了吗"]);
+        expect(toBursts(["看\n```\nx\ny\n```\n懂了吗"])).toEqual(["看", "```\nx\ny\n```", "懂了吗"]);
     });
 
     it("strips wrapper tags the model echoes back", () => {
-        expect(splitBursts("<chat-reply>看你拿来干啥\n写前端用 ts</chat-reply>")).toEqual(["看你拿来干啥", "写前端用 ts"]);
-        expect(splitBursts("<reply>嗯</reply>")).toEqual(["嗯"]);
+        expect(toBursts(["<chat-reply>看你拿来干啥\n写前端用 ts</chat-reply>"])).toEqual(["看你拿来干啥", "写前端用 ts"]);
+        expect(toBursts(["<reply>嗯</reply>"])).toEqual(["嗯"]);
     });
 
     it("leaves real HTML alone", () => {
-        expect(splitBursts("你少了个 <div> 的闭合")).toEqual(["你少了个 <div> 的闭合"]);
+        expect(toBursts(["你少了个 <div> 的闭合"])).toEqual(["你少了个 <div> 的闭合"]);
     });
 
-    it("treats the silence token as nothing to say", () => {
-        expect(splitBursts("[silence]")).toEqual([]);
+    it("drops empty entries, so an empty list means silence", () => {
+        expect(toBursts([])).toEqual([]);
+        expect(toBursts(["", "  "])).toEqual([]);
+    });
+
+    it("removes reasoning blocks along with their contents", () => {
+        expect(toBursts(["<reasoning>Decline in character.</reasoning>不是吧"])).toEqual(["不是吧"]);
+        expect(toBursts(["<thinking_mode>auto</thinking_mode>"])).toEqual([]);
     });
 
     it("caps how many messages one reply can become", () => {
-        expect(splitBursts("1\n2\n3\n4\n5\n6")).toHaveLength(4);
+        expect(toBursts(["1\n2\n3\n4\n5\n6"])).toHaveLength(4);
     });
 
     it("measures code length without counting the fences", () => {

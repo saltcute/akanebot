@@ -1,13 +1,17 @@
-import { SILENCE_TOKEN } from "./prompt.ts";
-
 const MAX_BURSTS = 4;
+/** Reasoning a model sometimes emits as a tagged block, removed along with its contents. */
+const REASONING_BLOCK = /<(thinking[\w-]*|reasoning|analysis)>[\s\S]*?<\/\1>/gi;
 /** Models sometimes echo the transcript's tag style around a reply. Only these names, so HTML in code answers survives. */
 const STRAY_WRAPPER_TAG = /<\/?(?:chat[\w-]*|reply|response|message|output)>/gi;
 
-/** Each output line is one chat message, except that a fenced code block stays in one piece. */
-export function splitBursts(text: string): string[] {
-    const trimmed = text.replace(STRAY_WRAPPER_TAG, "").trim();
-    if (trimmed === "" || trimmed.includes(SILENCE_TOKEN)) return [];
+/** Turns the model's list into chat messages: cleaned, capped, and with lines split unless they are fenced code. */
+export function toBursts(messages: readonly string[]): string[] {
+    return messages.flatMap(splitLines).slice(0, MAX_BURSTS);
+}
+
+function splitLines(text: string): string[] {
+    const trimmed = text.replace(REASONING_BLOCK, "").replace(STRAY_WRAPPER_TAG, "").trim();
+    if (trimmed === "") return [];
     const bursts: string[] = [];
     let fence: string[] | undefined;
     for (const line of trimmed.split("\n")) {
@@ -25,10 +29,10 @@ export function splitBursts(text: string): string[] {
         }
     }
     if (fence) bursts.push(fence.join("\n"));
-    return bursts.slice(0, MAX_BURSTS);
+    return bursts;
 }
 
-/** Counts lines that look like code, whether or not the model fenced them. */
+/** Counts the lines inside a fenced code block. */
 export function exceedsCodeLimit(bursts: readonly string[], maxCodeLines: number): boolean {
     return bursts.some((burst) => burst.startsWith("```") && burst.split("\n").length - 2 > maxCodeLines);
 }

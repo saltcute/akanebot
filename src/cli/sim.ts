@@ -40,12 +40,17 @@ const trace = new DecisionTrace(clock, { sink: (event) => verbose && printEvent(
 const cost = new CostMeter({ clock, prices: config.prices, dailyBudgetUsd: config.dailyBudgetUsd });
 const adapter = new CliAdapter({ clock, selfName: persona.name, aliases: persona.aliases, print: (line) => console.log(line) });
 
-const fakeFactory: BackendFactory = () => new FakeBackend((request) => (request.schema ? CANNED_GATE : rng.pick(CANNED_REPLIES)));
+const fakeFactory: BackendFactory = (_config, model) =>
+    new FakeBackend(() => (model === "scripted-gate" ? CANNED_GATE : JSON.stringify({ messages: [rng.pick(CANNED_REPLIES)] })));
 const llm = useFake
     ? new LlmRegistry(
           llmConfigSchema.parse({
               backends: { fake: { type: "fake" } },
-              roles: Object.fromEntries(["gate", "reply", "technical"].map((role) => [role, { backend: "fake", model: "scripted" }])),
+              roles: {
+                  gate: { backend: "fake", model: "scripted-gate" },
+                  reply: { backend: "fake", model: "scripted" },
+                  technical: { backend: "fake", model: "scripted" },
+              },
           }),
           { fake: fakeFactory },
       )

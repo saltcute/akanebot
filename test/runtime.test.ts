@@ -27,6 +27,14 @@ type Setup = {
 const QUIET: Partial<GateFeatures> = { addressedToMe: "no", interest: 0 };
 const TALKING_TO_IT: Partial<GateFeatures> = { addressedToMe: "yes" };
 
+/** Lets tests script a reply as plain text, which the model would return as a one-entry list. */
+function asMessages(respond: FakeResponder): FakeResponder {
+    return (request) => {
+        const response = respond(request);
+        return typeof response === "string" ? JSON.stringify({ messages: [response] }) : response;
+    };
+}
+
 function chatLines(transcript: string | undefined): string[] {
     return (transcript ?? "")
         .split("\n")
@@ -41,8 +49,8 @@ async function setup(options: Setup) {
     const adapter = new CliAdapter({ clock, selfName: persona.name });
     const gateQueue = [...(options.gates ?? [])];
     const gate = new FakeBackend(() => JSON.stringify(features({ addressedToMe: "yes", ...options.gate, ...gateQueue.shift() })));
-    const reply = new FakeBackend(options.reply ?? (() => "哈哈"));
-    const technical = new FakeBackend(options.technical ?? (() => "技术回复"));
+    const reply = new FakeBackend(asMessages(options.reply ?? (() => "哈哈")));
+    const technical = new FakeBackend(asMessages(options.technical ?? (() => "技术回复")));
     const cost = new CostMeter({ clock, prices: { m: { input: 1_000_000, cachedInput: 0, output: 0 } }, dailyBudgetUsd: options.budget ?? 1000 });
     const llm = new LlmRegistry(
         llmConfigSchema.parse({
@@ -128,7 +136,7 @@ describe("Runtime", () => {
     });
 
     it("respects a model choosing silence", async () => {
-        const { adapter, trace, settle } = await setup({ reply: () => "[silence]" });
+        const { adapter, trace, settle } = await setup({ reply: () => "" });
         adapter.say("alice", "hi");
         await settle();
         expect(adapter.sent).toEqual([]);

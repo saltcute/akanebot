@@ -11,9 +11,9 @@ import type { DecisionTrace } from "./lib/trace.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, type PerceptionTiming } from "./perception/channel.ts";
 import type { Persona } from "./persona/schema.ts";
-import { exceedsCodeLimit, splitBursts } from "./reply/bursts.ts";
+import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
-import { renderReplyInstructions, renderReplyState, renderTranscript } from "./reply/prompt.ts";
+import { renderReplyInstructions, renderReplyState, renderTranscript, replySchema } from "./reply/prompt.ts";
 
 export type RuntimeOptions = {
     clock: Clock;
@@ -133,16 +133,17 @@ export class Runtime {
             stable: renderReplyInstructions(persona),
             transcript,
             volatile: renderReplyState({ now: this.#options.clock.now(), persona, features, competence, addressed: decision.addressed }),
+            schema: replySchema,
             maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
             signal: lease.signal,
         });
-        if (result.kind !== "ok") {
+        if (result.kind !== "ok" || !result.data) {
             // Failures never reach the chat. The trace is where the operator finds them.
             trace.record("reply.silent", { channel: key, ...idField, detail: describeFailure(result) });
             return;
         }
 
-        const bursts = splitBursts(result.text);
+        const bursts = toBursts(result.data.messages);
         if (bursts.length === 0) {
             perception.settle(seenSeq);
             trace.record("reply.chose_silence", { channel: key, ...idField });
