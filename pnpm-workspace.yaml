@@ -1,0 +1,4 @@
+# These scripts fetch optional GPU binaries or rebuild bundled code. The CPU build works without them.
+allowBuilds:
+  onnxruntime-node: false
+  protobufjs: false
