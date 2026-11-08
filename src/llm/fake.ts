@@ -11,7 +11,7 @@ export class FakeBackend implements LlmBackend {
     #respond: FakeResponder;
 
     constructor(script: FakeResponder | readonly FakeResponse[], capabilities: Partial<BackendCapabilities> = {}) {
-        this.capabilities = { promptCache: false, structured: "native", trailingSystem: false, ...capabilities };
+        this.capabilities = { promptCache: false, structured: "native", trailingSystem: false, vision: true, ...capabilities };
         if (typeof script === "function") {
             this.#respond = script;
         } else {

@@ -5,7 +5,7 @@ import type { Clock } from "./clock.ts";
 /** Dollars per million tokens. */
 export const pricesSchema = z.record(
     z.string(),
-    z.strictObject({ input: z.number().min(0), cachedInput: z.number().min(0), output: z.number().min(0) }),
+    z.strictObject({ input: z.number().min(0), cachedInput: z.number().min(0), output: z.number().min(0), webSearch: z.number().min(0).optional() }),
 );
 export type Prices = z.infer<typeof pricesSchema>;
 
@@ -35,7 +35,9 @@ export class CostMeter {
             this.#unpriced.add(model);
             return;
         }
-        const cost = (usage.inputTokens * price.input + usage.cachedInputTokens * price.cachedInput + usage.outputTokens * price.output) * PER_TOKEN;
+        const tokens =
+            (usage.inputTokens * price.input + usage.cachedInputTokens * price.cachedInput + usage.outputTokens * price.output) * PER_TOKEN;
+        const cost = tokens + (usage.webSearches ?? 0) * (price.webSearch ?? 0);
         this.#spentToday += cost;
         this.#spentTotal += cost;
     }

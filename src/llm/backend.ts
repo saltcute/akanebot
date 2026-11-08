@@ -4,12 +4,14 @@ export type Usage = {
     inputTokens: number;
     cachedInputTokens: number;
     outputTokens: number;
+    webSearches?: number;
 };
 
 export type BackendCapabilities = {
     promptCache: boolean;
     structured: "native" | "json_schema" | "none";
     trailingSystem: boolean;
+    vision: boolean;
 };
 
 export type LlmRequest<T> = {
@@ -19,6 +21,8 @@ export type LlmRequest<T> = {
     transcript: string;
     /** Time, mood, recalled memories: changes on every call. */
     volatile: string;
+    /** Images to look at, passed alongside the transcript. */
+    images?: readonly { url: string }[];
     schema?: ZodType<T>;
     maxOutput: number;
     /** Vendor-specific settings from config. Only the backend reads these. */
