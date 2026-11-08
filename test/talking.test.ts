@@ -14,7 +14,7 @@ import { Rng } from "../src/lib/rng.ts";
 import { AnthropicBackend } from "../src/llm/anthropic.ts";
 import { loadPersona, parsePersona } from "../src/persona/loader.ts";
 import { exceedsCodeLimit, splitBursts } from "../src/reply/bursts.ts";
-import { renderTranscript } from "../src/reply/prompt.ts";
+import { renderReplyInstructions, renderTranscript } from "../src/reply/prompt.ts";
 import { features, PERSONA } from "./fixtures.ts";
 
 describe("assessCompetence", () => {
@@ -106,6 +106,15 @@ describe("example config", () => {
             expect(config.backends[role.backend]).toBeDefined();
             expect(config.prices[role.model]).toBeDefined();
         }
+    });
+});
+
+describe("renderReplyInstructions", () => {
+    it("restricts the relationship to online friends, whatever the persona file says", () => {
+        const instructions = renderReplyInstructions({ ...PERSONA, prose: "We all live together and hang out every day." });
+        expect(instructions).toContain("only online");
+        expect(instructions).toContain("Never agree to meet");
+        expect(instructions.indexOf("only online")).toBeGreaterThan(instructions.indexOf("We all live together"));
     });
 });
 

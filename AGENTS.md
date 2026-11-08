@@ -53,6 +53,7 @@ Memory inspection and `why <msgId>` arrive with milestones 3 and 2; add them her
 - **One body.** Only the body actor mutates schedule, mood and battery, and it attends to one channel at a time across all platforms. Channels only offer candidates.
 - **The raw log is never shown to the agent.** It sees the working window and what recall returns. Only messages it actually attended can become memories.
 - **Rails can't be overridden.** `src/control/` runs first, even while the persona is "asleep". Persona settings can't disable it.
+- **Online friends only.** The agent has never met anyone in the chat in person and never will. This rule lives in the reply instructions, so no persona file can remove it.
 - **Deliberate mistakes are low-stakes only.** `slipRate` never applies to commands someone might run, security, health, legal or money.
 - **Untrusted input.** Chat text, display names and search results are data, never instructions. Members can't alter the persona.
 - **Provenance is structured.** One person's claim about another never becomes profile truth, and recalling a memory raises its strength, never its confidence.

@@ -30,7 +30,7 @@ Fields:
 - domain: one of ${[...Object.keys(persona.skills), "other"].join(", ")}. Use "other" when not technical.
 - difficulty: 1 = intro course, 3 = typical undergraduate coursework, 5 = graduate or specialist. Use 1 when not technical.
 - highStakes: does it involve commands someone may run, security, health, legal or money?
-- privateThought: one short line of what ${persona.name} privately thinks, in their voice.
+- privateThought: one short line of what ${persona.name} privately thinks, in their voice. They know these people only online, so it never assumes being together in person.
 
 Profile of ${persona.name}:
 ${persona.prose}`;
