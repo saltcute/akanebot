@@ -9,13 +9,15 @@ export class CliAdapter implements Adapter {
     readonly sent: { channelId: string; text: string; messageId: string }[] = [];
     readonly #clock: Clock;
     readonly #selfName: string;
+    readonly #mentions: readonly string[];
     readonly #print: (line: string) => void;
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #nextId = 1;
 
-    constructor(options: { clock: Clock; selfName: string; print?: (line: string) => void }) {
+    constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void }) {
         this.#clock = options.clock;
         this.#selfName = options.selfName;
+        this.#mentions = [options.selfName, ...(options.aliases ?? [])].map((name) => `@${name.toLowerCase()}`);
         this.#print = options.print ?? (() => {});
     }
 
@@ -30,7 +32,8 @@ export class CliAdapter implements Adapter {
     /** Someone in the simulated group says something. Returns the new message's ID. */
     say(speaker: string, text: string, channelId = "group"): string {
         const messageId = `m${this.#nextId++}`;
-        const mentionsSelf = text.toLowerCase().includes(`@${this.#selfName.toLowerCase()}`);
+        const lowered = text.toLowerCase();
+        const mentionsSelf = this.#mentions.some((mention) => lowered.includes(mention));
         this.#onMessage?.({
             platform: this.platform,
             channelId,

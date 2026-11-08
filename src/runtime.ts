@@ -1,16 +1,27 @@
 import type { Adapter, ChannelRef, ChatMessage, Platform } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type Lease } from "./body/actor.ts";
+import { assessCompetence } from "./gate/competence.ts";
+import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
+import { decideToSpeak } from "./gate/policy.ts";
 import type { Clock } from "./lib/clock.ts";
+import type { CostMeter } from "./lib/cost.ts";
+import type { Rng } from "./lib/rng.ts";
 import type { DecisionTrace } from "./lib/trace.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
-import { ChannelPerception, type PerceptionTiming } from "./perception/channel.ts";
+import { ADDRESSED_PRIORITY, ChannelPerception, type PerceptionTiming } from "./perception/channel.ts";
+import type { Persona } from "./persona/schema.ts";
+import { exceedsCodeLimit, splitBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
+import { renderReplyInstructions, renderReplyState, renderTranscript } from "./reply/prompt.ts";
 
 export type RuntimeOptions = {
     clock: Clock;
+    rng: Rng;
     trace: DecisionTrace;
     llm: LlmRegistry;
+    cost: CostMeter;
+    persona: Persona;
     adapters: readonly Adapter[];
     timing: PerceptionTiming;
     limits: GuardLimits;
@@ -18,17 +29,25 @@ export type RuntimeOptions = {
 
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
 
-/** Wires adapters to perception, the body and the send guards. */
+const GATE_MAX_OUTPUT = 600;
+const REPLY_MAX_OUTPUT = 2000;
+const TECHNICAL_MAX_OUTPUT = 4000;
+
+/** Wires adapters to perception, the body, the gate and the send guards. */
 export class Runtime {
     readonly body: BodyActor;
     readonly guard: SendGuard;
     #options: RuntimeOptions;
     #adapters: ReadonlyMap<Platform, Adapter>;
     #channels = new Map<string, Channel>();
+    #gateRng: Rng;
+    #competenceRng: Rng;
 
     constructor(options: RuntimeOptions) {
         this.#options = options;
         this.#adapters = new Map(options.adapters.map((adapter) => [adapter.platform, adapter]));
+        this.#gateRng = options.rng.fork("gate");
+        this.#competenceRng = options.rng.fork("competence");
         this.guard = new SendGuard({ clock: options.clock, trace: options.trace, limits: options.limits });
         const attend: Attend = (lease) => this.#attend(lease);
         this.body = new BodyActor({ clock: options.clock, trace: options.trace, attend });
@@ -68,37 +87,84 @@ export class Runtime {
     }
 
     async #attend(lease: Lease): Promise<void> {
-        const { trace, llm } = this.#options;
+        const { trace, llm, cost, persona } = this.#options;
         const key = lease.candidate.channel;
         const channel = this.#channels.get(key);
         if (!channel) return;
+        if (cost.overBudget()) {
+            trace.record("budget.exceeded", { channel: key, detail: cost.summary() });
+            return;
+        }
+
+        const window = channel.perception.window();
+        const messageId = window.at(-1)?.messageId;
+        const idField = messageId ? { messageId } : {};
+        const transcript = renderTranscript(window, persona);
+        const gate = await llm.generate("gate", {
+            stable: renderGateInstructions(persona),
+            transcript,
+            volatile: "",
+            schema: gateFeaturesSchema,
+            maxOutput: GATE_MAX_OUTPUT,
+            signal: lease.signal,
+        });
+        if (gate.kind !== "ok" || !gate.data) {
+            trace.record("gate.silent", { channel: key, ...idField, detail: describeFailure(gate) });
+            return;
+        }
+
+        const features: GateFeatures = gate.data;
+        const mentioned = lease.candidate.priority >= ADDRESSED_PRIORITY;
+        const decision = decideToSpeak(features, persona, mentioned, this.#gateRng);
+        const competence = assessCompetence(features, persona, this.#competenceRng);
+        trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, features } });
+        if (!decision.speak) return;
 
         lease.setState("composing");
-        const transcript = renderTranscript(channel.perception.window());
-        const result = await llm.generate("reply", { stable: "", transcript, volatile: "", maxOutput: 512, signal: lease.signal });
-        if (result.kind !== "ok" || result.text.trim() === "") {
+        const technical = competence.mode !== "casual";
+        const result = await llm.generate(technical ? "technical" : "reply", {
+            stable: renderReplyInstructions(persona),
+            transcript,
+            volatile: renderReplyState({ now: this.#options.clock.now(), persona, features, competence, addressed: decision.addressed }),
+            maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
+            signal: lease.signal,
+        });
+        if (result.kind !== "ok") {
             // Failures never reach the chat. The trace is where the operator finds them.
-            trace.record("reply.silent", { channel: key, detail: { result: result.kind } });
+            trace.record("reply.silent", { channel: key, ...idField, detail: describeFailure(result) });
+            return;
+        }
+
+        const bursts = splitBursts(result.text);
+        if (bursts.length === 0) {
+            trace.record("reply.chose_silence", { channel: key, ...idField });
+            return;
+        }
+        if (exceedsCodeLimit(bursts, persona.maxCodeLines)) {
+            trace.record("reply.code_too_long", { channel: key, ...idField });
             return;
         }
 
         lease.setState("sending");
-        const outcome = await this.guard.send(channel.adapter, channel.ref, result.text, { signal: lease.signal });
-        if (outcome.kind === "sent") channel.perception.recordOwn(ownMessage(channel.ref, outcome.messageId, result.text, this.#options.clock.now()));
+        for (const text of bursts) {
+            const outcome = await this.guard.send(channel.adapter, channel.ref, text, { signal: lease.signal });
+            if (outcome.kind !== "sent") return;
+            channel.perception.recordOwn(ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), persona.name));
+        }
     }
 }
 
-function renderTranscript(window: readonly ChatMessage[]): string {
-    return window.map((message) => `${message.sender.displayName}: ${message.text}`).join("\n");
+function describeFailure(result: { kind: string; detail?: string }): Record<string, unknown> {
+    return { result: result.kind, ...(result.detail ? { error: result.detail } : {}) };
 }
 
-function ownMessage(ref: ChannelRef, messageId: string, text: string, sentAt: number): ChatMessage {
+function ownMessage(ref: ChannelRef, messageId: string, text: string, sentAt: number, name: string): ChatMessage {
     return {
         ...ref,
         messageId,
         text,
         sentAt,
-        sender: { id: "self", displayName: "me", isBot: false },
+        sender: { id: "self", displayName: name, isBot: false },
         mentionsSelf: false,
         repliesToSelf: false,
         isSelf: true,

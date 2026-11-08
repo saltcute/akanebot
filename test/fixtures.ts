@@ -1,0 +1,35 @@
+import type { GateFeatures } from "../src/gate/features.ts";
+import type { Persona } from "../src/persona/schema.ts";
+
+export const PERSONA: Persona = {
+    name: "小林",
+    aliases: ["xiaolin"],
+    timezone: "Asia/Shanghai",
+    schedule: { sleep: { weekday: "01:30-08:40", weekend: "03:00-11:30" }, busy: [] },
+    talkativeness: 0.35,
+    stubbornness: 0.7,
+    ignoreDirectAsks: 0.2,
+    forgetfulness: 0.4,
+    socialBattery: 60,
+    maxCharsRead: 280,
+    search: { curiosity: 0.3, dailyCap: 5 },
+    skills: { dataStructures: 3, web: 4, mathProofs: 2 },
+    slipRate: 0.25,
+    maxCodeLines: 12,
+    prose: "# Who I am\n小林",
+};
+
+export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
+    return {
+        addressedToMe: "no",
+        topic: "chat",
+        interest: 0.5,
+        someoneAlreadyAnswered: false,
+        isTechnical: false,
+        domain: "other",
+        difficulty: 1,
+        highStakes: false,
+        privateThought: "嗯",
+        ...overrides,
+    };
+}

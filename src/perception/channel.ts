@@ -13,7 +13,7 @@ export type PerceptionTiming = {
 };
 
 const NORMAL_PRIORITY = 1;
-const ADDRESSED_PRIORITY = 10;
+export const ADDRESSED_PRIORITY = 10;
 
 /** What one channel looks like from the outside: debounced, with a short rolling window. */
 export class ChannelPerception {
