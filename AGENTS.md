@@ -75,6 +75,7 @@ Design for 8 GB of VRAM: one LLM loaded at a time, embeddings and rerankers on C
 ## Git
 
 - Commit at each coherent, working step, one logical change per commit, with `pnpm check` passing.
+- Use [Conventional Commits](https://www.conventionalcommits.org/): `feat(body): add social battery`, `fix(guards): ...`, `test: ...`, `docs: ...`, `chore: ...`.
 - Work on a branch for each milestone (`m1-skeleton`, `m2-talking`, ...), not directly on `main`.
 - Commit signing is disabled for this repo (`git config --local commit.gpgsign false`).
 - Never push or open a PR unless asked.
