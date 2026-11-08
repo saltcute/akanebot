@@ -24,6 +24,8 @@ Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there i
 | `pnpm test:watch`             | Run tests in watch mode                                     |
 | `pnpm typecheck`              | Type-check only                                             |
 | `pnpm lint` / `pnpm lint:fix` | Biome lint and format check / autofix                       |
+| `pnpm start` | Run the bot on Discord. Shadow mode unless `shadow: false` in config |
+| `pnpm explain <messageId>` | Show every recorded decision about a message |
 | `pnpm sim`                    | Run the CLI group simulator with real models (needs `.env`) |
 | `pnpm sim --fake`             | Run the simulator with canned replies and no API calls      |
 | `pnpm memory [--sim] <command>` | Inspect or edit memories: `list`, `search`, `show`, `edit`, `forget`, `forget-user`, `restore`. `--sim` uses the simulator's database |

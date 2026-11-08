@@ -9,6 +9,25 @@ export const appConfigSchema = z.strictObject({
     ...llmConfigSchema.shape,
     prices: pricesSchema,
     persona: z.string().min(1),
+    /** Reads and decides, but never posts anything. */
+    shadow: z.boolean().default(true),
+    timing: z
+        .strictObject({
+            quietMs: z.number().positive().default(3000),
+            maxWaitMs: z.number().positive().default(15_000),
+            candidateTtlMs: z.number().positive().default(180_000),
+            windowSize: z.number().int().positive().default(40),
+        })
+        .prefault({}),
+    limits: z
+        .strictObject({
+            bucketCapacity: z.number().positive().default(10),
+            refillPerMinute: z.number().positive().default(6),
+            shareWindow: z.number().int().positive().default(20),
+            maxShare: z.number().min(0).max(1).default(0.4),
+            minShareSample: z.number().int().positive().default(5),
+        })
+        .prefault({}),
     embedder: embedderConfigSchema,
     memory: z.strictObject({
         path: z.string().min(1).default("data/memory.db"),
@@ -36,7 +55,7 @@ export type AppConfig = z.infer<typeof appConfigSchema>;
 
 /** `config.yaml` is the maintainer's own copy. Without one, the tracked example applies. */
 export function loadConfig(path?: string): { config: AppConfig; path: string } {
-    const resolved = path ?? (existsSync("config.yaml") ? "config.yaml" : "config.example.yaml");
+    const resolved = path ?? process.env.GABRIEL_CONFIG ?? (existsSync("config.yaml") ? "config.yaml" : "config.example.yaml");
     const parsed = appConfigSchema.safeParse(parse(readFileSync(resolved, "utf8")));
     if (!parsed.success) throw new Error(`Invalid config in ${resolved}:\n${z.prettifyError(parsed.error)}`);
     return { config: parsed.data, path: resolved };

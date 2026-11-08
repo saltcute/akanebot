@@ -5,7 +5,7 @@ import { MemoryControlStore } from "../control/state.ts";
 import { SystemClock } from "../lib/clock.ts";
 import { CostMeter } from "../lib/cost.ts";
 import { Rng } from "../lib/rng.ts";
-import { DecisionTrace, type TraceEvent } from "../lib/trace.ts";
+import { DecisionTrace } from "../lib/trace.ts";
 import { createEmbedder, NullEmbedder } from "../llm/embedder.ts";
 import { BACKEND_FACTORIES } from "../llm/factories.ts";
 import { FakeBackend } from "../llm/fake.ts";
@@ -14,6 +14,7 @@ import { MemoryStore } from "../memory/store.ts";
 import { loadPersona } from "../persona/loader.ts";
 import { watchPersona } from "../persona/watch.ts";
 import { Runtime } from "../runtime.ts";
+import { printTraceEvent } from "./print-trace.ts";
 
 const SIM_DATABASE = "data/sim-memory.db";
 const CANNED_REPLIES = ["哈哈", "真的假的", "不知道诶", "lol", "等下 我看看"];
@@ -43,7 +44,7 @@ if (!useFake && !process.env.ANTHROPIC_API_KEY && Object.values(config.backends)
 const clock = new SystemClock();
 const rng = new Rng(clock.now());
 let verbose = true;
-const trace = new DecisionTrace(clock, { sink: (event) => verbose && printEvent(event) });
+const trace = new DecisionTrace(clock, { sink: (event) => verbose && printTraceEvent(event) });
 const cost = new CostMeter({ clock, prices: config.prices, dailyBudgetUsd: config.dailyBudgetUsd });
 const adapter = new CliAdapter({ clock, selfName: persona.name, aliases: persona.aliases, print: (line) => console.log(line) });
 
@@ -170,39 +171,3 @@ stopWatching();
 await runtime.stop();
 console.log(cost.summary());
 process.exit(0);
-
-function printEvent(event: TraceEvent): void {
-    const detail = event.detail ?? {};
-    if (event.kind === "memory.recall") {
-        const recalled = detail.recalled as { gist: string; score: number; detailed: boolean }[];
-        for (const item of recalled) console.log(`  [recall ${item.score.toFixed(2)}${item.detailed ? "" : " gist only"}] ${item.gist}`);
-    } else if (event.kind === "memory.extracted") {
-        console.log(`  [memory] wrote ${detail.written} from ${detail.messages} messages`);
-    } else if (event.kind === "gate.decision") {
-        const features = detail.features as { topic: string; interest: number; difficulty: number; domain: string; privateThought: string };
-        const chance = `${Math.round((detail.probability as number) * 100)}%`;
-        console.log(
-            `  [gate ${event.messageId}] ${detail.speak ? "SPEAK" : "stay quiet"} (chance ${chance}, ${detail.addressed ? "addressed" : "not addressed"}) ` +
-                `topic="${features.topic}" interest=${features.interest} mode=${detail.mode}${detail.slip ? "+slip" : ""} ` +
-                `${features.domain}/${features.difficulty} thought="${features.privateThought}"`,
-        );
-    } else if (
-        [
-            "alert",
-            "control.crisis",
-            "control.crisis_hold",
-            "control.not_allowed",
-            "control.opted_out",
-            "gate.silent",
-            "reply.silent",
-            "reply.chose_silence",
-            "reply.code_too_long",
-            "budget.exceeded",
-            "send.blocked",
-            "send.failed",
-            "body.attend_failed",
-        ].includes(event.kind)
-    ) {
-        console.log(`  [${event.kind}] ${JSON.stringify(detail)}`);
-    }
-}
