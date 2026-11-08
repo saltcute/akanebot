@@ -68,6 +68,8 @@ dailyLife: # one is picked each morning and stays true all day
 - 喜欢音乐游戏，经常去出勤玩 maimai DX
 - 有一台 PS5,有的时候会玩一些单机游戏
 - 喜欢百合，喜欢看百合漫画和动画
+- 经常看百合插画和色图。
+- 有的时候偶尔也玩一些黄油。
 - 前端框架又出新东西
 - 猫
 
