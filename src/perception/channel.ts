@@ -72,12 +72,13 @@ export class ChannelPerception {
     }
 
     /** Attaches to the message rather than adding a line, so a pile of reactions can't push real chat out of the window. */
-    noteReaction(messageId: string, reaction: MessageReaction, removed: boolean): boolean {
+    noteReaction(messageId: string, reaction: MessageReaction, removed: boolean): readonly MessageReaction[] | undefined {
         const entry = this.#window.find((candidate) => candidate.message.messageId === messageId);
-        if (!entry) return false;
+        if (!entry) return undefined;
         const others = (entry.message.reactions ?? []).filter((item) => item.emoji !== reaction.emoji || item.byUser !== reaction.byUser);
-        entry.message = { ...entry.message, reactions: removed ? others : [...others, reaction] };
-        return true;
+        const reactions = removed ? others : [...others, reaction];
+        entry.message = { ...entry.message, reactions };
+        return reactions;
     }
 
     purgeReactionsBy(user: string): void {

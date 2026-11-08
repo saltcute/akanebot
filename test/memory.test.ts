@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../src/adapters/types.ts";
 import { dayState } from "../src/body/life.ts";
@@ -398,6 +402,26 @@ describe("MemorySystem extraction", () => {
         built.attend(chat("m1", "alice", "你好"));
         await built.system.closeSegment(SCOPE);
         expect(built.store.all()).toEqual([]);
+    });
+});
+
+describe("older databases", () => {
+    it("gains the reactions column without losing messages", () => {
+        const directory = mkdtempSync(join(tmpdir(), "gabriel-"));
+        const path = join(directory, "old.db");
+        const old = new DatabaseSync(path);
+        old.exec(`CREATE TABLE rawLog (
+            channel TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL, displayName TEXT NOT NULL,
+            isSelf INTEGER NOT NULL, text TEXT NOT NULL, sentAt INTEGER NOT NULL,
+            attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (channel, messageId));
+            INSERT INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended) VALUES ('cli:group', 'm1', 'cli:alice', 'alice', 0, '旧消息', 0, 1);`);
+        old.close();
+        const store = new MemoryStore(path);
+        store.setReactions(SCOPE, "m1", [{ emoji: "👍", by: "bob", byUser: "cli:bob" }]);
+        expect(store.recentAttended(SCOPE, 10)[0]).toMatchObject({ text: "旧消息", reactions: [{ emoji: "👍" }] });
+        store.close();
+        rmSync(directory, { recursive: true });
     });
 });
 

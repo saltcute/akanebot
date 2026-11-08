@@ -330,11 +330,12 @@ export class Runtime {
         const user = `${event.platform}:${event.reactor.id}`;
         if (this.#state.isOptedOut(user)) return;
         const reaction = { emoji: event.emoji, by: event.reactor.displayName, byUser: user };
-        const noted = this.#channel(event).perception.noteReaction(event.messageId, reaction, event.removed);
+        const reactions = this.#channel(event).perception.noteReaction(event.messageId, reaction, event.removed);
+        if (reactions) this.memory.store.setReactions(key, event.messageId, reactions);
         this.#options.trace.record("reaction.seen", {
             channel: key,
             messageId: event.messageId,
-            detail: { emoji: event.emoji, noted, removed: event.removed },
+            detail: { emoji: event.emoji, noted: reactions !== undefined, removed: event.removed },
         });
     }
 

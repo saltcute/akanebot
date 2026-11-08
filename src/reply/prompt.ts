@@ -59,7 +59,7 @@ export function renderTranscript(window: readonly ChatMessage[], persona: Person
     return `<chat>\n${lines.join("\n")}\n</chat>`;
 }
 
-function renderReactions(reactions: ChatMessage["reactions"]): string {
+export function renderReactions(reactions: ChatMessage["reactions"]): string {
     if (!reactions?.length) return "";
     const shown = reactions.slice(0, MAX_REACTIONS_SHOWN).map(({ emoji, by }) => `${sanitizeName(emoji)} ${sanitizeName(by)}`);
     const more = reactions.length - shown.length;

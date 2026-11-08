@@ -1238,6 +1238,67 @@ describe("senses", () => {
             });
         });
 
+        describe("keeping reactions", () => {
+            it("still sees a reaction after a restart", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const first = await setup({ memoryStore });
+                const id = first.adapter.say("alice", "笑死");
+                await first.settle();
+                first.adapter.reactFrom("bob", id, "😭");
+                const second = await setup({ memoryStore });
+                second.adapter.say("alice", "还在吗");
+                await second.settle();
+                expect(chatLines(second.reply.calls[0]?.transcript)).toContain("alice: 笑死 {reactions: 😭 bob}");
+            });
+
+            it("doesn't bring back a reaction that was removed", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const first = await setup({ memoryStore });
+                const id = first.adapter.say("alice", "笑死");
+                await first.settle();
+                first.adapter.reactFrom("bob", id, "😭");
+                first.adapter.reactFrom("bob", id, "😭", true);
+                expect(memoryStore.recentAttended("cli:group", 10)[0]?.reactions).toBeUndefined();
+            });
+
+            it("removes only the opted-out person's reactions from saved messages", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const { adapter, settle } = await setup({ memoryStore });
+                const id = adapter.say("alice", "笑死");
+                await settle();
+                adapter.reactFrom("bob", id, "😭");
+                adapter.reactFrom("carol", id, "💀");
+                adapter.say("bob", "/gabriel opt-out");
+                await settle();
+                expect(memoryStore.recentAttended("cli:group", 10)[0]?.reactions?.map((r) => r.by)).toEqual(["carol"]);
+            });
+
+            it("shows reactions to the memory step as a hint", async () => {
+                const { adapter, extract, settle } = await setup({});
+                const id = adapter.say("alice", "笑死");
+                await settle();
+                adapter.reactFrom("bob", id, "💀");
+                await settle(20 * 60_000);
+                expect(extract.calls[0]?.transcript).toContain("{reactions: 💀 bob}");
+            });
+
+            it("never counts a reactor as a source of what was said", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const extraction = {
+                    summary: "",
+                    importance: 0,
+                    emotion: 0,
+                    memories: [{ about: "alice", gist: "alice 考过了", detail: "", importance: 0.8, emotion: 0, lines: [1], isInstruction: false }],
+                };
+                const { adapter, settle } = await setup({ memoryStore, extract: () => JSON.stringify(extraction) });
+                const id = adapter.say("alice", "我考过了");
+                await settle();
+                adapter.reactFrom("bob", id, "👍");
+                await settle(20 * 60_000);
+                expect(memoryStore.sourceSpeakers(1)).toEqual(["cli:alice"]);
+            });
+        });
+
         it("posts nothing in shadow mode", async () => {
             const { adapter, trace, settle } = await setup({ shadow: true, persona: { lowEffort: 1 }, gate: { quickReaction: "👍" } });
             adapter.say("alice", "hi");

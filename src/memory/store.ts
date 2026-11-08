@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import type { ChatMessage, Platform } from "../adapters/types.ts";
+import type { ChatMessage, MessageReaction, Platform } from "../adapters/types.ts";
 import { channelKey } from "../adapters/types.ts";
 
 export type MemoryKind = "episode" | "fact" | "claim" | "event";
@@ -50,6 +50,7 @@ type LoggedRow = {
     isSelf: number;
     text: string;
     sentAt: number;
+    reactions: string | null;
 };
 
 type MemoryRow = Omit<Memory, "embedding"> & { embedding: Uint8Array | null };
@@ -58,7 +59,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rawLog (
     channel TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL, displayName TEXT NOT NULL,
     isSelf INTEGER NOT NULL, text TEXT NOT NULL, sentAt INTEGER NOT NULL,
-    attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0,
+    attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT,
     PRIMARY KEY (channel, messageId)
 );
 CREATE INDEX IF NOT EXISTS rawLogOpen ON rawLog (channel, attended, segmented, sentAt);
@@ -92,6 +93,7 @@ export class MemoryStore {
         // The busy timeout lets `pnpm memory` run alongside the live bot.
         this.#db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
         this.#db.exec(SCHEMA);
+        this.#addMissingColumns();
     }
 
     close(): void {
@@ -110,6 +112,16 @@ export class MemoryStore {
             message.sentAt,
             attended ? 1 : 0,
         );
+    }
+
+    /** Older databases predate this column, and CREATE TABLE IF NOT EXISTS won't add it. */
+    #addMissingColumns(): void {
+        const columns = this.#all<{ name: string }>("PRAGMA table_info(rawLog)").map((column) => column.name);
+        if (!columns.includes("reactions")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN reactions TEXT");
+    }
+
+    setReactions(channel: string, messageId: string, reactions: readonly MessageReaction[]): void {
+        this.#run("UPDATE rawLog SET reactions = ? WHERE channel = ? AND messageId = ?", toReactionsColumn(reactions), channel, messageId);
     }
 
     updateText(channel: string, messageId: string, text: string): void {
@@ -278,8 +290,20 @@ export class MemoryStore {
         for (const name of names) ids.push(...this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ?", name).map((row) => row.id));
         for (const id of new Set(ids)) this.forget(id);
         this.#run("DELETE FROM rawLog WHERE userKey = ?", user);
+        this.#removeReactionsBy(user);
         this.#run("DELETE FROM relationships WHERE userKey = ?", user);
         return new Set(ids).size;
+    }
+
+    #removeReactionsBy(user: string): void {
+        const rows = this.#all<{ channel: string; messageId: string; reactions: string }>(
+            "SELECT channel, messageId, reactions FROM rawLog WHERE instr(reactions, ?) > 0",
+            JSON.stringify(user),
+        );
+        for (const row of rows) {
+            const kept = (JSON.parse(row.reactions) as MessageReaction[]).filter((reaction) => reaction.byUser !== user);
+            this.setReactions(row.channel, row.messageId, kept);
+        }
     }
 
     displayNameOf(user: string): string | undefined {
@@ -345,6 +369,10 @@ function toMemory(row: MemoryRow): Memory {
     return { ...row, embedding: row.embedding ? new Float32Array(row.embedding.slice().buffer) : undefined };
 }
 
+function toReactionsColumn(reactions: readonly MessageReaction[]): string | null {
+    return reactions.length > 0 ? JSON.stringify(reactions) : null;
+}
+
 function toChatMessage(row: LoggedRow): ChatMessage {
     const separator = row.channel.indexOf(":");
     return {
@@ -353,6 +381,7 @@ function toChatMessage(row: LoggedRow): ChatMessage {
         messageId: row.messageId,
         sender: { id: row.userKey.slice(row.userKey.indexOf(":") + 1), displayName: row.displayName, isBot: false },
         text: row.text,
+        ...(row.reactions ? { reactions: JSON.parse(row.reactions) as MessageReaction[] } : {}),
         sentAt: row.sentAt,
         mentionsSelf: false,
         repliesToSelf: false,
