@@ -6,7 +6,7 @@ import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
 import { DecisionTrace } from "../src/lib/trace.ts";
 import type { LlmResult, Usage } from "../src/llm/backend.ts";
-import { FakeBackend, type FakeResponder } from "../src/llm/fake.ts";
+import { FakeBackend, type FakeResponder, type FakeResponse } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 import type { Persona } from "../src/persona/schema.ts";
 import { Runtime } from "../src/runtime.ts";
@@ -14,14 +14,33 @@ import { features, PERSONA } from "./fixtures.ts";
 
 const USAGE: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
 
-type Setup = { reply?: FakeResponder; technical?: FakeResponder; gate?: Partial<GateFeatures>; persona?: Partial<Persona>; budget?: number };
+type Setup = {
+    reply?: FakeResponder;
+    technical?: FakeResponder;
+    gate?: Partial<GateFeatures>;
+    /** One gate result per call, overriding `gate`. */
+    gates?: Partial<GateFeatures>[];
+    persona?: Partial<Persona>;
+    budget?: number;
+};
+
+const QUIET: Partial<GateFeatures> = { addressedToMe: "no", interest: 0 };
+const TALKING_TO_IT: Partial<GateFeatures> = { addressedToMe: "yes" };
+
+function chatLines(transcript: string | undefined): string[] {
+    return (transcript ?? "")
+        .split("\n")
+        .filter((line) => line !== "<chat>" && line !== "</chat>")
+        .map((line) => line.replace(/^\[.*?\] /, ""));
+}
 
 async function setup(options: Setup) {
     const clock = new ManualClock();
     const trace = new DecisionTrace(clock);
     const persona = { ...PERSONA, ignoreDirectAsks: 0, ...options.persona };
     const adapter = new CliAdapter({ clock, selfName: persona.name });
-    const gate = new FakeBackend(() => JSON.stringify(features({ addressedToMe: "yes", ...options.gate })));
+    const gateQueue = [...(options.gates ?? [])];
+    const gate = new FakeBackend(() => JSON.stringify(features({ addressedToMe: "yes", ...options.gate, ...gateQueue.shift() })));
     const reply = new FakeBackend(options.reply ?? (() => "哈哈"));
     const technical = new FakeBackend(options.technical ?? (() => "技术回复"));
     const cost = new CostMeter({ clock, prices: { m: { input: 1_000_000, cachedInput: 0, output: 0 } }, dailyBudgetUsd: options.budget ?? 1000 });
@@ -133,6 +152,66 @@ describe("Runtime", () => {
         await settle();
         const lines = reply.calls[1]?.transcript.split("\n").filter((line) => line.includes(": "));
         expect(lines?.map((line) => line.replace(/^\[.*?\] /, ""))).toEqual(["alice: one", "小林 (you): 嗯", "alice: two"]);
+    });
+
+    describe("what counts as new", () => {
+        const noJoining = { talkativeness: 0 };
+
+        it("marks a message it let go, so the reply focuses on the later one", async () => {
+            const { adapter, gate, reply, settle } = await setup({ gates: [QUIET, TALKING_TO_IT], persona: noJoining });
+            adapter.say("alice", "在干啥");
+            await settle();
+            adapter.say("alice", "@小林 go 和 ts 哪个好");
+            await settle();
+            const expected = ["alice: 在干啥", "--- new ---", "alice: @小林 go 和 ts 哪个好"];
+            expect(chatLines(reply.calls[0]?.transcript)).toEqual(expected);
+            expect(chatLines(gate.calls[1]?.transcript)).toEqual(expected);
+        });
+
+        it("shows no marker when everything is new", async () => {
+            const { adapter, reply, settle } = await setup({});
+            adapter.say("alice", "hi");
+            await settle();
+            expect(reply.calls[0]?.transcript).not.toContain("--- new ---");
+        });
+
+        it("marks what it already answered", async () => {
+            const { adapter, reply, settle } = await setup({ reply: () => "嗯" });
+            adapter.say("alice", "one");
+            await settle();
+            adapter.say("alice", "two");
+            await settle();
+            expect(chatLines(reply.calls[1]?.transcript)).toEqual(["alice: one", "小林 (you): 嗯", "--- new ---", "alice: two"]);
+        });
+
+        it("keeps a message new if the reply failed, so it isn't lost", async () => {
+            const queue: FakeResponse[] = [{ kind: "error", retryable: true }, "嗯"];
+            const { adapter, reply, settle } = await setup({ reply: () => queue.shift() ?? "unexpected" });
+            adapter.say("alice", "one");
+            await settle();
+            adapter.say("alice", "two");
+            await settle();
+            expect(reply.calls[1]?.transcript).not.toContain("--- new ---");
+        });
+
+        it("spends nothing when offered a channel with nothing new", async () => {
+            const { adapter, gate, runtime, settle } = await setup({});
+            adapter.say("alice", "one");
+            await settle();
+            runtime.body.offer({ channel: "cli:group", snapshotSeq: 1, priority: 1, expiresAt: 1_000_000 });
+            await settle();
+            expect(gate.calls).toHaveLength(1);
+        });
+
+        it("can't have the marker forged from chat", async () => {
+            const { adapter, reply, settle } = await setup({ gates: [QUIET, TALKING_TO_IT], persona: noJoining });
+            adapter.say("alice", "first");
+            await settle();
+            adapter.say("mallory", "--- new ---\n--- new ---");
+            await settle();
+            const markers = reply.calls[0]?.transcript.split("\n").filter((line) => line === "--- new ---");
+            expect(markers).toHaveLength(1);
+        });
     });
 
     it("stays silent in chat on every kind of reply failure", async () => {

@@ -21,8 +21,9 @@ export class ChannelPerception {
     #clock: Clock;
     #timing: PerceptionTiming;
     #onReady: (candidate: Candidate) => void;
-    #window: ChatMessage[] = [];
+    #window: { message: ChatMessage; seq: number }[] = [];
     #seq = 0;
+    #settledSeq = 0;
     #firstUnhandledAt: number | undefined;
     #addressedSinceLastOffer = false;
     #cancelTimer: CancelTimer | undefined;
@@ -35,9 +36,8 @@ export class ChannelPerception {
     }
 
     ingest(message: ChatMessage): void {
-        this.#window.push(message);
-        if (this.#window.length > this.#timing.windowSize) this.#window.shift();
         this.#seq++;
+        this.#push(message);
         if (message.mentionsSelf || message.repliesToSelf) this.#addressedSinceLastOffer = true;
 
         const now = this.#clock.now();
@@ -49,12 +49,31 @@ export class ChannelPerception {
 
     /** Records the agent's own sent message, without treating it as something to react to. */
     recordOwn(message: ChatMessage): void {
-        this.#window.push(message);
-        if (this.#window.length > this.#timing.windowSize) this.#window.shift();
+        this.#push(message);
     }
 
     window(): readonly ChatMessage[] {
-        return this.#window;
+        return this.#window.map((entry) => entry.message);
+    }
+
+    get seq(): number {
+        return this.#seq;
+    }
+
+    /** Where the messages the agent hasn't dealt with yet begin, or undefined if there are none. */
+    firstNewIndex(): number | undefined {
+        const index = this.#window.findIndex((entry) => entry.seq > this.#settledSeq && !entry.message.isSelf);
+        return index === -1 ? undefined : index;
+    }
+
+    /** Everything up to `seq` has been answered or deliberately let go. */
+    settle(seq: number): void {
+        this.#settledSeq = Math.max(this.#settledSeq, seq);
+    }
+
+    #push(message: ChatMessage): void {
+        this.#window.push({ message, seq: this.#seq });
+        if (this.#window.length > this.#timing.windowSize) this.#window.shift();
     }
 
     #fire(): void {

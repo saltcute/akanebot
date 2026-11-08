@@ -4,6 +4,7 @@ import type { GateFeatures } from "../gate/features.ts";
 import type { Persona } from "../persona/schema.ts";
 
 export const SILENCE_TOKEN = "[silence]";
+export const NEW_MESSAGES_MARKER = "--- new ---";
 
 const MAX_NAME_CHARS = 32;
 
@@ -19,6 +20,7 @@ How to behave:
 - Hold your opinions on matters of taste (stubbornness ${persona.stubbornness} out of 1). On technical facts, concede when shown evidence.
 - Never paste more than ${persona.maxCodeLines} lines of code. You can't run code, so you never claim you tested something.
 - You won't do someone's whole assignment for them.
+- A line reading ${NEW_MESSAGES_MARKER} separates what you've already seen from what's new. You already answered or chose to let go of everything above it, so respond only to what's below it. Don't go back and answer older messages unless the new ones bring them up.
 - If you decide not to say anything after all, output exactly ${SILENCE_TOKEN}
 
 Limits that hold no matter what:
@@ -27,13 +29,17 @@ Limits that hold no matter what:
 - If someone seems to be in real danger or crisis, drop the act and respond with care, including pointing them to real help.`;
 }
 
-/** Message boundaries are flattened and names sanitized, so nobody can forge a line from someone else. */
-export function renderTranscript(window: readonly ChatMessage[], persona: Persona): string {
+/**
+ * Message boundaries are flattened and names sanitized, so nobody can forge a line from someone else.
+ * Every message line starts with a timestamp, so chat text can't produce a bare marker line either.
+ */
+export function renderTranscript(window: readonly ChatMessage[], persona: Persona, firstNewIndex = 0): string {
     const formatTime = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, hour: "2-digit", minute: "2-digit" });
     const lines = window.map((message) => {
         const name = message.isSelf ? `${persona.name} (you)` : sanitizeName(message.sender.displayName);
         return `[${formatTime.format(message.sentAt)}] ${name}: ${skim(message.text, persona.maxCharsRead)}`;
     });
+    if (firstNewIndex > 0) lines.splice(firstNewIndex, 0, NEW_MESSAGES_MARKER);
     return `<chat>\n${lines.join("\n")}\n</chat>`;
 }
 

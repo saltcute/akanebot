@@ -96,10 +96,14 @@ export class Runtime {
             return;
         }
 
-        const window = channel.perception.window();
+        const { perception } = channel;
+        const firstNewIndex = perception.firstNewIndex();
+        if (firstNewIndex === undefined) return;
+        const seenSeq = perception.seq;
+        const window = perception.window();
         const messageId = window.at(-1)?.messageId;
         const idField = messageId ? { messageId } : {};
-        const transcript = renderTranscript(window, persona);
+        const transcript = renderTranscript(window, persona, firstNewIndex);
         const gate = await llm.generate("gate", {
             stable: renderGateInstructions(persona),
             transcript,
@@ -118,7 +122,10 @@ export class Runtime {
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng);
         const competence = assessCompetence(features, persona, this.#competenceRng);
         trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, features } });
-        if (!decision.speak) return;
+        if (!decision.speak) {
+            perception.settle(seenSeq);
+            return;
+        }
 
         lease.setState("composing");
         const technical = competence.mode !== "casual";
@@ -137,10 +144,12 @@ export class Runtime {
 
         const bursts = splitBursts(result.text);
         if (bursts.length === 0) {
+            perception.settle(seenSeq);
             trace.record("reply.chose_silence", { channel: key, ...idField });
             return;
         }
         if (exceedsCodeLimit(bursts, persona.maxCodeLines)) {
+            perception.settle(seenSeq);
             trace.record("reply.code_too_long", { channel: key, ...idField });
             return;
         }
@@ -149,7 +158,9 @@ export class Runtime {
         for (const text of bursts) {
             const outcome = await this.guard.send(channel.adapter, channel.ref, text, { signal: lease.signal });
             if (outcome.kind !== "sent") return;
-            channel.perception.recordOwn(ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), persona.name));
+            // Settled on the first send, so a reply cut short partway is never answered a second time.
+            perception.settle(seenSeq);
+            perception.recordOwn(ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), persona.name));
         }
     }
 }
