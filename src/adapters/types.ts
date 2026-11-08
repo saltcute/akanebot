@@ -15,6 +15,8 @@ export type ChatMessage = ChannelRef & {
     messageId: string;
     sender: Sender;
     text: string;
+    /** Pictures attached to this message. Described only if the agent actually reads it. */
+    images?: readonly { url: string }[];
     sentAt: number;
     mentionsSelf: boolean;
     repliesToSelf: boolean;
@@ -36,6 +38,7 @@ export interface Adapter {
     stop(): Promise<void>;
     send(channel: ChannelRef, text: string, options?: SendOptions): Promise<{ messageId: string }>;
     sendTyping(channel: ChannelRef): Promise<void>;
+    react?(channel: ChannelRef, messageId: string, emoji: string): Promise<void>;
 }
 
 export function channelKey(channel: ChannelRef): string {

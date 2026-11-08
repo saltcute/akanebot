@@ -2,17 +2,27 @@ import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
 import type { Adapter, ChannelRef, ChatMessage, SendOptions } from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 2000;
+const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
+
+function isDescribableImage(contentType: string | null, size: number): boolean {
+    return Boolean(contentType?.startsWith("image/")) && size <= MAX_DESCRIBABLE_IMAGE_BYTES;
+}
 
 /** Returns undefined for anything that isn't an ordinary message in a server. */
 export function toChatMessage(message: Message, selfId: string): ChatMessage | undefined {
     if (!message.inGuild() || message.system) return undefined;
     const placeholders = [
         ...message.attachments.map((attachment) => (attachment.contentType?.startsWith("image/") ? "[image]" : "[file]")),
-        ...message.stickers.map(() => "[sticker]"),
+        ...message.stickers.map((sticker) => (sticker.name ? `[sticker: ${sticker.name}]` : "[sticker]")),
     ];
     const text = [message.cleanContent, ...placeholders].filter(Boolean).join(" ");
     if (text === "") return undefined;
 
+    const images = [
+        ...message.attachments
+            .filter((attachment) => isDescribableImage(attachment.contentType, attachment.size))
+            .map((attachment) => ({ url: attachment.url })),
+    ];
     const repliedToId = message.reference?.messageId;
     const repliedTo = repliedToId ? message.channel.messages.cache.get(repliedToId) : undefined;
     return {
@@ -25,6 +35,7 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
             isBot: message.author.bot,
         },
         text,
+        ...(images.length > 0 ? { images } : {}),
         sentAt: message.createdTimestamp,
         // Checks the user list directly, so @everyone doesn't count as being addressed.
         mentionsSelf: message.mentions.users.has(selfId),
@@ -92,6 +103,11 @@ export class DiscordAdapter implements Adapter {
 
     async sendTyping(channel: ChannelRef): Promise<void> {
         await (await this.#sendable(channel)).sendTyping();
+    }
+
+    async react(channel: ChannelRef, messageId: string, emoji: string): Promise<void> {
+        const target = await this.#sendable(channel);
+        await target.messages.react(messageId, emoji);
     }
 
     async #sendable(channel: ChannelRef) {

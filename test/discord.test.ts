@@ -5,7 +5,7 @@ import { DiscordAdapter, toChatMessage } from "../src/adapters/discord.ts";
 const SELF = "999";
 
 function collection<T>(items: T[]) {
-    return { map: <R>(fn: (item: T) => R) => items.map(fn) };
+    return items;
 }
 
 function discordMessage(overrides: Record<string, unknown> = {}): Message {
@@ -78,6 +78,19 @@ describe("toChatMessage", () => {
         const attachments = collection([{ contentType: "image/png" }, { contentType: "application/pdf" }, { contentType: null }]);
         const stickers = collection([{}]);
         expect(toChatMessage(discordMessage({ cleanContent: "看", attachments, stickers }), SELF)?.text).toBe("看 [image] [file] [file] [sticker]");
+    });
+
+    it("passes image URLs along, skipping non-images and huge files", () => {
+        const items = [
+            { contentType: "image/png", size: 100, url: "https://cdn/a.png" },
+            { contentType: "application/pdf", size: 100, url: "https://cdn/b.pdf" },
+            { contentType: "image/png", size: 9_000_000, url: "https://cdn/huge.png" },
+        ];
+        expect(toChatMessage(discordMessage({ attachments: items }), SELF)?.images).toEqual([{ url: "https://cdn/a.png" }]);
+    });
+
+    it("names stickers", () => {
+        expect(toChatMessage(discordMessage({ cleanContent: "", stickers: collection([{ name: "hi" }]) }), SELF)?.text).toBe("[sticker: hi]");
     });
 
     it("skips messages with nothing to read", () => {
