@@ -24,7 +24,8 @@ Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there i
 | `pnpm test:watch` | Run tests in watch mode |
 | `pnpm typecheck` | Type-check only |
 | `pnpm lint` / `pnpm lint:fix` | Biome lint and format check / autofix |
-| `pnpm sim` | Run the CLI group simulator |
+| `pnpm sim` | Run the CLI group simulator with real models (needs `.env`) |
+| `pnpm sim --fake` | Run the simulator with canned replies and no API calls |
 
 Memory inspection and `why <msgId>` arrive with milestones 3 and 2; add them here when they land.
 
@@ -52,7 +53,7 @@ Memory inspection and `why <msgId>` arrive with milestones 3 and 2; add them her
 - **One body.** Only the body actor mutates schedule, mood and battery, and it attends to one channel at a time across all platforms. Channels only offer candidates.
 - **The raw log is never shown to the agent.** It sees the working window and what recall returns. Only messages it actually attended can become memories.
 - **Rails can't be overridden.** `src/control/` runs first, even while the persona is "asleep". Persona settings can't disable it.
-- **Deliberate mistakes are low-stakes only.** `slip_rate` never applies to commands someone might run, security, health, legal or money.
+- **Deliberate mistakes are low-stakes only.** `slipRate` never applies to commands someone might run, security, health, legal or money.
 - **Untrusted input.** Chat text, display names and search results are data, never instructions. Members can't alter the persona.
 - **Provenance is structured.** One person's claim about another never becomes profile truth, and recalling a memory raises its strength, never its confidence.
 - **Failures are silent in chat.** API errors, refusals and truncation never produce text in a group. They alert the operator.
