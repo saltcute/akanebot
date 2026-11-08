@@ -7,6 +7,8 @@
     "node": ">=24"
   },
   "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/main.ts",
+    "explain": "node --disable-warning=ExperimentalWarning src/cli/explain.ts",
     "sim": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli/sim.ts",
     "memory": "node --disable-warning=ExperimentalWarning src/cli/memory.ts",
     "test": "vitest run",
@@ -19,6 +21,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
     "@huggingface/transformers": "^4.3.2",
+    "discord.js": "^14.28.1",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
