@@ -1087,6 +1087,70 @@ describe("senses", () => {
             expect(reacted).toBeLessThan(12);
         });
 
+        describe("knowing it reacted", () => {
+            const noReply = { persona: { lowEffort: 1 } };
+            const reacts = { quickReaction: "👍" };
+            const words = { quickReaction: "" };
+
+            it("sees its own reaction in the chat afterwards", async () => {
+                const { adapter, reply, settle } = await setup({ ...noReply, gates: [reacts, words] });
+                adapter.say("alice", "笑死");
+                await settle();
+                adapter.say("alice", "你刚才点了什么");
+                await settle();
+                expect(chatLines(reply.calls[0]?.transcript)).toEqual([
+                    "alice: 笑死",
+                    `${PERSONA.name} (you): [reacted 👍 to alice: "笑死"]`,
+                    "--- new ---",
+                    "alice: 你刚才点了什么",
+                ]);
+            });
+
+            it("still remembers after a restart", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const first = await setup({ ...noReply, memoryStore, gates: [reacts] });
+                first.adapter.say("alice", "笑死");
+                await first.settle();
+                expect(memoryStore.recentAttended("cli:group", 10).at(-1)?.text).toContain("[reacted 👍");
+            });
+
+            it("doesn't treat its own reaction as something new to respond to", async () => {
+                const { adapter, gate, settle } = await setup({ ...noReply, gates: [reacts] });
+                adapter.say("alice", "笑死");
+                await settle();
+                await settle(60_000);
+                expect(gate.calls).toHaveLength(1);
+            });
+
+            it("doesn't believe it reacted if the reaction failed", async () => {
+                const { adapter, reply, settle } = await setup({ ...noReply, gates: [reacts, words] });
+                adapter.react = async () => {
+                    throw new Error("missing permission");
+                };
+                adapter.say("alice", "笑死");
+                await settle();
+                adapter.say("alice", "在吗");
+                await settle();
+                expect(reply.calls[0]?.transcript).not.toContain("[reacted");
+            });
+
+            it("doesn't believe it reacted in shadow mode", async () => {
+                const { adapter, reply, settle } = await setup({ ...noReply, shadow: true, gates: [reacts, words] });
+                adapter.say("alice", "笑死");
+                await settle();
+                adapter.say("alice", "在吗");
+                await settle();
+                expect(reply.calls[0]?.transcript).not.toContain("[reacted");
+            });
+
+            it("never sends the record of a reaction as a message", async () => {
+                const { adapter, settle } = await setup({ reply: () => '[reacted 👍 to alice: "x"]' });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(adapter.sent).toEqual([]);
+            });
+        });
+
         it("posts nothing in shadow mode", async () => {
             const { adapter, trace, settle } = await setup({ shadow: true, persona: { lowEffort: 1 }, gate: { quickReaction: "👍" } });
             adapter.say("alice", "hi");

@@ -1,3 +1,5 @@
+import { OWN_REACTION_PREFIX } from "./prompt.ts";
+
 const MAX_BURSTS = 4;
 /** Reasoning a model sometimes emits as a tagged block, removed along with its contents. */
 const REASONING_BLOCK = /<(thinking[\w-]*|reasoning|analysis)>[\s\S]*?<\/\1>/gi;
@@ -6,7 +8,11 @@ const STRAY_WRAPPER_TAG = /<\/?(?:chat[\w-]*|reply|response|message|output)>/gi;
 
 /** Turns the model's list into chat messages: cleaned, capped, and with lines split unless they are fenced code. */
 export function toBursts(messages: readonly string[], maxBursts = MAX_BURSTS): string[] {
-    return messages.flatMap(splitLines).slice(0, maxBursts);
+    // The model sometimes imitates the transcript's record of a reaction. That's not something to say out loud.
+    return messages
+        .flatMap(splitLines)
+        .filter((burst) => !burst.startsWith(OWN_REACTION_PREFIX))
+        .slice(0, maxBursts);
 }
 
 function splitLines(text: string): string[] {

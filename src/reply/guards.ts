@@ -71,20 +71,20 @@ export class SendGuard {
     }
 
     /** A reaction counts against the rate limit but not as talking. */
-    async react(adapter: Adapter, channel: ChannelRef, messageId: string, emoji: string): Promise<boolean> {
+    async react(adapter: Adapter, channel: ChannelRef, messageId: string, emoji: string): Promise<"reacted" | "shadow" | "failed"> {
         const key = channelKey(channel);
         if (this.#shadow) {
             this.#trace.record("send.shadow", { channel: key, messageId, detail: { text: `(reacts ${emoji})` } });
-            return true;
+            return "shadow";
         }
-        if (!adapter.react || !this.#takeToken()) return false;
+        if (!adapter.react || !this.#takeToken()) return "failed";
         try {
             await adapter.react(channel, messageId, emoji);
             this.#trace.record("send.reacted", { channel: key, messageId, detail: { emoji } });
-            return true;
+            return "reacted";
         } catch (error) {
             this.#trace.record("send.failed", { channel: key, messageId, detail: { error: String(error) } });
-            return false;
+            return "failed";
         }
     }
 

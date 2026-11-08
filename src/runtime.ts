@@ -31,7 +31,15 @@ import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTimi
 import type { Persona } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
-import { renderLookup, renderPeople, renderReplyInstructions, renderReplyState, renderTranscript, replySchema } from "./reply/prompt.ts";
+import {
+    renderLookup,
+    renderOwnReaction,
+    renderPeople,
+    renderReplyInstructions,
+    renderReplyState,
+    renderTranscript,
+    replySchema,
+} from "./reply/prompt.ts";
 import { type Pacing, readingDelay, thinkingDelay, typingDelay } from "./reply/timing.ts";
 
 export type ControlOptions = {
@@ -413,7 +421,18 @@ export class Runtime {
             if (!reaction || !reactTarget) return;
             this.vitals.spend(REACTION_BATTERY_COST);
             if (pacing && !(await sleep(clock, readingDelay(pacing, reactTarget.text.length) + REACTION_PAUSE_MS, lease.signal))) return;
-            await this.guard.react(channel.adapter, channel.ref, reactTarget.messageId, reaction);
+            const outcome = await this.guard.react(channel.adapter, channel.ref, reactTarget.messageId, reaction);
+            if (outcome !== "reacted") return;
+            // Written into its own view of the chat, or it would have no idea it had reacted.
+            const own = ownMessage(
+                channel.ref,
+                `reaction:${reactTarget.messageId}:${reaction}`,
+                renderOwnReaction(reaction, reactTarget),
+                clock.now(),
+                persona.name,
+            );
+            perception.recordOwn(own);
+            this.memory.recordOwn(own);
         };
         if (!decision.speak) {
             if (decision.addressed) this.vitals.noteIgnored(ignoreKey);
