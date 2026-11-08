@@ -1,0 +1,32 @@
+# Copy to config.yaml to customize. config.yaml is ignored by git.
+# Secrets stay in .env; this file only names models and limits.
+
+persona: personas/example.md
+
+# The bot goes silent for the rest of the UTC day once it has spent this much.
+dailyBudgetUsd: 2
+
+backends:
+  anthropic: { type: anthropic }
+
+# Each job picks its own model. Change a model here and no code needs to change.
+# `options` are passed straight to that backend.
+roles:
+  gate:
+    backend: anthropic
+    model: claude-haiku-5-5
+    options: { effort: low, thinking: { type: disabled } }
+  reply:
+    backend: anthropic
+    model: claude-opus-5-5
+    options: { effort: low, refusalFallback: true }
+  technical:
+    backend: anthropic
+    model: claude-opus-5-5
+    options: { effort: medium, refusalFallback: true }
+
+# Dollars per million tokens, used by the cost meter and the daily budget.
+prices:
+  claude-haiku-5-5: { input: 0.10, cachedInput: 0.01, output: 0.50 }
+  claude-sonnet-5-5: { input: 2.00, cachedInput: 0.20, output: 10.00 }
+  claude-opus-5-5: { input: 4.00, cachedInput: 0.20, output: 20.00 }
