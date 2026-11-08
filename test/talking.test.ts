@@ -80,8 +80,8 @@ describe("decideToSpeak", () => {
 
 describe("persona files", () => {
     it("loads the shipped example", () => {
-        const persona = loadPersona("personas/example.md");
-        expect(persona.name).toBe("小林");
+        const persona = loadPersona("personas/akane.md");
+        expect(persona.name).toBe("小茜");
         expect(persona.prose).toContain("# How I talk");
     });
 

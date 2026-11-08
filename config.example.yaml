@@ -1,7 +1,7 @@
 # Copy to config.yaml to customize. config.yaml is ignored by git.
 # Secrets stay in .env; this file only names models and limits.
 
-persona: personas/example.md
+persona: personas/akane.md
 
 # The bot goes silent for the rest of the UTC day once it has spent this much.
 dailyBudgetUsd: 2
