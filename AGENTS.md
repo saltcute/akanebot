@@ -77,6 +77,8 @@ A new knob needs all three of: a zod schema entry in `src/persona/`, a comment e
 
 Design for 8 GB of VRAM: one LLM loaded at a time, embeddings and rerankers on CPU, all local calls through a single queue. The GPU server is reached by URL, so it can live on another machine.
 
+The model comparison (milestone 7) is deferred. Its plan is in `docs/model-comparison-plan.md`.
+
 ## Git
 
 - Commit at each coherent, working step, one logical change per commit, with `pnpm check` passing.
