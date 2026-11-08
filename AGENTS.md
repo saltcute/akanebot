@@ -26,8 +26,9 @@ Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there i
 | `pnpm lint` / `pnpm lint:fix` | Biome lint and format check / autofix                       |
 | `pnpm sim`                    | Run the CLI group simulator with real models (needs `.env`) |
 | `pnpm sim --fake`             | Run the simulator with canned replies and no API calls      |
+| `pnpm memory [--sim] <command>` | Inspect or edit memories: `list`, `search`, `show`, `edit`, `forget`, `forget-user`, `restore`. `--sim` uses the simulator's database |
 
-In the simulator, `/why [messageId]` shows every decision made about a message. Memory inspection arrives with milestone 3; add it here when it lands.
+In the simulator, `/why [messageId]` shows every decision made about a message. `/close` digests the current conversation, `/sleep` runs the nightly job and `/memories` lists what it remembers.
 
 ## Layout
 

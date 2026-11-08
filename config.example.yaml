@@ -6,6 +6,20 @@ persona: personas/akane.md
 # The bot goes silent for the rest of the UTC day once it has spent this much.
 dailyBudgetUsd: 2
 
+# Runs on the CPU. The score band is specific to this model, so re-measure it if you change the model.
+embedder:
+  type: transformers
+  model: Xenova/multilingual-e5-small
+  cosineFloor: 0.84
+  cosineCeiling: 0.92
+
+memory:
+  path: data/memory.db
+  segmentGapMinutes: 20
+  maxSegmentMessages: 60
+  rawRetentionDays: 30
+  dailyWritesPerUser: 30
+
 control:
   commandPrefix: /gabriel
   # platform:userId of each admin. These can run mute, unmute, kill, resume and status.
@@ -39,6 +53,15 @@ roles:
     backend: anthropic
     model: claude-opus-5-5
     options: { effort: medium, refusalFallback: true }
+
+  extract:
+    backend: anthropic
+    model: claude-haiku-5-5
+    options: { effort: low, thinking: { type: disabled } }
+  consolidate:
+    backend: anthropic
+    model: claude-sonnet-5-5
+    options: { effort: low }
 
 # Dollars per million tokens, used by the cost meter and the daily budget.
 prices:

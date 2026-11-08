@@ -2,12 +2,22 @@ import { existsSync, readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
 import { pricesSchema } from "./lib/cost.ts";
+import { embedderConfigSchema } from "./llm/embedder.ts";
 import { llmConfigSchema } from "./llm/registry.ts";
 
 export const appConfigSchema = z.strictObject({
     ...llmConfigSchema.shape,
     prices: pricesSchema,
     persona: z.string().min(1),
+    embedder: embedderConfigSchema,
+    memory: z.strictObject({
+        path: z.string().min(1).default("data/memory.db"),
+        /** A conversation counts as over after this many minutes without anything attended. */
+        segmentGapMinutes: z.number().positive().default(20),
+        maxSegmentMessages: z.number().int().positive().default(60),
+        rawRetentionDays: z.number().positive().default(30),
+        dailyWritesPerUser: z.number().int().positive().default(30),
+    }),
     control: z.strictObject({
         commandPrefix: z.string().min(1).default("/gabriel"),
         /** `platform:userId` of each person allowed to run admin commands. */

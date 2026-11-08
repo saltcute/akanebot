@@ -58,6 +58,10 @@ export class ChannelPerception {
         if (this.#window.length > this.#timing.windowSize) this.#window.shift();
     }
 
+    purge(shouldRemove: (message: ChatMessage) => boolean): void {
+        this.#window = this.#window.filter((entry) => !shouldRemove(entry.message));
+    }
+
     window(): readonly ChatMessage[] {
         return this.#window.map((entry) => entry.message);
     }

@@ -12,6 +12,8 @@ export type CommandResult =
           /** Admin commands must be acknowledged even when rate limits would block a normal message. */
           urgent: boolean;
           bodyEffect?: "stop" | "resume";
+          /** This person opted out, so everything derived from them must go. */
+          forgetUser?: string;
       };
 
 const DEFAULT_MUTE_MINUTES = 60;
@@ -26,7 +28,7 @@ export function runCommand(message: ChatMessage, options: { prefix: string; admi
 
     if (command === "opt-out") {
         state.optOut(user);
-        return { handled: true, urgent: false, ack: "[gabriel] Done. It will no longer read or remember your messages." };
+        return { handled: true, urgent: false, forgetUser: user, ack: "[gabriel] Done. It has forgotten you and will no longer read your messages." };
     }
     if (command === "opt-in") {
         state.optIn(user);

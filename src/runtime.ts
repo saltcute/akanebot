@@ -18,7 +18,10 @@ import type { Clock } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
 import type { DecisionTrace } from "./lib/trace.ts";
+import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
+import type { MemoryStore } from "./memory/store.ts";
+import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, type PerceptionTiming } from "./perception/channel.ts";
 import type { Persona } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
@@ -45,6 +48,9 @@ export type RuntimeOptions = {
     limits: GuardLimits;
     control: ControlOptions;
     controlStore: ControlStore;
+    memoryStore: MemoryStore;
+    embedder: Embedder;
+    memorySettings: MemorySettings;
 };
 
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
@@ -59,6 +65,7 @@ const CRISIS_MAX_OUTPUT = 3000;
 export class Runtime {
     readonly body: BodyActor;
     readonly guard: SendGuard;
+    readonly memory: MemorySystem;
     #options: RuntimeOptions;
     #adapters: ReadonlyMap<Platform, Adapter>;
     #channels = new Map<string, Channel>();
@@ -83,6 +90,17 @@ export class Runtime {
         this.#crisis = new CrisisDesk(options.clock);
         this.#allowedChannels = new Set(options.control.groups.filter((group) => group.disclosed).map(channelKey));
         if (this.#state.killed) this.body.goAway();
+        this.memory = new MemorySystem({
+            store: options.memoryStore,
+            embedder: options.embedder,
+            llm: options.llm,
+            clock: options.clock,
+            rng: options.rng.fork("recall"),
+            trace: options.trace,
+            persona: () => this.#persona,
+            settings: options.memorySettings,
+            alert: (reason, detail) => this.#alert(reason, detail),
+        });
     }
 
     setPersona(persona: Persona): void {
@@ -94,14 +112,17 @@ export class Runtime {
         do {
             await Promise.all(this.#background);
             await this.body.whenIdle();
+            await this.memory.whenIdle();
         } while (this.#background.size > 0);
     }
 
     async start(): Promise<void> {
         await Promise.all(this.#options.adapters.map((adapter) => adapter.start((message) => this.#onMessage(message))));
+        this.memory.start();
     }
 
     async stop(): Promise<void> {
+        this.memory.stop();
         await Promise.all(this.#options.adapters.map((adapter) => adapter.stop()));
     }
 
@@ -122,6 +143,7 @@ export class Runtime {
             trace.record("control.command", { channel: key, messageId: message.messageId });
             if (command.bodyEffect === "stop") this.body.goAway();
             if (command.bodyEffect === "resume") this.body.comeBack();
+            if (command.forgetUser) this.#forgetUser(command.forgetUser);
             if (command.ack) this.#inBackground(this.#acknowledge(channel, command.ack, command.urgent));
             return;
         }
@@ -143,7 +165,13 @@ export class Runtime {
         }
     }
 
+    #forgetUser(user: string): void {
+        this.memory.forgetUser(user);
+        for (const channel of this.#channels.values()) channel.perception.purge((message) => userKey(message) === user);
+    }
+
     #admit(channel: Channel, message: ChatMessage): void {
+        this.memory.recordIncoming(message);
         if (this.#state.isMuted(channelKey(channel.ref))) channel.perception.recordSeen(message);
         else channel.perception.ingest(message);
     }
@@ -225,6 +253,7 @@ export class Runtime {
             onReady: (candidate) => this.body.offer(candidate),
         });
         const channel: Channel = { ref: { platform: ref.platform, channelId: ref.channelId }, adapter, perception };
+        for (const message of this.memory.restoreWindow(key, this.#options.timing.windowSize)) perception.recordSeen(message);
         this.#channels.set(key, channel);
         return channel;
     }
@@ -269,6 +298,8 @@ export class Runtime {
             return;
         }
 
+        const newMessages = window.slice(firstNewIndex).filter((message) => !message.isSelf);
+        this.memory.markAttended(key, newMessages);
         const features: GateFeatures = gate.data;
         const mentioned = lease.candidate.priority >= ADDRESSED_PRIORITY;
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng);
@@ -286,10 +317,11 @@ export class Runtime {
         }
 
         lease.setState("composing");
+        const { block: memories } = await this.memory.recall(key, newMessages);
         const technical = competence.mode !== "casual";
         const result = await llm.generate(technical ? "technical" : "reply", {
             stable: renderReplyInstructions(persona),
-            transcript,
+            transcript: `${memories}${transcript}`,
             volatile: renderReplyState({ now: this.#options.clock.now(), persona, features, competence, addressed: decision.addressed }),
             schema: replySchema,
             maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
@@ -320,7 +352,9 @@ export class Runtime {
             if (outcome.kind !== "sent") return;
             // Settled on the first send, so a reply cut short partway is never answered a second time.
             perception.settle(seenSeq);
-            perception.recordOwn(ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), persona.name));
+            const own = ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), persona.name);
+            perception.recordOwn(own);
+            this.memory.recordOwn(own);
         }
     }
 }

@@ -14,6 +14,6 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `maxCodeLines` | Code longer than this is never sent | Active |
 | `stubbornness` | How rarely it concedes on matters of taste | Prompt only |
 | `schedule` | Sleep and busy hours | Validated, milestone 5 |
-| `forgetfulness` | Recall threshold | Validated, milestone 3 |
+| `forgetfulness` | How strong a memory must be to come to mind. Higher recalls less | Active |
 | `socialBattery` | Messages per day before it gets short | Validated, milestone 5 |
 | `search` | Curiosity and daily search cap | Validated, milestone 6 |

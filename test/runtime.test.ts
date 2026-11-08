@@ -7,8 +7,10 @@ import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
 import { DecisionTrace } from "../src/lib/trace.ts";
 import type { LlmResult, Usage } from "../src/llm/backend.ts";
+import { NullEmbedder } from "../src/llm/embedder.ts";
 import { FakeBackend, type FakeResponder, type FakeResponse } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
+import { MemoryStore } from "../src/memory/store.ts";
 import type { Persona } from "../src/persona/schema.ts";
 import { type ControlOptions, Runtime } from "../src/runtime.ts";
 import { features, PERSONA } from "./fixtures.ts";
@@ -28,8 +30,11 @@ type Setup = {
     crisis?: FakeResponder;
     control?: Partial<ControlOptions>;
     store?: MemoryControlStore;
+    extract?: FakeResponder;
+    memoryStore?: MemoryStore;
 };
 
+const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
 const QUIET: Partial<GateFeatures> = { addressedToMe: "no", interest: 0 };
 const TALKING_TO_IT: Partial<GateFeatures> = { addressedToMe: "yes" };
 
@@ -63,20 +68,39 @@ async function setup(options: Setup) {
         return JSON.stringify(features({ addressedToMe: "yes", ...options.gate, ...gateQueue.shift() }));
     });
     const crisis = new FakeBackend(options.crisis ?? (() => "are you safe right now?"));
+    const extract = new FakeBackend(options.extract ?? (() => EMPTY_EXTRACTION));
+    const consolidateBackend = new FakeBackend(() => JSON.stringify({ replaced: [] }));
+    const memoryStore = options.memoryStore ?? new MemoryStore(":memory:");
     const reply = new FakeBackend(asMessages(options.reply ?? (() => "哈哈")));
     const technical = new FakeBackend(asMessages(options.technical ?? (() => "技术回复")));
     const cost = new CostMeter({ clock, prices: { m: { input: 1_000_000, cachedInput: 0, output: 0 } }, dailyBudgetUsd: options.budget ?? 1000 });
     const llm = new LlmRegistry(
         llmConfigSchema.parse({
-            backends: { g: { type: "gate" }, r: { type: "reply" }, t: { type: "technical" }, c: { type: "crisis" } },
+            backends: {
+                g: { type: "gate" },
+                r: { type: "reply" },
+                t: { type: "technical" },
+                c: { type: "crisis" },
+                e: { type: "extract" },
+                k: { type: "consolidate" },
+            },
             roles: {
                 gate: { backend: "g", model: "m" },
                 reply: { backend: "r", model: "m" },
                 technical: { backend: "t", model: "m" },
                 crisis: { backend: "c", model: "m" },
+                extract: { backend: "e", model: "m" },
+                consolidate: { backend: "k", model: "m" },
             },
         }),
-        { gate: () => gate, reply: () => reply, technical: () => technical, crisis: () => crisis },
+        {
+            gate: () => gate,
+            reply: () => reply,
+            technical: () => technical,
+            crisis: () => crisis,
+            extract: () => extract,
+            consolidate: () => consolidateBackend,
+        },
         (usage, _role, model) => cost.add(usage, model),
     );
     const runtime = new Runtime({
@@ -97,13 +121,16 @@ async function setup(options: Setup) {
             ...options.control,
         },
         controlStore: store,
+        memoryStore,
+        embedder: new NullEmbedder(),
+        memorySettings: { segmentGapMs: 20 * 60_000, maxSegmentMessages: 60, rawRetentionMs: 30 * 86_400_000, dailyWritesPerUser: 30 },
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
         await clock.advance(ms);
         await runtime.whenIdle();
     };
-    return { clock, trace, adapter, gate, reply, technical, crisis, runtime, settle, store };
+    return { clock, trace, adapter, gate, reply, technical, crisis, extract, memoryStore, runtime, settle, store };
 }
 
 describe("Runtime", () => {
@@ -539,5 +566,96 @@ describe("control plane", () => {
         adapter.say("alice", "hi");
         await settle();
         expect(reply.calls[0]?.stable).toContain("全新的人设");
+    });
+});
+
+describe("memory in the running agent", () => {
+    const remembers = (about: string, gist: string, line = 1, importance = 0.8) =>
+        JSON.stringify({
+            summary: "",
+            importance: 0,
+            emotion: 0,
+            memories: [{ about, gist, detail: "", importance, emotion: 0.2, lines: [line], isInstruction: false }],
+        });
+    const Gap = 20 * 60_000;
+
+    it("remembers after a conversation ends, and brings it up later in the chat block", async () => {
+        const { adapter, reply, settle } = await setup({ extract: () => remembers("alice", "alice 养了一只猫叫豆豆") });
+        adapter.say("alice", "我养了一只猫叫豆豆");
+        await settle(1000);
+        await settle(Gap);
+        adapter.say("alice", "还记得 猫 叫 豆豆 吗 猫叫豆豆");
+        await settle(1000);
+        const call = reply.calls[1];
+        expect(call?.transcript).toContain("<memories>");
+        expect(call?.transcript).toContain("alice 养了一只猫叫豆豆");
+        expect(call?.volatile).not.toContain("豆豆");
+    });
+
+    it("can only remember what it actually read", async () => {
+        const { adapter, runtime, extract, settle } = await setup({});
+        runtime.body.goAway();
+        adapter.say("alice", "说给空气听的话");
+        await settle(Gap * 2);
+        expect(extract.calls).toHaveLength(0);
+    });
+
+    it("sees recent chat again after a restart, without reacting to it", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const first = await setup({ memoryStore });
+        first.adapter.say("alice", "重启前说的话");
+        await first.settle();
+        const second = await setup({ memoryStore });
+        second.adapter.say("alice", "现在呢");
+        await second.settle();
+        expect(second.gate.calls).toHaveLength(1);
+        expect(chatLines(second.reply.calls[0]?.transcript)).toEqual([
+            "alice: 重启前说的话",
+            `${PERSONA.name} (you): 哈哈`,
+            "--- new ---",
+            "alice: 现在呢",
+        ]);
+    });
+
+    it("digests a conversation that a restart left unfinished", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const first = await setup({ memoryStore });
+        first.adapter.say("alice", "一句话");
+        await first.settle();
+        const second = await setup({ memoryStore, extract: () => remembers("alice", "说了一句话") });
+        await second.settle(0);
+        expect(second.extract.calls).toHaveLength(1);
+    });
+
+    it("forgets someone completely when they opt out", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, reply, settle } = await setup({ memoryStore, extract: () => remembers("alice", "alice 的秘密") });
+        adapter.say("alice", "我的秘密");
+        await settle(1000);
+        await settle(Gap);
+        expect(memoryStore.all()).toHaveLength(1);
+        adapter.say("alice", "/gabriel opt-out");
+        await settle();
+        expect(memoryStore.all()).toEqual([]);
+        adapter.say("bob", "hello");
+        await settle();
+        expect(reply.calls.at(-1)?.transcript).not.toContain("我的秘密");
+    });
+
+    it("doesn't remember crisis messages", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, extract, settle } = await setup({ memoryStore });
+        adapter.say("alice", "我真的不想活了");
+        await settle(1000);
+        await settle(Gap * 2);
+        expect(extract.calls).toHaveLength(0);
+        expect(memoryStore.recentAttended("cli:group", 10).filter((message) => !message.isSelf)).toEqual([]);
+    });
+
+    it("runs the nightly job once a day, during scheduled sleep", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { settle, trace } = await setup({ memoryStore, persona: { timezone: "UTC" } });
+        await settle(2 * 86_400_000);
+        expect(trace.ofKind("memory.consolidated")).toHaveLength(2);
     });
 });
