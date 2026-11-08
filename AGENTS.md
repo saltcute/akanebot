@@ -1,6 +1,6 @@
 # Gabriel
 
-A persona agent that joins Discord and QQ group chats as an ordinary member, for entertainment. It chats casually, chooses when to speak, remembers selectively and imperfectly, has moods and a daily routine, and can disagree, ignore or forget. Its technical ability targets an average undergraduate computer or software engineering student. A maintainer tunes it through one personality file, `personas/example.md`.
+A persona agent that joins Discord and QQ group chats as an ordinary member, for entertainment. It chats casually, chooses when to speak, remembers selectively and imperfectly, has moods and a daily routine, and can disagree, ignore or forget. Its technical ability targets an average undergraduate computer or software engineering student. A maintainer tunes it through one personality file, `personas/akane.md`.
 
 ## The main idea
 
@@ -16,35 +16,35 @@ adapters -> control plane -> per-channel perception -> body actor -> gate -> rec
 
 Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there is no build step.
 
-| Command | Purpose |
-|---|---|
-| `pnpm install` | Install dependencies |
-| `pnpm check` | Typecheck, lint and test. Must pass before every commit |
-| `pnpm test` | Run tests once |
-| `pnpm test:watch` | Run tests in watch mode |
-| `pnpm typecheck` | Type-check only |
-| `pnpm lint` / `pnpm lint:fix` | Biome lint and format check / autofix |
-| `pnpm sim` | Run the CLI group simulator with real models (needs `.env`) |
-| `pnpm sim --fake` | Run the simulator with canned replies and no API calls |
+| Command                       | Purpose                                                     |
+| ----------------------------- | ----------------------------------------------------------- |
+| `pnpm install`                | Install dependencies                                        |
+| `pnpm check`                  | Typecheck, lint and test. Must pass before every commit     |
+| `pnpm test`                   | Run tests once                                              |
+| `pnpm test:watch`             | Run tests in watch mode                                     |
+| `pnpm typecheck`              | Type-check only                                             |
+| `pnpm lint` / `pnpm lint:fix` | Biome lint and format check / autofix                       |
+| `pnpm sim`                    | Run the CLI group simulator with real models (needs `.env`) |
+| `pnpm sim --fake`             | Run the simulator with canned replies and no API calls      |
 
-Memory inspection and `why <msgId>` arrive with milestones 3 and 2; add them here when they land.
+In the simulator, `/why [messageId]` shows every decision made about a message. Memory inspection arrives with milestone 3; add it here when it lands.
 
 ## Layout
 
-| Path | Owns |
-|---|---|
-| `src/adapters/` | Normalizing platform events (CLI, Discord, OneBot) into common types, and sending |
-| `src/control/` | Rails, group allowlist, admin commands. Runs before everything else |
-| `src/perception/` | Per-channel debounce, backlog, addressed-message inbox, media placeholders |
-| `src/body/` | The body actor: attention, schedule, mood, social battery, relationships, daily life |
-| `src/gate/` | LLM feature extraction, the deterministic speak policy, competence modes |
-| `src/llm/` | The provider-neutral interface and every vendor backend, embedder, search and batch runner |
-| `src/memory/` | Store, extraction, recall, nightly consolidation, poisoning guards |
-| `src/reply/` | Prompt rendering, message bursts, send guards, timing |
-| `src/persona/` | Persona schema and loader |
-| `src/eval/` | Replay, metrics, model comparison |
-| `src/lib/` | Injected clock, seeded RNG, cost meter, decision trace |
-| `src/cli/` | Command-line entry points |
+| Path              | Owns                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| `src/adapters/`   | Normalizing platform events (CLI, Discord, OneBot) into common types, and sending          |
+| `src/control/`    | Rails, group allowlist, admin commands. Runs before everything else                        |
+| `src/perception/` | Per-channel debounce, backlog, addressed-message inbox, media placeholders                 |
+| `src/body/`       | The body actor: attention, schedule, mood, social battery, relationships, daily life       |
+| `src/gate/`       | LLM feature extraction, the deterministic speak policy, competence modes                   |
+| `src/llm/`        | The provider-neutral interface and every vendor backend, embedder, search and batch runner |
+| `src/memory/`     | Store, extraction, recall, nightly consolidation, poisoning guards                         |
+| `src/reply/`      | Prompt rendering, message bursts, send guards, timing                                      |
+| `src/persona/`    | Persona schema and loader                                                                  |
+| `src/eval/`       | Replay, metrics, model comparison                                                          |
+| `src/lib/`        | Injected clock, seeded RNG, cost meter, decision trace                                     |
+| `src/cli/`        | Command-line entry points                                                                  |
 
 ## Architecture rules
 
@@ -62,7 +62,7 @@ Memory inspection and `why <msgId>` arrive with milestones 3 and 2; add them her
 
 ## Persona settings
 
-A new knob needs all three of: a zod schema entry in `src/persona/`, a comment explaining it in `personas/example.md`, and a row in `docs/constraints.md`.
+A new knob needs all three of: a zod schema entry in `src/persona/`, a comment explaining it in `personas/akane.md`, and a row in `docs/constraints.md`.
 
 ## Testing
 

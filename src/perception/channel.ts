@@ -52,6 +52,12 @@ export class ChannelPerception {
         this.#push(message);
     }
 
+    /** Keeps a message as context without it ever counting as new or waking the agent. */
+    recordSeen(message: ChatMessage): void {
+        this.#window.push({ message, seq: 0 });
+        if (this.#window.length > this.#timing.windowSize) this.#window.shift();
+    }
+
     window(): readonly ChatMessage[] {
         return this.#window.map((entry) => entry.message);
     }

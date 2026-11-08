@@ -8,6 +8,17 @@ export const appConfigSchema = z.strictObject({
     ...llmConfigSchema.shape,
     prices: pricesSchema,
     persona: z.string().min(1),
+    control: z.strictObject({
+        commandPrefix: z.string().min(1).default("/gabriel"),
+        /** `platform:userId` of each person allowed to run admin commands. */
+        admins: z.array(z.string().min(1)).default([]),
+        /** The agent acts only in groups listed here with `disclosed: true`. */
+        groups: z
+            .array(z.strictObject({ platform: z.enum(["discord", "qq", "cli"]), channelId: z.string().min(1), disclosed: z.boolean() }))
+            .default([]),
+        crisisResources: z.string().min(1),
+        statePath: z.string().min(1).default("data/control.json"),
+    }),
     dailyBudgetUsd: z.number().positive(),
 });
 

@@ -2,8 +2,8 @@ import type { GateFeatures } from "../src/gate/features.ts";
 import type { Persona } from "../src/persona/schema.ts";
 
 export const PERSONA: Persona = {
-    name: "小林",
-    aliases: ["xiaolin"],
+    name: "小茜",
+    aliases: ["akane"],
     timezone: "Asia/Shanghai",
     schedule: { sleep: { weekday: "01:30-08:40", weekend: "03:00-11:30" }, busy: [] },
     talkativeness: 0.35,
@@ -16,7 +16,7 @@ export const PERSONA: Persona = {
     skills: { dataStructures: 3, web: 4, mathProofs: 2 },
     slipRate: 0.25,
     maxCodeLines: 12,
-    prose: "# Who I am\n小林",
+    prose: "# Who I am\n小茜",
 };
 
 export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
@@ -29,6 +29,7 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         domain: "other",
         difficulty: 1,
         highStakes: false,
+        possibleCrisis: false,
         privateThought: "嗯",
         ...overrides,
     };
