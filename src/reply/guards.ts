@@ -70,6 +70,12 @@ export class SendGuard {
         return this.#deliver(adapter, channel, text, options);
     }
 
+    /** Cosmetic, so a failure here is ignored. */
+    async typing(adapter: Adapter, channel: ChannelRef): Promise<void> {
+        if (this.#shadow) return;
+        await adapter.sendTyping(channel).catch(() => {});
+    }
+
     /** For safety responses and admin confirmations, which must get through. Still at-most-once. */
     sendUrgent(adapter: Adapter, channel: ChannelRef, text: string): Promise<SendOutcome> {
         return this.#deliver(adapter, channel, text, {});

@@ -13,7 +13,8 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `slipRate` | Chance of a mistake when working something out, never on high-stakes topics | Active |
 | `maxCodeLines` | Code longer than this is never sent | Active |
 | `stubbornness` | How rarely it concedes on matters of taste | Prompt only |
-| `schedule` | Sleep and busy hours | Validated, milestone 5 |
+| `schedule` | Sleep and busy hours. While busy it only checks its phone now and then | Active |
 | `forgetfulness` | How strong a memory must be to come to mind. Higher recalls less | Active |
-| `socialBattery` | Messages per day before it gets short | Validated, milestone 5 |
+| `socialBattery` | Messages per day before it gets short with people, then stops joining in | Active |
+| `dailyLife` | One is picked each morning and colours the whole day | Active |
 | `search` | Curiosity and daily search cap | Validated, milestone 6 |

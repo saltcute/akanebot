@@ -95,4 +95,29 @@ describe("ChannelPerception", () => {
         expect(offers).toHaveLength(0);
         expect(perception.window()).toHaveLength(1);
     });
+
+    it("skims a backlog down to the latest messages plus a few addressed ones", () => {
+        const { perception } = setup(50);
+        perception.ingest(message(1, { mentionsSelf: true }));
+        perception.ingest(message(2, { mentionsSelf: true }));
+        perception.ingest(message(3, { mentionsSelf: true }));
+        for (let i = 4; i <= 20; i++) perception.ingest(message(i));
+        expect(perception.skim(5, 2)).toBe(13);
+        expect(perception.window().map((m) => m.messageId)).toEqual(["m2", "m3", "m16", "m17", "m18", "m19", "m20"]);
+    });
+
+    it("leaves a short backlog alone", () => {
+        const { perception } = setup(50);
+        perception.ingest(message(1));
+        expect(perception.skim(5, 2)).toBe(0);
+    });
+
+    it("offers unread messages on return, prioritizing ones addressed to it", () => {
+        const { perception } = setup(50);
+        expect(perception.unreadCandidate()).toBeUndefined();
+        perception.ingest(message(1, { repliesToSelf: true }));
+        expect(perception.unreadCandidate()?.priority).toBe(10);
+        perception.settle(perception.seq);
+        expect(perception.unreadCandidate()).toBeUndefined();
+    });
 });

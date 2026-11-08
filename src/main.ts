@@ -72,6 +72,8 @@ const runtime = new Runtime({
         dailyWritesPerUser: config.memory.dailyWritesPerUser,
     },
     shadow: config.shadow,
+    pacing: config.pacing,
+    routine: true,
 });
 
 const stopWatching = watchPersona({

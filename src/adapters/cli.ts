@@ -1,12 +1,12 @@
 import type { Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, SendOptions } from "./types.ts";
 
 const SELF_ID = "gabriel";
 
 /** A simulated group chat, driven by the simulator and by tests. */
 export class CliAdapter implements Adapter {
     readonly platform = "cli" as const;
-    readonly sent: { channelId: string; text: string; messageId: string }[] = [];
+    readonly sent: { channelId: string; text: string; messageId: string; replyToMessageId?: string }[] = [];
     readonly #clock: Clock;
     readonly #selfName: string;
     readonly #mentions: readonly string[];
@@ -49,9 +49,14 @@ export class CliAdapter implements Adapter {
         return messageId;
     }
 
-    async send(channel: ChannelRef, text: string): Promise<{ messageId: string }> {
+    async send(channel: ChannelRef, text: string, options: SendOptions = {}): Promise<{ messageId: string }> {
         const messageId = `m${this.#nextId++}`;
-        this.sent.push({ channelId: channel.channelId, text, messageId });
+        this.sent.push({
+            channelId: channel.channelId,
+            text,
+            messageId,
+            ...(options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
+        });
         this.#print(`${this.#selfName}: ${text}`);
         // Real platforms echo the agent's own messages back, so the simulator does too.
         this.#onMessage?.({

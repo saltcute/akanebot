@@ -35,7 +35,7 @@ export class BodyActor {
     #pending = new Map<string, Candidate>();
     #state: Exclude<BodyState, "away"> = "idle";
     #current: Current | undefined;
-    #away = false;
+    #awayReasons = new Set<string>();
     #running = false;
     #idleWaiters: (() => void)[] = [];
 
@@ -47,7 +47,7 @@ export class BodyActor {
     }
 
     get state(): BodyState {
-        return this.#away && !this.#current ? "away" : this.#state;
+        return this.#isAway && !this.#current ? "away" : this.#state;
     }
 
     /** A newer candidate replaces any waiting one from the same channel. */
@@ -58,16 +58,17 @@ export class BodyActor {
         this.#wake();
     }
 
-    goAway(): void {
-        if (this.#away) return;
-        this.#away = true;
+    /** Several things can keep it away at once, such as sleep and the kill switch. It returns only when all have cleared. */
+    goAway(reason = "manual"): void {
+        const wasAway = this.#isAway;
+        this.#awayReasons.add(reason);
+        if (wasAway) return;
         this.#trace.record("body.away");
         this.#current?.controller.abort("away");
     }
 
-    comeBack(): void {
-        if (!this.#away) return;
-        this.#away = false;
+    comeBack(reason = "manual"): void {
+        if (!this.#awayReasons.delete(reason) || this.#isAway) return;
         this.#trace.record("body.back");
         this.#wake();
     }
@@ -76,6 +77,10 @@ export class BodyActor {
     whenIdle(): Promise<void> {
         if (!this.#running) return Promise.resolve();
         return new Promise((resolve) => this.#idleWaiters.push(resolve));
+    }
+
+    get #isAway(): boolean {
+        return this.#awayReasons.size > 0;
     }
 
     #maybePreempt(candidate: Candidate): void {
@@ -87,14 +92,14 @@ export class BodyActor {
     }
 
     #wake(): void {
-        if (this.#running || this.#away) return;
+        if (this.#running || this.#isAway) return;
         this.#running = true;
         // Deferred so that offers made in the same tick are compared before one is chosen.
         queueMicrotask(() => void this.#drain());
     }
 
     async #drain(): Promise<void> {
-        while (!this.#away) {
+        while (!this.#isAway) {
             const candidate = this.#takeNext();
             if (!candidate) break;
             await this.#runLease(candidate);

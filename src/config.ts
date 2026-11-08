@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pricesSchema } from "./lib/cost.ts";
 import { embedderConfigSchema } from "./llm/embedder.ts";
 import { llmConfigSchema } from "./llm/registry.ts";
+import { pacingSchema } from "./reply/timing.ts";
 
 export const appConfigSchema = z.strictObject({
     ...llmConfigSchema.shape,
@@ -19,6 +20,7 @@ export const appConfigSchema = z.strictObject({
             windowSize: z.number().int().positive().default(40),
         })
         .prefault({}),
+    pacing: pacingSchema.prefault({}),
     limits: z
         .strictObject({
             bucketCapacity: z.number().positive().default(10),

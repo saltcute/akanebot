@@ -32,6 +32,16 @@ export type Memory = Omit<MemoryDraft, "sources"> & {
     supersededBy: number | null;
 };
 
+export type RelationshipRow = {
+    channel: string;
+    userKey: string;
+    familiarity: number;
+    affinity: number;
+    updatedAt: number;
+    gainDay: number;
+    dayGain: number;
+};
+
 type LoggedRow = {
     channel: string;
     messageId: string;
@@ -64,6 +74,11 @@ CREATE TABLE IF NOT EXISTS memorySources (
     PRIMARY KEY (memoryId, messageId)
 );
 CREATE INDEX IF NOT EXISTS memorySourcesSpeaker ON memorySources (speaker, createdAt);
+CREATE TABLE IF NOT EXISTS relationships (
+    channel TEXT NOT NULL, userKey TEXT NOT NULL, familiarity REAL NOT NULL, affinity REAL NOT NULL,
+    updatedAt INTEGER NOT NULL, gainDay INTEGER NOT NULL, dayGain REAL NOT NULL,
+    PRIMARY KEY (channel, userKey)
+);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
@@ -258,6 +273,7 @@ export class MemoryStore {
         for (const name of names) ids.push(...this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ?", name).map((row) => row.id));
         for (const id of new Set(ids)) this.forget(id);
         this.#run("DELETE FROM rawLog WHERE userKey = ?", user);
+        this.#run("DELETE FROM relationships WHERE userKey = ?", user);
         return new Set(ids).size;
     }
 
@@ -277,6 +293,25 @@ export class MemoryStore {
 
     purgeRawBefore(cutoff: number): void {
         this.#run("DELETE FROM rawLog WHERE sentAt < ? AND (segmented = 1 OR attended = 0)", cutoff);
+    }
+
+    getRelationship(channel: string, user: string): RelationshipRow | undefined {
+        return this.#all<RelationshipRow>("SELECT * FROM relationships WHERE channel = ? AND userKey = ?", channel, user)[0];
+    }
+
+    saveRelationship(row: RelationshipRow): void {
+        this.#run(
+            `INSERT INTO relationships (channel, userKey, familiarity, affinity, updatedAt, gainDay, dayGain) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (channel, userKey) DO UPDATE SET familiarity = excluded.familiarity, affinity = excluded.affinity,
+             updatedAt = excluded.updatedAt, gainDay = excluded.gainDay, dayGain = excluded.dayGain`,
+            row.channel,
+            row.userKey,
+            row.familiarity,
+            row.affinity,
+            row.updatedAt,
+            row.gainDay,
+            row.dayGain,
+        );
     }
 
     getMeta(key: string): string | undefined {

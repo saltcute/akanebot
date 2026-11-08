@@ -5,8 +5,8 @@ const REASONING_BLOCK = /<(thinking[\w-]*|reasoning|analysis)>[\s\S]*?<\/\1>/gi;
 const STRAY_WRAPPER_TAG = /<\/?(?:chat[\w-]*|reply|response|message|output)>/gi;
 
 /** Turns the model's list into chat messages: cleaned, capped, and with lines split unless they are fenced code. */
-export function toBursts(messages: readonly string[]): string[] {
-    return messages.flatMap(splitLines).slice(0, MAX_BURSTS);
+export function toBursts(messages: readonly string[], maxBursts = MAX_BURSTS): string[] {
+    return messages.flatMap(splitLines).slice(0, maxBursts);
 }
 
 function splitLines(text: string): string[] {

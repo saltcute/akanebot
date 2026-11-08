@@ -21,7 +21,12 @@ export const personaSettingsSchema = z.strictObject({
         busy: z
             .array(
                 z.strictObject({
-                    days: z.string().min(1),
+                    days: z
+                        .string()
+                        .regex(
+                            /^(sun|mon|tue|wed|thu|fri|sat)(-(sun|mon|tue|wed|thu|fri|sat))?(,(sun|mon|tue|wed|thu|fri|sat)(-(sun|mon|tue|wed|thu|fri|sat))?)*$/,
+                            'Expected days like "mon-fri" or "sat,sun"',
+                        ),
                     time: timeRange,
                     checkPhoneEveryMin: z.tuple([z.number().positive(), z.number().positive()]),
                 }),
@@ -37,6 +42,7 @@ export const personaSettingsSchema = z.strictObject({
     search: z.strictObject({ curiosity: unit, dailyCap: z.number().int().min(0) }),
     skills: z.record(z.string(), z.number().int().min(1).max(5)),
     slipRate: unit,
+    dailyLife: z.array(z.string().min(1)).default([]),
     maxCodeLines: z.number().int().positive(),
 });
 

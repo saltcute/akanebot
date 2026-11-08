@@ -53,7 +53,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 
 - **Vendor isolation.** Vendor SDKs and model names appear only in `src/llm/` and config. Vendor-specific settings such as `effort` or `temperature` live in a role's `options` and pass through untouched. A test enforces this.
 - **Injected time and randomness.** Use `Clock` and `Rng` from `src/lib/`. Never call `Date.now`, `new Date()` without arguments, `Math.random` or `setTimeout` elsewhere. A test enforces this.
-- **One body.** Only the body actor mutates schedule, mood and battery, and it attends to one channel at a time across all platforms. Channels only offer candidates.
+- **One body.** Attention, schedule, mood, battery and relationships live in `src/body/` and change only while the body attends. It attends to one channel at a time across all platforms, and channels only offer candidates.
 - **The raw log is never shown to the agent.** It sees the working window and what recall returns. Only messages it actually attended can become memories.
 - **Rails can't be overridden.** `src/control/` runs first, even while the persona is "asleep". Persona settings can't disable it.
 - **Online friends only.** The agent has never met anyone in the chat in person and never will. This rule lives in the reply instructions, so no persona file can remove it.

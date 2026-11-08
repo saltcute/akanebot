@@ -15,6 +15,10 @@ export type PerceptionTiming = {
 const NORMAL_PRIORITY = 1;
 export const ADDRESSED_PRIORITY = 10;
 
+export function isAddressed(message: ChatMessage): boolean {
+    return message.mentionsSelf || message.repliesToSelf;
+}
+
 /** What one channel looks like from the outside: debounced, with a short rolling window. */
 export class ChannelPerception {
     #channel: string;
@@ -38,7 +42,7 @@ export class ChannelPerception {
     ingest(message: ChatMessage): void {
         this.#seq++;
         this.#push(message);
-        if (message.mentionsSelf || message.repliesToSelf) this.#addressedSinceLastOffer = true;
+        if (isAddressed(message)) this.#addressedSinceLastOffer = true;
 
         const now = this.#clock.now();
         this.#firstUnhandledAt ??= now;
@@ -79,6 +83,37 @@ export class ChannelPerception {
     /** Everything up to `seq` has been answered or deliberately let go. */
     settle(seq: number): void {
         this.#settledSeq = Math.max(this.#settledSeq, seq);
+    }
+
+    /** Unread messages that arrived after a given point, for noticing the chat has moved on. */
+    newSince(seq: number): ChatMessage[] {
+        return this.#window.filter((entry) => entry.seq > seq && !entry.message.isSelf).map((entry) => entry.message);
+    }
+
+    /**
+     * After time away nobody reads everything. Keeps the latest messages plus a few that were addressed to it,
+     * like notifications. The rest were never read, so they vanish from view and can't become memories.
+     */
+    skim(maxNew: number, maxNotifications: number): number {
+        const unread = this.#window.filter((entry) => entry.seq > this.#settledSeq && !entry.message.isSelf);
+        if (unread.length <= maxNew) return 0;
+        const older = unread.slice(0, -maxNew);
+        const notifications = new Set(older.filter((entry) => isAddressed(entry.message)).slice(-maxNotifications));
+        const dropped = new Set(older.filter((entry) => !notifications.has(entry)));
+        this.#window = this.#window.filter((entry) => !dropped.has(entry));
+        return dropped.size;
+    }
+
+    /** A fresh offer for anything still unread, used when the agent comes back. */
+    unreadCandidate(): Candidate | undefined {
+        const unread = this.#window.filter((entry) => entry.seq > this.#settledSeq && !entry.message.isSelf);
+        if (unread.length === 0) return undefined;
+        return {
+            channel: this.#channel,
+            snapshotSeq: this.#seq,
+            priority: unread.some((entry) => isAddressed(entry.message)) ? ADDRESSED_PRIORITY : NORMAL_PRIORITY,
+            expiresAt: this.#clock.now() + this.#timing.candidateTtlMs,
+        };
     }
 
     #push(message: ChatMessage): void {

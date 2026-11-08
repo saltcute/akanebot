@@ -12,6 +12,7 @@ import { FakeBackend, type FakeResponder, type FakeResponse } from "../src/llm/f
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 import { MemoryStore } from "../src/memory/store.ts";
 import type { Persona } from "../src/persona/schema.ts";
+import { type Pacing, pacingSchema } from "../src/reply/timing.ts";
 import { type ControlOptions, Runtime } from "../src/runtime.ts";
 import { features, PERSONA } from "./fixtures.ts";
 
@@ -33,6 +34,9 @@ type Setup = {
     extract?: FakeResponder;
     memoryStore?: MemoryStore;
     shadow?: boolean;
+    pacing?: Pacing;
+    routine?: boolean;
+    startAt?: number;
 };
 
 const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
@@ -48,14 +52,12 @@ function asMessages(respond: FakeResponder): FakeResponder {
 }
 
 function chatLines(transcript: string | undefined): string[] {
-    return (transcript ?? "")
-        .split("\n")
-        .filter((line) => line !== "<chat>" && line !== "</chat>")
-        .map((line) => line.replace(/^\[.*?\] /, ""));
+    const chat = /<chat>\n([\s\S]*)\n<\/chat>/.exec(transcript ?? "")?.[1] ?? "";
+    return chat.split("\n").map((line) => line.replace(/^\[.*?\] /, ""));
 }
 
 async function setup(options: Setup) {
-    const clock = new ManualClock();
+    const clock = new ManualClock(options.startAt ?? 0);
     const trace = new DecisionTrace(clock);
     const store = options.store ?? new MemoryControlStore();
     const persona = { ...PERSONA, ignoreDirectAsks: 0, ...options.persona };
@@ -126,6 +128,8 @@ async function setup(options: Setup) {
         embedder: new NullEmbedder(),
         memorySettings: { segmentGapMs: 20 * 60_000, maxSegmentMessages: 60, rawRetentionMs: 30 * 86_400_000, dailyWritesPerUser: 30 },
         ...(options.shadow ? { shadow: true } : {}),
+        ...(options.pacing ? { pacing: options.pacing } : {}),
+        ...(options.routine ? { routine: true } : {}),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -214,8 +218,11 @@ describe("Runtime", () => {
         await settle();
         adapter.say("alice", "two");
         await settle();
-        const lines = reply.calls[1]?.transcript.split("\n").filter((line) => line.includes(": "));
-        expect(lines?.map((line) => line.replace(/^\[.*?\] /, ""))).toEqual(["alice: one", "小茜 (you): 嗯", "alice: two"]);
+        expect(chatLines(reply.calls[1]?.transcript).filter((line) => line !== "--- new ---")).toEqual([
+            "alice: one",
+            `${PERSONA.name} (you): 嗯`,
+            "alice: two",
+        ]);
     });
 
     describe("what counts as new", () => {
@@ -688,5 +695,271 @@ describe("shadow mode", () => {
         await settle();
         expect(adapter.sent).toEqual([]);
         expect(trace.ofKind("alert").map((event) => event.detail?.reason)).not.toContain("crisis_send_failed");
+    });
+});
+
+describe("living like a person", () => {
+    const wednesday = Date.parse("2026-11-04T00:00:00Z");
+    const hour = 3_600_000;
+    const minute = 60_000;
+    const baseSchedule = { sleep: { weekday: "01:00-08:00", weekend: "01:00-08:00" }, busy: [] };
+    const awakeAllDay = { timezone: "UTC", schedule: baseSchedule };
+    const classes = [{ days: "mon-fri", time: "10:00-16:30", checkPhoneEveryMin: [10, 10] as [number, number] }];
+
+    describe("routine", () => {
+        it("sleeps through a message, then answers it after waking", async () => {
+            const { adapter, gate, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 7.9 * hour });
+            adapter.say("alice", "@小茜 早");
+            await settle(2 * minute);
+            expect(gate.calls).toHaveLength(0);
+            await settle(10 * minute);
+            expect(gate.calls).toHaveLength(1);
+            expect(adapter.sent).toHaveLength(1);
+        });
+
+        it("spends nothing while asleep", async () => {
+            const { adapter, gate, reply, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 3 * hour });
+            for (let i = 0; i < 5; i++) {
+                adapter.say("alice", `消息 ${i}`);
+                await settle(minute);
+            }
+            expect(gate.calls).toHaveLength(0);
+            expect(reply.calls).toHaveLength(0);
+        });
+
+        it("still responds to a crisis while asleep", async () => {
+            const { adapter, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 3 * hour });
+            adapter.say("alice", "我真的不想活了");
+            await settle(minute);
+            expect(adapter.sent).toHaveLength(1);
+        });
+
+        it("checks its phone during class rather than staying present", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: classes } };
+            const { adapter, gate, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });
+            await settle(minute);
+            adapter.say("alice", "@小茜 在吗");
+            await settle(5 * minute);
+            expect(gate.calls).toHaveLength(0);
+            await settle(10 * minute);
+            expect(gate.calls).toHaveLength(1);
+        });
+
+        it("waking up doesn't override the kill switch", async () => {
+            const { adapter, gate, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 7.9 * hour });
+            adapter.say("admin", "/gabriel kill");
+            await settle(minute);
+            await settle(hour);
+            adapter.say("alice", "hi");
+            await settle(minute);
+            expect(gate.calls).toHaveLength(0);
+        });
+    });
+
+    describe("catching up", () => {
+        it("skims a long backlog, keeping the latest and anything addressed to it", async () => {
+            const { adapter, reply, memoryStore, runtime, trace, settle } = await setup({});
+            runtime.body.goAway();
+            adapter.say("alice", "@小茜 很早的问题");
+            for (let i = 0; i < 30; i++) adapter.say("bob", `水 ${i}`);
+            await settle(1000);
+            runtime.body.comeBack();
+            await settle(0);
+            const lines = chatLines(reply.calls[0]?.transcript);
+            expect(lines).toContain("alice: @小茜 很早的问题");
+            expect(lines).toContain("bob: 水 29");
+            expect(lines).not.toContain("bob: 水 0");
+            expect(lines.length).toBeLessThanOrEqual(17);
+            expect(trace.ofKind("body.skimmed")).toHaveLength(1);
+            expect(memoryStore.openSegment("cli:group").map((m) => m.text)).not.toContain("水 0");
+        });
+
+        it("knows when it's only just seeing a message, without putting chat text in the trusted state", async () => {
+            const { adapter, reply, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 7 * hour });
+            adapter.say("alice", "@小茜 秘密暗号");
+            await settle(61 * minute);
+            const state = reply.calls[0]?.volatile ?? "";
+            expect(state).toContain("only just seeing this");
+            expect(state).not.toContain("秘密暗号");
+        });
+
+        it("treats a stale question as less pressing", async () => {
+            const persona = { ...awakeAllDay, schedule: { sleep: { weekday: "01:00-20:00", weekend: "01:00-20:00" }, busy: [] } };
+            const { adapter, trace, settle } = await setup({ routine: true, persona, startAt: wednesday + 2 * hour });
+            adapter.say("alice", "@小茜 在吗");
+            await settle(19 * hour);
+            expect(trace.ofKind("gate.decision")[0]?.detail?.probability).toBeLessThan(0.5);
+        });
+    });
+
+    describe("ignoring", () => {
+        it("won't ignore the same person twice in a row", async () => {
+            const { adapter, trace, settle } = await setup({ persona: { ignoreDirectAsks: 1 } });
+            adapter.say("alice", "@小茜 在吗");
+            await settle();
+            expect(adapter.sent).toEqual([]);
+            adapter.say("alice", "@小茜 在吗?");
+            await settle();
+            expect(adapter.sent).toHaveLength(1);
+            expect(trace.ofKind("gate.decision")[1]?.detail).toMatchObject({ probability: 1 });
+        });
+
+        it("can ignore again once enough time has passed", async () => {
+            const { adapter, settle } = await setup({ persona: { ignoreDirectAsks: 1 } });
+            adapter.say("alice", "@小茜 在吗");
+            await settle();
+            await settle(40 * minute);
+            adapter.say("alice", "@小茜 在吗?");
+            await settle();
+            expect(adapter.sent).toEqual([]);
+        });
+    });
+
+    describe("social battery", () => {
+        it("gets short when tired, sending only one message and saying so to the model", async () => {
+            const { adapter, reply, settle } = await setup({
+                reply: () => ({ kind: "ok", text: "", data: { messages: ["一", "二", "三"] }, usage: USAGE }),
+                persona: { socialBattery: 8 },
+                startAt: wednesday + 12 * hour,
+            });
+            for (let i = 0; i < 3; i++) {
+                adapter.say("alice", `第 ${i} 句`);
+                await settle();
+            }
+            expect(reply.calls.at(-1)?.volatile).toContain("running out of energy");
+            expect(adapter.sent.at(-1)?.text).toBe("一");
+        });
+
+        it("refills the next day", async () => {
+            const { runtime, clock } = await setup({ persona: { timezone: "UTC", socialBattery: 10 }, startAt: wednesday + 12 * hour });
+            runtime.vitals.spend(10);
+            expect(runtime.vitals.battery()).toBe(0);
+            await clock.advance(24 * hour);
+            expect(runtime.vitals.battery()).toBe(1);
+        });
+
+        it("doesn't refill by staying up past midnight", async () => {
+            const { runtime, clock } = await setup({ persona: { timezone: "UTC", socialBattery: 10 }, startAt: wednesday + 23 * hour });
+            runtime.vitals.spend(5);
+            await clock.advance(2 * hour);
+            expect(runtime.vitals.battery()).toBe(0.5);
+        });
+
+        it("remembers its battery across a restart", async () => {
+            const memoryStore = new MemoryStore(":memory:");
+            const first = await setup({ memoryStore, persona: { socialBattery: 10 } });
+            first.runtime.vitals.spend(4);
+            const second = await setup({ memoryStore, persona: { socialBattery: 10 } });
+            expect(second.runtime.vitals.battery()).toBe(0.6);
+        });
+    });
+
+    describe("relationships", () => {
+        it("describes people as data alongside the chat, not in the trusted state", async () => {
+            const { adapter, reply, settle } = await setup({});
+            adapter.say("alice", "hi");
+            await settle();
+            expect(reply.calls[0]?.transcript).toContain("<people>");
+            expect(reply.calls[0]?.volatile).not.toContain("alice");
+        });
+
+        it("gets annoyed with someone hostile and is more likely to leave them on read", async () => {
+            const { adapter, trace, settle } = await setup({ gate: { towardMe: "hostile" }, persona: { ignoreDirectAsks: 0.5 } });
+            for (let i = 0; i < 5; i++) {
+                adapter.say("alice", `骂 ${i}`);
+                await settle();
+                await settle(40 * minute);
+            }
+            const chances = trace.ofKind("gate.decision").map((event) => event.detail?.probability as number);
+            expect(chances.at(-1)).toBeLessThan(chances[0] ?? 0);
+        });
+
+        it("forgets how it felt about someone who opts out", async () => {
+            const memoryStore = new MemoryStore(":memory:");
+            const { adapter, settle } = await setup({ memoryStore });
+            adapter.say("alice", "hi");
+            await settle();
+            expect(memoryStore.getRelationship("cli:group", "cli:alice")).toBeDefined();
+            adapter.say("alice", "/gabriel opt-out");
+            await settle();
+            expect(memoryStore.getRelationship("cli:group", "cli:alice")).toBeUndefined();
+        });
+    });
+
+    describe("pacing", () => {
+        const pacing = pacingSchema.parse({ thinkMs: [2000, 2000], betweenBurstsMs: [500, 500] });
+
+        it("takes time to read, think and type", async () => {
+            const { adapter, clock } = await setup({ pacing });
+            adapter.say("alice", "hi");
+            await clock.advance(1000);
+            expect(adapter.sent).toEqual([]);
+            await clock.advance(30_000);
+            expect(adapter.sent).toHaveLength(1);
+        });
+
+        it("takes longer on a hard technical question", async () => {
+            const first = await setup({ pacing });
+            first.adapter.say("alice", "hi");
+            await first.clock.advance(4000);
+            expect(first.adapter.sent).toHaveLength(1);
+            const second = await setup({ pacing, gate: { isTechnical: true, domain: "web", difficulty: 3 } });
+            second.adapter.say("alice", "hi");
+            await second.clock.advance(4000);
+            expect(second.adapter.sent).toEqual([]);
+        });
+
+        it("shows the typing indicator while it types", async () => {
+            let typed = 0;
+            const { adapter, clock } = await setup({ pacing });
+            adapter.sendTyping = async () => {
+                typed++;
+            };
+            adapter.say("alice", "hi");
+            await clock.advance(30_000);
+            expect(typed).toBeGreaterThan(0);
+        });
+
+        it("abandons what it was going to say if it was only joining in and the chat moved on", async () => {
+            const { adapter, clock, trace } = await setup({ pacing, persona: { talkativeness: 1 }, gate: { addressedToMe: "no", interest: 1 } });
+            adapter.say("alice", "话题 A");
+            await clock.advance(1500);
+            for (let i = 0; i < 6; i++) adapter.say("bob", `话题 B ${i}`);
+            await clock.advance(5000);
+            expect(trace.ofKind("reply.abandoned")).toHaveLength(1);
+        });
+
+        it("quote-replies a question the chat has moved past, rather than dropping it", async () => {
+            const { adapter, clock } = await setup({ pacing });
+            const asked = adapter.say("alice", "@小茜 问题");
+            await clock.advance(1500);
+            for (let i = 0; i < 6; i++) adapter.say("bob", `水 ${i}`);
+            await clock.advance(30_000);
+            expect(adapter.sent[0]?.replyToMessageId).toBe(asked);
+        });
+
+        it("stops mid-reply if the body is called away", async () => {
+            const { adapter, clock, runtime } = await setup({
+                pacing,
+                reply: () => ({ kind: "ok", text: "", data: { messages: ["一", "二"] }, usage: USAGE }),
+            });
+            adapter.say("alice", "hi");
+            await clock.advance(1500);
+            runtime.body.goAway();
+            await clock.advance(30_000);
+            expect(adapter.sent).toEqual([]);
+        });
+    });
+
+    it("keeps today's mood and events in the trusted state, consistent across calls", async () => {
+        const persona = { timezone: "UTC", schedule: baseSchedule, dailyLife: ["昨晚没睡好", "中午吃到好吃的", "今天下雨"] };
+        const { adapter, reply, settle } = await setup({ persona, startAt: wednesday + 12 * hour });
+        adapter.say("alice", "one");
+        await settle();
+        adapter.say("alice", "two");
+        await settle();
+        const today = (text: string | undefined) => /Today: (.*)/.exec(text ?? "")?.[1];
+        expect(today(reply.calls[0]?.volatile)).toBeDefined();
+        expect(today(reply.calls[1]?.volatile)).toBe(today(reply.calls[0]?.volatile));
     });
 });

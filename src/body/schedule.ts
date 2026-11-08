@@ -1,6 +1,8 @@
 import type { Persona } from "../persona/schema.ts";
 
-type LocalTime = { minutes: number; weekend: boolean; yesterdayWeekend: boolean; date: string };
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+type LocalTime = { minutes: number; weekday: number; weekend: boolean; yesterdayWeekend: boolean; date: string };
 
 export function localTime(now: number, timezone: string): LocalTime {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -17,6 +19,7 @@ export function localTime(now: number, timezone: string): LocalTime {
     const weekday = part("weekday");
     return {
         minutes: Number(part("hour")) * 60 + Number(part("minute")),
+        weekday: WEEKDAYS.indexOf(weekday.toLowerCase()),
         weekend: weekday === "Sat" || weekday === "Sun",
         yesterdayWeekend: weekday === "Sun" || weekday === "Mon",
         date: `${part("year")}-${part("month")}-${part("day")}`,
@@ -39,4 +42,28 @@ export function isAsleep(persona: Pick<Persona, "schedule" | "timezone">, now: n
     if (start <= end ? minutes >= start && minutes < end : minutes >= start) return true;
     const [previousStart, previousEnd] = parseRange(yesterdayWeekend ? sleep.weekend : sleep.weekday);
     return previousStart > previousEnd && minutes < previousEnd;
+}
+
+/** Accepts "mon-fri", "sat,sun" or "wed". */
+function matchesDays(days: string, weekday: number): boolean {
+    return days.split(",").some((part) => {
+        const [first, last] = part.trim().split("-");
+        const start = WEEKDAYS.indexOf(first ?? "");
+        const end = last === undefined ? start : WEEKDAYS.indexOf(last);
+        return start <= end ? weekday >= start && weekday <= end : weekday >= start || weekday <= end;
+    });
+}
+
+export function busyPeriod(persona: Pick<Persona, "schedule" | "timezone">, now: number): Persona["schedule"]["busy"][number] | undefined {
+    const { minutes, weekday } = localTime(now, persona.timezone);
+    return persona.schedule.busy.find((period) => {
+        const [start, end] = parseRange(period.time);
+        return matchesDays(period.days, weekday) && minutes >= start && minutes < end;
+    });
+}
+
+export function hoursAround(persona: Pick<Persona, "schedule" | "timezone">, now: number): { minutesToSleep: number; minutesSinceWake: number } {
+    const { minutes, weekend } = localTime(now, persona.timezone);
+    const [start, end] = parseRange(weekend ? persona.schedule.sleep.weekend : persona.schedule.sleep.weekday);
+    return { minutesToSleep: (start - minutes + 1440) % 1440, minutesSinceWake: (minutes - end + 1440) % 1440 };
 }

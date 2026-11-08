@@ -28,6 +28,7 @@ const CANNED_GATE = JSON.stringify({
     difficulty: 1,
     highStakes: false,
     possibleCrisis: false,
+    towardMe: "neutral",
     privateThought: "(fake backend)",
 });
 
@@ -92,6 +93,9 @@ const runtime = new Runtime({
         crisisResources: config.control.crisisResources,
     },
     controlStore: new MemoryControlStore(),
+    // Off by default so you can test at any hour and without waiting.
+    routine: process.argv.includes("--routine"),
+    ...(process.argv.includes("--paced") ? { pacing: config.pacing } : {}),
     // A separate database, so testing here never touches what the live bot remembers.
     memoryStore: new MemoryStore(useFake ? ":memory:" : SIM_DATABASE),
     embedder: useFake ? new NullEmbedder() : createEmbedder(config.embedder, (message) => console.log(`  [embedder] ${message}`)),

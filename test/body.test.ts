@@ -200,6 +200,22 @@ describe("BodyActor", () => {
         expect(started).toEqual(["a", "b"]);
     });
 
+    it("stays away until every reason has cleared", async () => {
+        const started: string[] = [];
+        const { body } = setup(async (lease) => {
+            started.push(lease.candidate.channel);
+        });
+        body.goAway("sleep");
+        body.goAway("kill");
+        body.offer(candidate("a"));
+        body.comeBack("sleep");
+        await body.whenIdle();
+        expect(started).toEqual([]);
+        body.comeBack("kill");
+        await body.whenIdle();
+        expect(started).toEqual(["a"]);
+    });
+
     it("reports its state through the lease", async () => {
         const seen: BodyState[] = [];
         const { body } = setup(async (lease) => {

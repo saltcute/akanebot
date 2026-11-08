@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../src/adapters/types.ts";
-import { isAsleep, localTime } from "../src/body/schedule.ts";
+import { dayState } from "../src/body/life.ts";
+import { currentRelationship, describeRelationship, updateRelationship } from "../src/body/relationships.ts";
+import { busyPeriod, isAsleep, localTime } from "../src/body/schedule.ts";
+import { decideToSpeak } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { Rng } from "../src/lib/rng.ts";
 import { DecisionTrace } from "../src/lib/trace.ts";
@@ -12,7 +15,7 @@ import { canPromote, judgeCandidate, type Participant } from "../src/memory/pois
 import { renderMemories, retention, selectMemories, tokens } from "../src/memory/recall.ts";
 import { type Memory, type MemoryDraft, MemoryStore } from "../src/memory/store.ts";
 import { MemorySystem } from "../src/memory/system.ts";
-import { PERSONA } from "./fixtures.ts";
+import { features, PERSONA } from "./fixtures.ts";
 
 const DAY = 86_400_000;
 const SCOPE = "cli:group";
@@ -541,5 +544,111 @@ describe("schedule", () => {
 
     it("reports the local date", () => {
         expect(localTime(at("2026-11-05T02:00:00Z"), "America/Toronto").date).toBe("2026-11-04");
+    });
+});
+
+describe("busy periods", () => {
+    const persona = (days: string) => ({
+        timezone: "UTC",
+        schedule: {
+            sleep: { weekday: "01:00-08:00", weekend: "01:00-08:00" },
+            busy: [{ days, time: "10:00-12:00", checkPhoneEveryMin: [10, 50] as [number, number] }],
+        },
+    });
+
+    it("matches day ranges and lists", () => {
+        const wednesday = Date.parse("2026-11-04T11:00:00Z");
+        const saturday = Date.parse("2026-11-07T11:00:00Z");
+        expect(busyPeriod(persona("mon-fri"), wednesday)).toBeDefined();
+        expect(busyPeriod(persona("mon-fri"), saturday)).toBeUndefined();
+        expect(busyPeriod(persona("sat,sun"), saturday)).toBeDefined();
+    });
+
+    it("is only busy during the listed hours", () => {
+        expect(busyPeriod(persona("mon-fri"), Date.parse("2026-11-04T13:00:00Z"))).toBeUndefined();
+    });
+});
+
+describe("dayState", () => {
+    const persona = { ...PERSONA, timezone: "UTC", dailyLife: ["a", "b", "c", "d", "e", "f"] };
+    const at = (iso: string) => Date.parse(iso);
+
+    it("stays the same all day", () => {
+        expect(dayState(persona, at("2026-11-04T12:00:00Z")).notes).toEqual(dayState(persona, at("2026-11-04T15:00:00Z")).notes);
+    });
+
+    it("varies from day to day", () => {
+        const days = new Set(Array.from({ length: 30 }, (_, i) => dayState(persona, at("2026-11-01T14:00:00Z") + i * DAY).notes[0]));
+        expect(days.size).toBeGreaterThan(1);
+    });
+
+    it("is groggy after waking and sleepy before bed", () => {
+        expect(dayState(persona, at("2026-11-04T09:00:00Z")).notes.join()).toContain("groggy");
+        expect(dayState(persona, at("2026-11-05T01:00:00Z")).notes.join()).toContain("sleepy");
+    });
+
+    it("joins in less when groggy", () => {
+        const morning = dayState(persona, at("2026-11-04T09:00:00Z")).joinFactor;
+        const afternoon = dayState(persona, at("2026-11-04T15:00:00Z")).joinFactor;
+        expect(morning).toBeLessThan(afternoon);
+    });
+});
+
+describe("relationships", () => {
+    const Channel = "cli:group";
+
+    it("caps how fast anyone can become a favourite in a day", () => {
+        const store = new MemoryStore(":memory:");
+        for (let i = 0; i < 50; i++) updateRelationship(store, Channel, "u", "friendly", true, 1000);
+        expect(currentRelationship(store, Channel, "u", 1000).affinity).toBeCloseTo(0.1);
+    });
+
+    it("lets grudges form faster than friendships", () => {
+        const store = new MemoryStore(":memory:");
+        for (let i = 0; i < 5; i++) updateRelationship(store, Channel, "u", "hostile", true, 1000);
+        expect(currentRelationship(store, Channel, "u", 1000).affinity).toBeLessThan(-0.5);
+    });
+
+    it("lets feelings fade over time", () => {
+        const store = new MemoryStore(":memory:");
+        for (let i = 0; i < 5; i++) updateRelationship(store, Channel, "u", "hostile", true, 0);
+        const soon = currentRelationship(store, Channel, "u", DAY).affinity;
+        const later = currentRelationship(store, Channel, "u", 90 * DAY).affinity;
+        expect(Math.abs(later)).toBeLessThan(Math.abs(soon));
+    });
+
+    it("grows familiar through talking", () => {
+        const store = new MemoryStore(":memory:");
+        for (let i = 0; i < 40; i++) updateRelationship(store, Channel, "u", "neutral", true, 1000);
+        expect(describeRelationship(currentRelationship(store, Channel, "u", 1000))).toContain("know them well");
+    });
+
+    it("keeps separate groups separate", () => {
+        const store = new MemoryStore(":memory:");
+        updateRelationship(store, Channel, "u", "hostile", true, 0);
+        expect(currentRelationship(store, "cli:other", "u", 0).affinity).toBe(0);
+    });
+});
+
+describe("speaking under pressure", () => {
+    const rng = () => new Rng(1);
+    const context = (overrides = {}) => ({ battery: 1, joinFactor: 1, affinity: 0, staleMs: 0, forceAnswer: false, ...overrides });
+    const join = (overrides = {}) => decideToSpeak(features({ interest: 0.6 }), PERSONA, false, rng(), context(overrides)).probability;
+    const answer = (overrides = {}) => decideToSpeak(features(), PERSONA, true, rng(), context(overrides)).probability;
+
+    it("joins in less when tired or the moment has passed", () => {
+        expect(join({ battery: 0.1 })).toBeLessThan(join());
+        expect(join({ staleMs: 3_600_000 })).toBeLessThan(join());
+        expect(join({ battery: 0 })).toBe(0);
+    });
+
+    it("answers friends more readily than people who annoyed it", () => {
+        expect(answer({ affinity: 0.8 })).toBeGreaterThan(answer());
+        expect(answer({ affinity: -0.8 })).toBeLessThan(answer());
+    });
+
+    it("rarely answers when completely drained, but always if already ignored", () => {
+        expect(answer({ battery: 0 })).toBeLessThan(0.5);
+        expect(answer({ battery: 0, forceAnswer: true })).toBe(1);
     });
 });

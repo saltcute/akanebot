@@ -1,6 +1,10 @@
 import type { Adapter, ChannelRef, ChatMessage, Platform } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type Lease } from "./body/actor.ts";
+import { dayState } from "./body/life.ts";
+import { currentRelationship, describeRelationship, updateRelationship } from "./body/relationships.ts";
+import { Routine } from "./body/routine.ts";
+import { Vitals } from "./body/vitals.ts";
 import { runCommand } from "./control/admin.ts";
 import {
     CrisisDesk,
@@ -14,7 +18,7 @@ import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
 import { decideToSpeak } from "./gate/policy.ts";
-import type { Clock } from "./lib/clock.ts";
+import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
 import type { DecisionTrace } from "./lib/trace.ts";
@@ -22,11 +26,12 @@ import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { MemoryStore } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
-import { ADDRESSED_PRIORITY, ChannelPerception, type PerceptionTiming } from "./perception/channel.ts";
+import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming } from "./perception/channel.ts";
 import type { Persona } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
-import { renderReplyInstructions, renderReplyState, renderTranscript, replySchema } from "./reply/prompt.ts";
+import { renderPeople, renderReplyInstructions, renderReplyState, renderTranscript, replySchema } from "./reply/prompt.ts";
+import { type Pacing, readingDelay, thinkingDelay, typingDelay } from "./reply/timing.ts";
 
 export type ControlOptions = {
     commandPrefix: string;
@@ -53,7 +58,14 @@ export type RuntimeOptions = {
     memorySettings: MemorySettings;
     /** Reads and decides, but never posts anything. */
     shadow?: boolean;
+    /** Human reading and typing delays. Without it, replies go out as soon as they're written. */
+    pacing?: Pacing;
+    /** Follow the persona's sleep and busy hours. */
+    routine?: boolean;
 };
+
+const KILL_REASON = "kill";
+const ROUTINE_REASON = "routine";
 
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
 
@@ -62,12 +74,23 @@ const REPLY_MAX_OUTPUT = 2000;
 const TECHNICAL_MAX_OUTPUT = 4000;
 const CRISIS_CLASSIFIER_MAX_OUTPUT = 200;
 const CRISIS_MAX_OUTPUT = 3000;
+const MAX_NEW_MESSAGES_READ = 15;
+const MAX_NOTIFICATIONS = 2;
+const ABANDON_AFTER_NEW_MESSAGES = 6;
+const QUOTE_AFTER_NEW_MESSAGES = 3;
+const ADDRESSED_BATTERY_COST = 0.5;
+const LOW_BATTERY = 0.3;
+const TYPING_REFRESH_MS = 8000;
+const LATE_REPLY_MS = 30 * 60_000;
 
 /** Wires adapters to perception, the body, the gate and the send guards. */
 export class Runtime {
     readonly body: BodyActor;
     readonly guard: SendGuard;
     readonly memory: MemorySystem;
+    readonly vitals: Vitals;
+    #routine: Routine | undefined;
+    #pacingRng: Rng;
     #options: RuntimeOptions;
     #adapters: ReadonlyMap<Platform, Adapter>;
     #channels = new Map<string, Channel>();
@@ -91,7 +114,22 @@ export class Runtime {
         this.#state = new ControlState({ clock: options.clock, store: options.controlStore });
         this.#crisis = new CrisisDesk(options.clock);
         this.#allowedChannels = new Set(options.control.groups.filter((group) => group.disclosed).map(channelKey));
-        if (this.#state.killed) this.body.goAway();
+        if (this.#state.killed) this.body.goAway(KILL_REASON);
+        this.#pacingRng = options.rng.fork("pacing");
+        this.vitals = new Vitals({ clock: options.clock, persona: () => this.#persona, store: options.memoryStore });
+        if (options.routine) {
+            this.#routine = new Routine({
+                clock: options.clock,
+                rng: options.rng.fork("routine"),
+                trace: options.trace,
+                persona: () => this.#persona,
+                leave: () => this.body.goAway(ROUTINE_REASON),
+                arrive: () => {
+                    this.body.comeBack(ROUTINE_REASON);
+                    this.#offerUnread();
+                },
+            });
+        }
         this.memory = new MemorySystem({
             store: options.memoryStore,
             embedder: options.embedder,
@@ -121,10 +159,12 @@ export class Runtime {
     async start(): Promise<void> {
         await Promise.all(this.#options.adapters.map((adapter) => adapter.start((message) => this.#onMessage(message))));
         this.memory.start();
+        this.#routine?.start();
     }
 
     async stop(): Promise<void> {
         this.memory.stop();
+        this.#routine?.stop();
         await Promise.all(this.#options.adapters.map((adapter) => adapter.stop()));
     }
 
@@ -143,8 +183,8 @@ export class Runtime {
         const command = runCommand(message, { prefix: control.commandPrefix, admins: control.admins, state: this.#state });
         if (command.handled) {
             trace.record("control.command", { channel: key, messageId: message.messageId });
-            if (command.bodyEffect === "stop") this.body.goAway();
-            if (command.bodyEffect === "resume") this.body.comeBack();
+            if (command.bodyEffect === "stop") this.body.goAway(KILL_REASON);
+            if (command.bodyEffect === "resume") this.body.comeBack(KILL_REASON);
             if (command.forgetUser) this.#forgetUser(command.forgetUser);
             if (command.ack) this.#inBackground(this.#acknowledge(channel, command.ack, command.urgent));
             return;
@@ -164,6 +204,14 @@ export class Runtime {
             this.#inBackground(this.#screenForCrisis(channel, message));
         } else {
             this.#admit(channel, message);
+        }
+    }
+
+    /** Coming back works like checking a phone: everything unread gets a look, most important first. */
+    #offerUnread(): void {
+        for (const channel of this.#channels.values()) {
+            const candidate = channel.perception.unreadCandidate();
+            if (candidate) this.body.offer(candidate);
         }
     }
 
@@ -261,7 +309,7 @@ export class Runtime {
     }
 
     async #attend(lease: Lease): Promise<void> {
-        const { trace, llm, cost } = this.#options;
+        const { trace, llm, cost, clock } = this.#options;
         const persona = this.#persona;
         const key = lease.candidate.channel;
         const channel = this.#channels.get(key);
@@ -278,7 +326,10 @@ export class Runtime {
             return;
         }
 
+        const attendStart = clock.now();
         const { perception } = channel;
+        const skipped = perception.skim(MAX_NEW_MESSAGES_READ, MAX_NOTIFICATIONS);
+        if (skipped > 0) trace.record("body.skimmed", { channel: key, detail: { skipped } });
         const firstNewIndex = perception.firstNewIndex();
         if (firstNewIndex === undefined) return;
         const seenSeq = perception.seq;
@@ -303,28 +354,65 @@ export class Runtime {
         const newMessages = window.slice(firstNewIndex).filter((message) => !message.isSelf);
         this.memory.markAttended(key, newMessages);
         const features: GateFeatures = gate.data;
+        const now = clock.now();
+        const newest = newMessages.at(-1);
+        const asker = newMessages.findLast(isAddressed) ?? newest;
+        const askerKey = asker ? userKey(asker) : undefined;
+        const store = this.memory.store;
         const mentioned = lease.candidate.priority >= ADDRESSED_PRIORITY;
-        const decision = decideToSpeak(features, persona, mentioned, this.#gateRng);
+        const ignoreKey = `${key}|${askerKey}`;
+        const day = dayState(persona, now);
+        const battery = this.vitals.battery();
+        const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, {
+            battery,
+            joinFactor: day.joinFactor,
+            affinity: askerKey ? currentRelationship(store, key, askerKey, now).affinity : 0,
+            staleMs: newest ? now - newest.sentAt : 0,
+            forceAnswer: this.vitals.wasRecentlyIgnored(ignoreKey),
+        });
         const competence = assessCompetence(features, persona, this.#competenceRng);
-        trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, features } });
+        trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, battery, features } });
+        for (const speaker of new Set(newMessages.map(userKey))) {
+            updateRelationship(
+                store,
+                key,
+                speaker,
+                speaker === askerKey ? features.towardMe : "neutral",
+                decision.addressed && speaker === askerKey,
+                now,
+            );
+        }
         if (features.possibleCrisis) {
             const author = window.findLast((message) => !message.isSelf);
             perception.settle(seenSeq);
             if (author) await this.#respondToCrisis(channel, userKey(author), author.messageId);
             return;
         }
+        if (decision.addressed) this.vitals.spend(ADDRESSED_BATTERY_COST);
         if (!decision.speak) {
+            if (decision.addressed) this.vitals.noteIgnored(ignoreKey);
             perception.settle(seenSeq);
             return;
         }
+        this.vitals.noteAnswered(ignoreKey);
 
         lease.setState("composing");
         const { block: memories } = await this.memory.recall(key, newMessages);
+        const people = [...new Map(newMessages.map((message) => [userKey(message), message.sender.displayName]))].flatMap(([user, name]) => {
+            const description = describeRelationship(currentRelationship(store, key, user, now));
+            return description ? [{ name, description }] : [];
+        });
+        const lowBattery = battery < LOW_BATTERY;
+        const situation = [
+            ...day.notes,
+            ...(lowBattery ? ["You've been chatting all day and are running out of energy for it. Keep it very short."] : []),
+            ...lateReplyNote(asker && decision.addressed ? now - asker.sentAt : 0),
+        ];
         const technical = competence.mode !== "casual";
         const result = await llm.generate(technical ? "technical" : "reply", {
             stable: renderReplyInstructions(persona),
-            transcript: `${memories}${transcript}`,
-            volatile: renderReplyState({ now: this.#options.clock.now(), persona, features, competence, addressed: decision.addressed }),
+            transcript: `${renderPeople(people)}${memories}${transcript}`,
+            volatile: renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation }),
             schema: replySchema,
             maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
             signal: lease.signal,
@@ -336,7 +424,7 @@ export class Runtime {
             return;
         }
 
-        const bursts = toBursts(result.data.messages);
+        const bursts = toBursts(result.data.messages, lowBattery ? 1 : undefined);
         if (bursts.length === 0) {
             perception.settle(seenSeq);
             trace.record("reply.chose_silence", { channel: key, ...idField });
@@ -348,21 +436,59 @@ export class Runtime {
             return;
         }
 
+        const { pacing } = this.#options;
+        if (pacing) {
+            const chars = newMessages.reduce((total, message) => total + message.text.length, 0);
+            const planned = readingDelay(pacing, chars) + thinkingDelay(pacing, features.difficulty, technical, this.#pacingRng);
+            if (!(await sleep(clock, planned - (clock.now() - attendStart), lease.signal))) return;
+        }
+
         lease.setState("sending");
-        for (const text of bursts) {
-            const outcome = await this.guard.send(channel.adapter, channel.ref, text, { signal: lease.signal });
+        for (const [index, text] of bursts.entries()) {
+            if (pacing && !(await this.#type(channel, typingDelay(pacing, text, this.#pacingRng, index === 0), lease.signal))) return;
+            const overtakenBy = perception.newSince(seenSeq);
+            if (overtakenBy.length >= ABANDON_AFTER_NEW_MESSAGES && !decision.addressed) {
+                // It was only joining in, and the conversation has left without it.
+                perception.settle(seenSeq);
+                trace.record("reply.abandoned", { channel: key, ...idField, detail: { overtakenBy: overtakenBy.length } });
+                return;
+            }
+            // Someone asked and the chat has moved on, so the answer needs to point back at the question.
+            const quote = index === 0 && decision.addressed && overtakenBy.length >= QUOTE_AFTER_NEW_MESSAGES && asker;
+            const outcome = await this.guard.send(channel.adapter, channel.ref, text, {
+                signal: lease.signal,
+                ...(quote ? { replyToMessageId: asker.messageId } : {}),
+            });
             if (outcome.kind === "blocked" && outcome.reason === "shadow") {
                 perception.settle(seenSeq);
+                this.vitals.spend(1);
                 continue;
             }
             if (outcome.kind !== "sent") return;
             // Settled on the first send, so a reply cut short partway is never answered a second time.
             perception.settle(seenSeq);
-            const own = ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), persona.name);
+            this.vitals.spend(1);
+            const own = ownMessage(channel.ref, outcome.messageId, text, clock.now(), persona.name);
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         }
     }
+
+    /** Shows the typing indicator for the given time. Resolves false if attention was pulled away. */
+    async #type(channel: Channel, durationMs: number, signal: AbortSignal): Promise<boolean> {
+        let remaining = durationMs;
+        while (remaining > 0) {
+            await this.guard.typing(channel.adapter, channel.ref);
+            const step = Math.min(remaining, TYPING_REFRESH_MS);
+            if (!(await sleep(this.#options.clock, step, signal))) return false;
+            remaining -= step;
+        }
+        return !signal.aborted;
+    }
+}
+
+function lateReplyNote(ageMs: number): string[] {
+    return ageMs > LATE_REPLY_MS ? [`You're only just seeing this, about ${Math.round(ageMs / 60_000)} minutes after it was sent.`] : [];
 }
 
 function describeFailure(result: { kind: string; detail?: string }): Record<string, unknown> {
