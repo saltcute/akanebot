@@ -110,6 +110,23 @@ describe("SendGuard.send", () => {
         await expect(guard.send(adapter, channel, "x")).resolves.toMatchObject({ kind: "sent" });
     });
 
+    it("stops talking to another bot once no human is around", async () => {
+        const { guard, adapter } = setup({ bucketCapacity: 100, maxShare: 1 });
+        for (let i = 0; i < 4; i++) {
+            guard.observe(message(`b${i}`, { sender: { id: "bot", displayName: "bot", isBot: true } }));
+            await guard.send(adapter, channel, "x");
+        }
+        await expect(guard.send(adapter, channel, "x")).resolves.toEqual({ kind: "blocked", reason: "bot_loop" });
+        guard.observe(message("h1"));
+        await expect(guard.send(adapter, channel, "x")).resolves.toMatchObject({ kind: "sent" });
+    });
+
+    it("sends urgent messages past every limit, exactly once", async () => {
+        const { guard, adapter } = setup({ bucketCapacity: 0, maxShare: 0 });
+        await expect(guard.sendUrgent(adapter, channel, "x")).resolves.toMatchObject({ kind: "sent" });
+        expect(adapter.sends).toBe(1);
+    });
+
     it("stops the agent dominating a channel", async () => {
         const { guard, adapter } = setup({ bucketCapacity: 100 });
         for (let i = 0; i < 3; i++) guard.observe(message(`in${i}`));
