@@ -26,7 +26,7 @@ const CANNED_GATE = JSON.stringify({
 
 const useFake = process.argv.includes("--fake");
 const { config, path: configPath } = loadConfig();
-const persona = loadPersona(config.persona);
+const persona = loadPersona(config.persona, process.env.GABRIEL_TIMEZONE || undefined);
 
 if (!useFake && !process.env.ANTHROPIC_API_KEY && Object.values(config.backends).some((backend) => backend.type === "anthropic")) {
     console.error("ANTHROPIC_API_KEY is not set. Put it in .env, or run `pnpm sim --fake` for canned replies.");
@@ -65,6 +65,14 @@ const runtime = new Runtime({
 });
 
 await runtime.start();
+const localTime = new Intl.DateTimeFormat("en-GB", {
+    timeZone: persona.timezone,
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+}).format(clock.now());
+console.log(`${persona.name}'s local time: ${localTime} (${persona.timezone})`);
 console.log(`Simulated group with ${persona.name} (config: ${configPath}, ${useFake ? "FAKE replies" : "real models"}).`);
 console.log(
     `Type "name: message" to speak as someone, or just a message to speak as "you". @${persona.name} or @${persona.aliases[0] ?? persona.name} addresses it.`,

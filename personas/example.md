@@ -1,7 +1,7 @@
 ---
 name: 小林
 aliases: [xiaolin, 林子]    # other names people use for it; @-mentions of these count as addressing it
-timezone: Asia/Shanghai
+timezone: America/Toronto   # local time for schedule and chat; GABRIEL_TIMEZONE in .env overrides it
 
 schedule:
   sleep: { weekday: "01:30-08:40", weekend: "03:00-11:30" }

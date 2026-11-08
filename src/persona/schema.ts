@@ -3,7 +3,7 @@ import { z } from "zod";
 const unit = z.number().min(0).max(1);
 const timeRange = z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/, 'Expected a time range like "01:30-08:40"');
 
-function isTimeZone(value: string): boolean {
+export function isTimeZone(value: string): boolean {
     try {
         new Intl.DateTimeFormat("en", { timeZone: value });
         return true;

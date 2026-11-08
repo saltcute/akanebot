@@ -5,7 +5,7 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | Knob | Controls | Status |
 |---|---|---|
 | `name`, `aliases` | Who counts as being addressed | Active |
-| `timezone` | The local time shown to the model | Active |
+| `timezone` | Local time shown to the model, as an IANA zone so daylight saving is automatic. `GABRIEL_TIMEZONE` in `.env` overrides it | Active |
 | `talkativeness` | How likely it joins a conversation it wasn't pulled into | Active |
 | `ignoreDirectAsks` | Chance of leaving a direct question on read | Active |
 | `maxCharsRead` | Messages longer than this are cut off before the model sees them | Active |

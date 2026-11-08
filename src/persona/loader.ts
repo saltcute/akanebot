@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
-import { type Persona, personaSettingsSchema } from "./schema.ts";
+import { isTimeZone, type Persona, personaSettingsSchema } from "./schema.ts";
 
-export function loadPersona(path: string): Persona {
-    return parsePersona(readFileSync(path, "utf8"), path);
+export function loadPersona(path: string, timezoneOverride?: string): Persona {
+    return parsePersona(readFileSync(path, "utf8"), path, timezoneOverride);
 }
 
 /** Errors name the file and line, because a maintainer edits this by hand. */
-export function parsePersona(source: string, path = "persona"): Persona {
+export function parsePersona(source: string, path = "persona", timezoneOverride?: string): Persona {
+    if (timezoneOverride && !isTimeZone(timezoneOverride)) throw new Error(`GABRIEL_TIMEZONE: unknown time zone "${timezoneOverride}"`);
+
     const normalized = source.replaceAll("\r\n", "\n");
     const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(normalized);
     if (!match) throw new Error(`${path}: expected YAML frontmatter between --- lines at the top of the file`);
@@ -21,7 +23,7 @@ export function parsePersona(source: string, path = "persona"): Persona {
         throw new Error(`${path}: invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    const parsed = personaSettingsSchema.safeParse(raw);
+    const parsed = personaSettingsSchema.safeParse(timezoneOverride ? { ...(raw as object), timezone: timezoneOverride } : raw);
     if (!parsed.success) {
         const problems = parsed.error.issues.map((issue) => {
             const key = issue.path.at(-1);
