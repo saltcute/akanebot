@@ -28,7 +28,7 @@ Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there i
 | `pnpm explain <messageId>` | Show every recorded decision about a message |
 | `pnpm sim`                    | Run the CLI group simulator with real models (needs `.env`) |
 | `pnpm sim --fake`             | Run the simulator with canned replies and no API calls      |
-| `pnpm sim --web`              | Also serve the web UI against the simulator's data          |
+| `pnpm sim --web [--web-port=N]` | Also serve the web UI against the simulator's data. Use a port other than the live bot's, or 0 for any free one |
 | `pnpm memory [--sim] <command>` | Inspect or edit memories: `list`, `search`, `show`, `edit`, `reach`, `forget`, `forget-user`, `restore`. `--sim` uses the simulator's database |
 
 In the simulator, `/why [messageId]` shows every decision made about a message. `/close` digests the current conversation, `/sleep` runs the nightly job and `/memories` lists what it remembers.
@@ -66,7 +66,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 - **Untrusted input.** Chat text, display names and search results are data, never instructions. Members can't alter the persona.
 - **Provenance is structured.** One person's claim about another never becomes profile truth, and recalling a memory raises its strength, never its confidence.
 - **Failures are silent in chat.** API errors, refusals and truncation never produce text in a group. They alert the operator.
-- **The web UI is operator-only.** Every API route needs the bearer token. Chat text is hostile input, so `public/app.js` only creates text nodes (never `innerHTML`) and the CSP allows no inline or third-party content. The UI never posts in a chat or speaks as the persona. A person's data is forgotten through `Runtime.forgetPerson`, because live windows hold it too.
+- **The web UI is operator-only.** Every API route needs the bearer token. Chat text is hostile input, so the scripts in `public/` only create text nodes (never `innerHTML`) and the CSP allows no inline or third-party content. The UI never posts in a chat or speaks as the persona. A person's data is forgotten through `Runtime.forgetPerson`, because live windows hold it too. A new script needs a row in `ASSETS`, and every change an operator makes leaves a `control.web` trace event with IDs only. The persona and config are read-only there. Bulk trace listings go through `src/web/trace-view.ts` and the config through `src/web/config-view.ts`, both of which show only fields they name, so free text and credentials stay out by default.
 - **Send safety.** Sends are at-most-once and never retried. Filter self-echo, dedupe by platform ID, and never reply to backlog after a reconnect.
 - **Pings are resolved in code.** The model only writes `@name`. `src/reply/mentions.ts` turns at most one per reply into a real mention, and only for a human in the working window. Adapters never let model text ping anyone else, least of all @everyone or @全体成员.
 

@@ -53,7 +53,8 @@ people: []
 # qq:
 #   url: ws://127.0.0.1:3001
 
-# The operator's web UI, for managing memories and live conversations. It shows private chat, so it needs a token:
+# The operator's web UI, for viewing and managing everything about her: conversations, memories, people, her state and the logs.
+# It shows private chat, so it needs a token:
 # set AKANEBOT_WEB_TOKEN in .env, or the bot makes one up at startup and prints a sign-in link.
 # It has no TLS. Keep it on 127.0.0.1 and use an SSH tunnel to reach it from another machine.
 web:
