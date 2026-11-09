@@ -154,6 +154,7 @@ function renderDetail() {
             fact("Accounts", person.accounts.join(", ")),
             person.aliases.length === 0 ? undefined : fact("Also called", person.aliases.join(", ")),
             person.note === undefined ? undefined : fact("How she knows them", person.note),
+            person.timezone === undefined ? undefined : fact("Time zone", person.timezone),
             fact("Familiarity", score(person.standing?.familiarity)),
             fact("Affinity", score(person.standing?.affinity)),
         ),

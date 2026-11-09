@@ -840,6 +840,20 @@ describe("living like a person", () => {
             expect(reply.calls[0]?.transcript).not.toContain("关系很好的网友");
         });
 
+        it("works out a listed person's local time only while they are talking", async () => {
+            const zoned = new People([{ name: "土豆", ids: ["cli:potato"], timezone: "Asia/Tokyo" }]);
+            const talking = await setup({ people: zoned, startAt: Date.UTC(2026, 0, 15, 3, 0) });
+            talking.adapter.say("potato", "在吗");
+            await talking.settle();
+            expect(talking.reply.calls[0]?.transcript).toContain("their time zone is Asia/Tokyo, where it's Thursday");
+            expect(talking.reply.calls[0]?.transcript).toContain("12:00");
+
+            const others = await setup({ people: zoned });
+            others.adapter.say("alice", "在吗");
+            await others.settle();
+            expect(others.reply.calls[0]?.transcript).not.toContain("Asia/Tokyo");
+        });
+
         it("forgets the person's other accounts when one opts out", async () => {
             const { adapter, memoryStore, settle } = await setup({ people });
             memoryStore.saveRelationship({ channel: "qq:g", userKey: "qq:1", familiarity: 0.5, affinity: 0, updatedAt: 0, gainDay: 0, dayGain: 0 });

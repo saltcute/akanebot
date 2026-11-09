@@ -34,6 +34,11 @@ describe("People", () => {
         expect(PEOPLE.noteOf("qq:1")).toBe("老朋友");
     });
 
+    it("rejects a time zone that doesn't exist", () => {
+        expect(peopleSchema.safeParse([{ name: "a", ids: ["qq:1"], timezone: "Mars/Olympus" }]).success).toBe(false);
+        expect(peopleSchema.safeParse([{ name: "a", ids: ["qq:1"], timezone: "Asia/Tokyo" }]).success).toBe(true);
+    });
+
     it("leaves an unlisted account as its own person", () => {
         expect(PEOPLE.accountsOf("qq:9")).toEqual(["qq:9"]);
         expect(PEOPLE.personOf("qq:9")).toBe("qq:9");

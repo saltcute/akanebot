@@ -176,7 +176,7 @@ export function renderReplyState(options: {
     situation?: readonly string[];
 }): string {
     const { now, persona, features, competence, addressed, situation = [] } = options;
-    const time = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(now);
+    const time = clockIn(persona.timezone, now);
     const state = [
         `It is ${time} where you are (${persona.timezone}).`,
         addressed
@@ -190,16 +190,17 @@ export function renderReplyState(options: {
     return state.join("\n");
 }
 
+export function clockIn(timezone: string, now: number): string {
+    return new Intl.DateTimeFormat("en-GB", { timeZone: timezone, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(now);
+}
+
 /** What to assume about other people's clocks when nothing better is known. The conversion is done here so the model doesn't have to. */
 export function timezoneNote(platform: Platform, now: number): string {
     const clocks = "The times shown in the chat are your own clock.";
     if (platform !== "qq") {
         return `People on here could be anywhere. Unless you know where someone is, don't assume it's the same time for them as for you. ${clocks}`;
     }
-    const china = new Intl.DateTimeFormat("en-GB", { timeZone: QQ_DEFAULT_TIMEZONE, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(
-        now,
-    );
-    return `People on QQ are usually in China, so unless you know otherwise, assume someone here is on China time, where it's ${china}. ${clocks}`;
+    return `People on QQ are usually in China, so unless you know otherwise, assume someone here is on China time, where it's ${clockIn(QQ_DEFAULT_TIMEZONE, now)}. ${clocks}`;
 }
 
 function competenceGuidance({ mode, slip }: Competence): string | undefined {

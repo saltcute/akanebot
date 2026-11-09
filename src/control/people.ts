@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTimeZone } from "../persona/schema.ts";
 
 const personSchema = z.strictObject({
     /** What she knows them as, whatever their display name is today. */
@@ -9,6 +10,8 @@ const personSchema = z.strictObject({
     note: z.string().min(1).optional(),
     /** Other names people call them by. Two characters at least, since one would turn up inside unrelated words. */
     aliases: z.array(z.string().trim().min(2)).optional(),
+    /** Their IANA zone, so their local time is worked out in code. Shown to her only while they are talking, like the note. */
+    timezone: z.string().refine(isTimeZone, "Unknown time zone").optional(),
 });
 
 export type PersonEntry = z.infer<typeof personSchema>;
@@ -67,6 +70,10 @@ export class People {
 
     noteOf(user: string): string | undefined {
         return this.#byAccount.get(user)?.note;
+    }
+
+    timezoneOf(user: string): string | undefined {
+        return this.#byAccount.get(user)?.timezone;
     }
 
     aliasesOf(user: string): readonly string[] {

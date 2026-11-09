@@ -36,6 +36,7 @@ import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
 import { mentionablePeople, resolveMentions } from "./reply/mentions.ts";
 import {
+    clockIn,
     renderGroupEvent,
     renderLookup,
     renderOwnReaction,
@@ -126,6 +127,7 @@ export type PersonSummary = {
     accounts: readonly string[];
     note: string | undefined;
     aliases: readonly string[];
+    timezone: string | undefined;
     messages: number;
     lastSeen: number | undefined;
     optedOut: boolean;
@@ -462,6 +464,7 @@ export class Runtime {
                     accounts: linked,
                     note: this.#people.noteOf(key),
                     aliases: this.#people.aliasesOf(key),
+                    timezone: this.#people.timezoneOf(key),
                     messages: seen.reduce((total, speaker) => total + speaker.messages, 0),
                     lastSeen: seen[0]?.lastSeen,
                     optedOut: this.#state.isOptedOut(key),
@@ -918,9 +921,11 @@ export class Runtime {
     #describePerson(user: string, shownAs: string, now: number): string | undefined {
         const knownAs = this.#people.nameOf(user);
         const note = this.#people.noteOf(user);
+        const timezone = this.#people.timezoneOf(user);
         const parts = [
             knownAs !== undefined && knownAs !== shownAs ? `this is ${knownAs}` : undefined,
             note,
+            timezone === undefined ? undefined : `their time zone is ${timezone}, where it's ${clockIn(timezone, now)}`,
             describeRelationship(currentRelationship(this.memory.store, user, now, this.#people), note !== undefined),
         ].filter((part) => part !== undefined);
         return parts.length > 0 ? parts.join("; ") : undefined;

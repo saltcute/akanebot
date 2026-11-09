@@ -431,7 +431,9 @@ describe("web console memories", () => {
 });
 
 const ALICE_KEY = encodeURIComponent("cli:alice");
-const ALICE_ACCOUNTS = new People([{ name: "Alice", ids: ["cli:alice", "discord:42"], note: "from the old server", aliases: ["Ally"] }]);
+const ALICE_ACCOUNTS = new People([
+    { name: "Alice", ids: ["cli:alice", "discord:42"], note: "from the old server", aliases: ["Ally"], timezone: "Asia/Tokyo" },
+]);
 
 function relationshipRow(overrides: Partial<RelationshipRow> = {}): RelationshipRow {
     return {
@@ -460,6 +462,7 @@ describe("web console people", () => {
             accounts: ["cli:alice", "discord:42"],
             note: "from the old server",
             aliases: ["Ally"],
+            timezone: "Asia/Tokyo",
             messages: 1,
             optedOut: false,
             standing: { familiarity: 0.7, affinity: 0.4 },
