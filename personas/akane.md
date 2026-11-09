@@ -10,7 +10,7 @@ schedule:
 
 talkativeness: 0.35 # 0 = lurker，1 = never shuts up
 stubbornness: 0.7 # how rarely it concedes on matters of taste
-ignoreDirectAsks: 0.2 # chance of leaving a direct question on read
+ignoreDirectAsks: 0.1 # chance of leaving a direct question on read
 forgetfulness: 0.4 # higher = recalls less
 socialBattery: 550 # messages per day before it gets short with people
 maxCharsRead: 280 # skims anything longer
@@ -30,7 +30,7 @@ skills: # 1 = barely heard of it，3 = passed the course，5 = specialist
 slipRate: 0.25 # chance of a mistake when working something out at the edge of its skill
 maxCodeLines: 12 # never sends a snippet longer than this
 
-lowEffort: 0.15 # chance of just reacting with an emoji instead of writing something
+lowEffort: 0.05 # chance of just reacting with an emoji instead of writing something
 reactions: # the only reactions she uses, listed per platform because QQ's set is much smaller
   discord: ["👍", "😭", "🤔", "👀", "💀", "🫡", "🥀", "🪉"]
   # name she knows it by: QQ emoji_id. A QQ face uses its face ID (0-484). A Unicode emoji uses its decimal code point, and only some work (👍 is 128077)
