@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliAdapter } from "../src/adapters/cli.ts";
+import { currentRelationship } from "../src/body/relationships.ts";
 import { People } from "../src/control/people.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import { ManualClock } from "../src/lib/clock.ts";
@@ -417,6 +418,7 @@ describe("web console memories", () => {
     });
 });
 
+const ALICE_KEY = encodeURIComponent("cli:alice");
 const ALICE_ACCOUNTS = new People([{ name: "Alice", ids: ["cli:alice", "discord:42"], note: "from the old server" }]);
 
 function relationshipRow(overrides: Partial<RelationshipRow> = {}): RelationshipRow {
@@ -459,6 +461,60 @@ describe("web console people", () => {
         expect(people[0]).toMatchObject({ name: "Alice", messages: 0 });
         expect(people[0]).not.toHaveProperty("standing");
         expect(people[0]).not.toHaveProperty("lastSeen");
+    });
+
+    it("makes a correction stick across all of someone's rows, even lowering familiarity", async () => {
+        const { store, json, clock, trace } = await setup({ people: ALICE_ACCOUNTS });
+        store.saveRelationship(relationshipRow({ familiarity: 0.3 }));
+        store.saveRelationship(relationshipRow({ channel: "discord:9", userKey: "discord:42", familiarity: 0.8 }));
+        await json(`/api/people/${ALICE_KEY}/relationship`, { method: "PATCH", body: JSON.stringify({ familiarity: 0.1, affinity: -0.5 }) });
+        expect(currentRelationship(store, "discord:42", clock.now(), ALICE_ACCOUNTS)).toEqual({ familiarity: 0.1, affinity: -0.5 });
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({
+            action: "correct_relationship",
+            user: "cli:alice",
+            familiarity: 0.1,
+            affinity: -0.5,
+        });
+    });
+
+    it("keeps the faded affinity when only familiarity is corrected, and the newest day's gain", async () => {
+        const { store, json, clock } = await setup({ people: ALICE_ACCOUNTS });
+        await clock.advance(30 * 86_400_000);
+        store.saveRelationship(relationshipRow({ updatedAt: 1_000_000, gainDay: 3, dayGain: 0.09 }));
+        store.saveRelationship(relationshipRow({ channel: "discord:9", userKey: "discord:42", updatedAt: 500_000, gainDay: 1, dayGain: 0.01 }));
+        const faded = currentRelationship(store, "cli:alice", clock.now(), ALICE_ACCOUNTS).affinity;
+        await json(`/api/people/${ALICE_KEY}/relationship`, { method: "PATCH", body: JSON.stringify({ familiarity: 0.2 }) });
+        expect(currentRelationship(store, "cli:alice", clock.now(), ALICE_ACCOUNTS).affinity).toBeCloseTo(faded);
+        expect(store.relationshipsOf(["cli:alice", "discord:42"]).map((row) => [row.gainDay, row.dayGain])).toEqual([
+            [3, 0.09],
+            [3, 0.09],
+        ]);
+    });
+
+    it("won't invent feelings for someone she has none about", async () => {
+        const { call } = await setup({ people: ALICE_ACCOUNTS });
+        const response = await call(`/api/people/${ALICE_KEY}/relationship`, { method: "PATCH", body: JSON.stringify({ affinity: 0.5 }) });
+        expect(response.status).toBe(404);
+    });
+
+    it("rejects out-of-range and empty corrections", async () => {
+        const { store, call, errors } = await setup();
+        store.saveRelationship(relationshipRow());
+        for (const body of [{ affinity: 2 }, { familiarity: -0.1 }, {}, { familiarity: 0.5, extra: 1 }]) {
+            expect((await call(`/api/people/${ALICE_KEY}/relationship`, { method: "PATCH", body: JSON.stringify(body) })).status).toBe(400);
+        }
+        expect(errors).toEqual([]);
+    });
+
+    it("resets a relationship on every account but keeps memories", async () => {
+        const { store, json, trace } = await setup({ people: ALICE_ACCOUNTS });
+        store.saveRelationship(relationshipRow());
+        store.saveRelationship(relationshipRow({ channel: "discord:9", userKey: "discord:42" }));
+        store.addMemory(draft());
+        await json(`/api/people/${ALICE_KEY}/relationship`, { method: "DELETE" });
+        expect(store.relationshipsOf(["cli:alice", "discord:42"])).toEqual([]);
+        expect(store.all()).toHaveLength(1);
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "reset_relationship", user: "cli:alice" });
     });
 
     it("doesn't list her own lines or group events as people", async () => {

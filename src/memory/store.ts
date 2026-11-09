@@ -468,6 +468,10 @@ export class MemoryStore {
         );
     }
 
+    deleteRelationships(accounts: readonly string[]): void {
+        for (const account of accounts) this.#run("DELETE FROM relationships WHERE userKey = ?", account);
+    }
+
     saveRelationship(row: RelationshipRow): void {
         this.#run(
             `INSERT INTO relationships (channel, userKey, familiarity, affinity, updatedAt, gainDay, dayGain) VALUES (?, ?, ?, ?, ?, ?, ?)

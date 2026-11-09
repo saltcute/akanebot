@@ -55,6 +55,67 @@ function score(value) {
     return value === undefined ? "None yet" : value.toFixed(2);
 }
 
+function slider(label, value, min) {
+    const output = el("output", {}, value.toFixed(2));
+    const input = el("input", {
+        type: "range",
+        min: String(min),
+        max: "1",
+        step: "0.01",
+        value: String(value),
+        "aria-label": label,
+        oninput: () => {
+            input.dataset.touched = "true";
+            output.textContent = Number(input.value).toFixed(2);
+        },
+    });
+    return { input, field: el("label", { className: "field" }, label, el("div", { className: "range" }, input, output)) };
+}
+
+function renderStanding(person) {
+    const path = `/people/${encodeURIComponent(person.key)}/relationship`;
+    const familiarity = slider("Familiarity", person.standing.familiarity, 0);
+    const affinity = slider("Affinity", person.standing.affinity, -1);
+    const reload = async () => {
+        await load();
+        render();
+    };
+    // Only what was moved gets sent, so saving one value can't round off the other.
+    const changed = () =>
+        Object.fromEntries(
+            [
+                ["familiarity", familiarity.input],
+                ["affinity", affinity.input],
+            ]
+                .filter(([, input]) => input.dataset.touched === "true")
+                .map(([name, input]) => [name, Number(input.value)]),
+        );
+    const save = () =>
+        act(async () => {
+            const body = changed();
+            if (Object.keys(body).length === 0) throw new Error("Move a slider first");
+            await api(path, { method: "PATCH", body });
+            await reload();
+        }, "Saved");
+    const reset = () => {
+        if (!confirm(`Make ${person.name} a stranger to her again? Her memories of them stay.`)) return;
+        act(async () => {
+            await api(path, { method: "DELETE" });
+            await reload();
+        }, "Reset");
+    };
+    return [
+        familiarity.field,
+        affinity.field,
+        el(
+            "div",
+            { className: "actions" },
+            el("button", { className: "primary", onclick: save }, "Save"),
+            el("button", { onclick: reset }, "Reset relationship"),
+        ),
+    ];
+}
+
 function renderDetail() {
     const person = people.list.find((candidate) => candidate.key === people.selected);
     if (!person) return el("div", { className: "empty" }, "Pick someone to see what she knows about them.");
@@ -72,6 +133,7 @@ function renderDetail() {
             fact("Familiarity", score(person.standing?.familiarity)),
             fact("Affinity", score(person.standing?.affinity)),
         ),
+        person.standing ? renderStanding(person) : undefined,
         el("h3", {}, `Groups (${person.groups.length})`),
         person.groups.length === 0
             ? el("div", { className: "meta" }, "She hasn't formed an opinion in any group.")

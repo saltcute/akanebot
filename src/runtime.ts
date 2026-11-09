@@ -2,7 +2,14 @@ import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, QuotedMess
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
 import { dayState } from "./body/life.ts";
-import { currentRelationship, describeRelationship, fadedAffinity, type Relationship, updateRelationship } from "./body/relationships.ts";
+import {
+    correctStanding,
+    currentRelationship,
+    describeRelationship,
+    fadedAffinity,
+    type Relationship,
+    updateRelationship,
+} from "./body/relationships.ts";
 import { Routine } from "./body/routine.ts";
 import { Vitals } from "./body/vitals.ts";
 import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
@@ -456,6 +463,19 @@ export class Runtime {
     forgetPerson(user: string): number {
         this.#options.trace.record("control.web", { detail: { action: "forget_person", user } });
         return this.#forgetUser(user);
+    }
+
+    /** False when she has no feelings about this person to correct. */
+    correctStanding(user: string, correction: Partial<Relationship>): boolean {
+        const corrected = correctStanding(this.memory.store, user, correction, this.#options.clock.now(), this.#people);
+        if (corrected) this.#options.trace.record("control.web", { detail: { action: "correct_relationship", user, ...correction } });
+        return corrected;
+    }
+
+    /** Back to strangers, on every account. Her memories of them stay. */
+    resetStanding(user: string): void {
+        this.memory.store.deleteRelationships(this.#people.accountsOf(user));
+        this.#options.trace.record("control.web", { detail: { action: "reset_relationship", user } });
     }
 
     /** The live window, or what a restart would restore if nobody has spoken here yet. */

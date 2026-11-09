@@ -71,6 +71,27 @@ export function updateRelationship(
     });
 }
 
+/**
+ * An operator's correction. Every row gets the same values, because standing is read across rows and a change to just one
+ * could be outvoted by the highest familiarity elsewhere. False when she has no feelings about them to correct.
+ */
+export function correctStanding(
+    store: MemoryStore,
+    user: string,
+    correction: Partial<Relationship>,
+    now: number,
+    people: People = NO_LINKS,
+): boolean {
+    const standing = standingOf(store, user, people);
+    if (!standing) return false;
+    const familiarity = correction.familiarity ?? standing.familiarity;
+    const affinity = correction.affinity ?? faded(standing, now);
+    for (const row of store.relationshipsOf(people.accountsOf(user))) {
+        store.saveRelationship({ ...row, familiarity, affinity, updatedAt: now, gainDay: standing.gainDay, dayGain: standing.dayGain });
+    }
+    return true;
+}
+
 /** Undefined when there's nothing worth mentioning. `introduced` means the operator already said how she knows them. */
 export function describeRelationship({ familiarity, affinity }: Relationship, introduced = false): string | undefined {
     const parts: string[] = [];

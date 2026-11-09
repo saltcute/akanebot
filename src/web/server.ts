@@ -54,6 +54,10 @@ const reachSchema = z.strictObject({ reach: z.enum(["group", "shared"]) });
 
 const muteSchema = z.strictObject({ minutes: z.number().positive().max(MAX_MUTE_MINUTES) });
 
+const standingSchema = z
+    .strictObject({ familiarity: z.number().min(0).max(1).optional(), affinity: z.number().min(-1).max(1).optional() })
+    .refine((correction) => correction.familiarity !== undefined || correction.affinity !== undefined, "Nothing to change");
+
 class HttpError extends Error {
     readonly status: number;
 
@@ -339,6 +343,23 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             method: "DELETE",
             path: /^\/api\/people\/([^/]+)$/,
             handle: (request) => ({ forgotten: runtime.forgetPerson(personKey(request)) }),
+        },
+        {
+            method: "PATCH",
+            path: /^\/api\/people\/([^/]+)\/relationship$/,
+            handle: (request) => {
+                const key = personKey(request);
+                const { familiarity, affinity } = standingSchema.parse(request.body);
+                const correction = { ...(familiarity === undefined ? {} : { familiarity }), ...(affinity === undefined ? {} : { affinity }) };
+                if (!runtime.correctStanding(key, correction)) throw new HttpError(404, "She has no feelings about this person yet");
+            },
+        },
+        {
+            method: "DELETE",
+            path: /^\/api\/people\/([^/]+)\/relationship$/,
+            handle: (request) => {
+                runtime.resetStanding(personKey(request));
+            },
         },
     ];
 }
