@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ChatMessage } from "../src/adapters/types.ts";
 import { appConfigSchema } from "../src/config.ts";
 import { assessCompetence } from "../src/gate/competence.ts";
-import { decideToSpeak, NEUTRAL_CONTEXT } from "../src/gate/policy.ts";
+import { decideToSpeak, NEUTRAL_CONTEXT, overruleMisaddress } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -97,6 +97,62 @@ describe("decideToSpeak", () => {
 
     it("clamps out-of-range interest from the model", () => {
         expect(decideToSpeak(features({ interest: 50 }), PERSONA, false, rng()).probability).toBeLessThanOrEqual(1);
+    });
+});
+
+describe("overruleMisaddress", () => {
+    const persona = { ...PERSONA, aliases: ["akane", "茜"] };
+    const said = (text: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({
+        platform: "cli",
+        channelId: "g",
+        messageId: "m",
+        sender: { id: "a", displayName: "alice", isBot: false },
+        text,
+        sentAt: 0,
+        mentionsSelf: false,
+        repliesToSelf: false,
+        isSelf: false,
+        isBacklog: false,
+        ...overrides,
+    });
+    const toBob = (text: string, overrides: Partial<ChatMessage> = {}) => said(text, { mentions: ["bob"], ...overrides });
+    const yes = features({ addressedToMe: "yes", towardMe: "hostile" });
+
+    it.each(["yes", "unclear"] as const)("turns %s into no when the message @s someone else", (addressedToMe) => {
+        expect(overruleMisaddress(features({ addressedToMe, towardMe: "hostile" }), [toBob("@bob 你咋还不睡")], persona)).toMatchObject({
+            addressedToMe: "no",
+            towardMe: "neutral",
+        });
+    });
+
+    it("leaves a no alone", () => {
+        const no = features({ towardMe: "hostile" });
+        expect(overruleMisaddress(no, [toBob("@bob 你咋还不睡")], persona)).toBe(no);
+    });
+
+    it("believes the model when her name is used alongside someone else's @", () => {
+        expect(overruleMisaddress(yes, [toBob("@bob 小茜你怎么看")], persona)).toBe(yes);
+        expect(overruleMisaddress(yes, [toBob("@bob AKANE 你说呢")], persona)).toBe(yes);
+    });
+
+    it("doesn't mistake a mentioned member's name for her alias", () => {
+        const message = said("@茜茜 你咋还不睡", { mentions: ["茜茜"] });
+        expect(overruleMisaddress(yes, [message], persona).addressedToMe).toBe("no");
+    });
+
+    it("leaves real mentions and replies to her alone", () => {
+        expect(overruleMisaddress(yes, [toBob("@bob @小茜 你们", { mentionsSelf: true })], persona)).toBe(yes);
+        expect(overruleMisaddress(yes, [toBob("@bob 你呢", { repliesToSelf: true })], persona)).toBe(yes);
+    });
+
+    it("leaves a batch alone if any message isn't aimed at someone else", () => {
+        expect(overruleMisaddress(yes, [said("你吃了吗"), toBob("@bob 在吗")], persona)).toBe(yes);
+        expect(overruleMisaddress(yes, [toBob("@bob 在吗"), toBob("@bob 人呢")], persona).addressedToMe).toBe("no");
+    });
+
+    it("doesn't apply with no mentions or no messages", () => {
+        expect(overruleMisaddress(yes, [said("你吃了吗")], persona)).toBe(yes);
+        expect(overruleMisaddress(yes, [], persona)).toBe(yes);
     });
 });
 

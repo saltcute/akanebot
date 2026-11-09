@@ -172,6 +172,14 @@ describe("Runtime", () => {
         expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ mode: "out_of_depth", probability: 0 });
     });
 
+    it("doesn't answer a message @-ing someone else, even if the gate thinks it's for her", async () => {
+        const { adapter, reply, trace, settle } = await setup({ gate: { addressedToMe: "yes" }, persona: { talkativeness: 0 } });
+        adapter.say("alice", "@bob 可是你咋还不睡");
+        await settle();
+        expect(reply.calls).toHaveLength(0);
+        expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ addressed: false, addressOverruled: "yes" });
+    });
+
     it("can leave a direct question on read", async () => {
         const { adapter, settle } = await setup({ persona: { ignoreDirectAsks: 1 } });
         adapter.say("alice", "@小茜 在吗");

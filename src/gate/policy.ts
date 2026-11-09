@@ -1,4 +1,6 @@
+import type { ChatMessage } from "../adapters/types.ts";
 import type { Rng } from "../lib/rng.ts";
+import { isAddressed } from "../perception/channel.ts";
 import type { Persona } from "../persona/schema.ts";
 import type { GateFeatures } from "./features.ts";
 
@@ -32,6 +34,20 @@ const STALE_FACTOR = 0.3;
 
 function clamp(value: number): number {
     return Math.min(1, Math.max(0, value));
+}
+
+/** Only text outside the @-mentions counts, so a member called 茜茜 doesn't pass for the alias 茜. QQ adds an @ to replies, so being named still wins. */
+function aimedAtSomeoneElse(message: ChatMessage, persona: Persona): boolean {
+    if (!message.mentions?.length || isAddressed(message)) return false;
+    const rest = message.mentions.reduce((text, name) => text.replaceAll(`@${name}`, " "), message.text).toLowerCase();
+    return ![persona.name, ...persona.aliases].some((name) => rest.includes(name.toLowerCase()));
+}
+
+/** The model takes "you" after someone else's @ to mean the persona. The platform says who it's for, so code settles it. */
+export function overruleMisaddress(features: GateFeatures, newMessages: readonly ChatMessage[], persona: Persona): GateFeatures {
+    if (features.addressedToMe === "no" || newMessages.length === 0) return features;
+    if (!newMessages.every((message) => aimedAtSomeoneElse(message, persona))) return features;
+    return { ...features, addressedToMe: "no", towardMe: "neutral" };
 }
 
 /** LLMs are poor at deciding whether to speak, so the model reports features and this rolls the dice. */

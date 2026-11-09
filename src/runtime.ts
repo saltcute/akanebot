@@ -9,7 +9,7 @@ import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
 import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
-import { decideToRepeat, decideToSpeak } from "./gate/policy.ts";
+import { decideToRepeat, decideToSpeak, overruleMisaddress } from "./gate/policy.ts";
 import { findRepeatChain } from "./gate/repeat.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
@@ -550,7 +550,7 @@ export class Runtime {
 
         const newMessages = window.slice(firstNewIndex).filter((message) => isSpoken(message) && !message.isSelf);
         this.memory.markAttended(key, newMessages);
-        const features: GateFeatures = gate.data;
+        const features: GateFeatures = overruleMisaddress(gate.data, newMessages, persona);
         const now = clock.now();
         const newest = newMessages.at(-1);
         const asker = newMessages.findLast(isAddressed) ?? newest;
@@ -570,7 +570,8 @@ export class Runtime {
             outOfDepth: competence.mode === "out_of_depth",
         };
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, speakContext);
-        trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, battery, features } });
+        const overruled = features === gate.data ? {} : { addressOverruled: gate.data.addressedToMe };
+        trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, battery, features, ...overruled } });
         for (const speaker of new Set(newMessages.map(userKey))) {
             updateRelationship(
                 store,
