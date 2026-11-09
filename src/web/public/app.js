@@ -1,6 +1,7 @@
 // Everything shown here can come from strangers in a chat, so text only ever enters the page as text nodes.
 
 import { showDecisions, showPerson } from "./dialogs.js";
+import { historyTab } from "./history.js";
 import { peopleTab } from "./people.js";
 import { statusTab } from "./status.js";
 import {
@@ -630,6 +631,7 @@ const TABS = {
         render: renderConversations,
         live: () => JSON.stringify([ui.conversations, ui.conversation]),
     },
+    history: historyTab,
     memories: { label: "Memories", load: refreshMemories, render: renderMemories },
     people: peopleTab,
     status: statusTab,

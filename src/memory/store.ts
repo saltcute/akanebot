@@ -57,6 +57,22 @@ export type MemoryQuery = {
 /** Where a memory came from. The message fields are null once the raw log has aged out. */
 export type MemorySource = { messageId: string; speaker: string; displayName: string | null; text: string | null; sentAt: number | null };
 
+export type LogQuery = { channel?: string | undefined; users?: readonly string[]; text?: string | undefined; limit: number; offset: number };
+
+/** A raw log line as the operator sees it. */
+export type LoggedMessage = {
+    channel: string;
+    messageId: string;
+    senderKey: string;
+    senderName: string;
+    isSelf: boolean;
+    attended: boolean;
+    digested: boolean;
+    text: string;
+    sentAt: number;
+    quoted: { senderName: string; text: string } | undefined;
+};
+
 export type MemoryStats = { active: number; archived: number; replaced: number; unindexed: number; messages: number };
 
 export type LoggedSpeaker = { userKey: string; displayName: string; messages: number; lastSeen: number };
@@ -72,6 +88,8 @@ export type RelationshipRow = {
 };
 
 type LoggedRow = {
+    attended: number;
+    segmented: number;
     channel: string;
     messageId: string;
     userKey: string;
@@ -199,6 +217,37 @@ export class MemoryStore {
 
     markSegmented(channel: string, messageIds: readonly string[]): void {
         for (const id of messageIds) this.#run("UPDATE rawLog SET segmented = 1 WHERE channel = ? AND messageId = ?", channel, id);
+    }
+
+    /** One page of the raw log, newest first. Operator tooling only: this never reaches the agent. */
+    browseLog(query: LogQuery): { messages: LoggedMessage[]; total: number } {
+        const clauses: string[] = [];
+        const parameters: SQLInputValue[] = [];
+        if (query.channel) {
+            clauses.push("channel = ?");
+            parameters.push(query.channel);
+        }
+        if (query.users) {
+            clauses.push(`userKey IN (${query.users.map(() => "?").join(", ")})`);
+            parameters.push(...query.users);
+        }
+        if (query.text) {
+            clauses.push("text LIKE ? ESCAPE '\\'");
+            parameters.push(`%${query.text.replace(/[\\%_]/g, "\\$&")}%`);
+        }
+        const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+        const [count] = this.#all<{ total: number }>(`SELECT COUNT(*) AS total FROM rawLog ${where}`, ...parameters);
+        const rows = this.#all<LoggedRow>(
+            `SELECT * FROM rawLog ${where} ORDER BY sentAt DESC, rowid DESC LIMIT ? OFFSET ?`,
+            ...parameters,
+            query.limit,
+            query.offset,
+        );
+        return { messages: rows.map(toLoggedMessage), total: count?.total ?? 0 };
+    }
+
+    logChannels(): string[] {
+        return this.#all<{ channel: string }>("SELECT DISTINCT channel FROM rawLog ORDER BY channel").map((row) => row.channel);
     }
 
     stats(): MemoryStats {
@@ -537,6 +586,22 @@ function toMemoryView(row: MemoryViewRow): MemoryView {
 
 function toReactionsColumn(reactions: readonly MessageReaction[]): string | null {
     return reactions.length > 0 ? JSON.stringify(reactions) : null;
+}
+
+function toLoggedMessage(row: LoggedRow): LoggedMessage {
+    const quote = row.replyTo ? (JSON.parse(row.replyTo) as QuotedMessage) : undefined;
+    return {
+        channel: row.channel,
+        messageId: row.messageId,
+        senderKey: row.userKey,
+        senderName: row.displayName,
+        isSelf: row.isSelf === 1,
+        attended: row.attended === 1,
+        digested: row.segmented === 1,
+        text: row.text,
+        sentAt: row.sentAt,
+        quoted: quote ? { senderName: quote.by, text: quote.text } : undefined,
+    };
 }
 
 function toChatMessage(row: LoggedRow): ChatMessage {

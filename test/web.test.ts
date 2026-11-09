@@ -614,3 +614,52 @@ describe("web console status", () => {
         expect(second.guard).toEqual(first.guard);
     });
 });
+
+describe("web console history", () => {
+    it("pages through the raw log newest first, including unread messages", async () => {
+        const { adapter, json } = await setup();
+        adapter.say("alice", "one");
+        adapter.say("bob", "two");
+        adapter.say("alice", "three");
+        const page = await json("/api/history?limit=2");
+        expect(page.total).toBe(3);
+        expect(page.messages.map((message: { text: string }) => message.text)).toEqual(["three", "two"]);
+        expect(page.messages[0]).toMatchObject({ senderKey: "cli:alice", attended: false, digested: false, channel: CHANNEL });
+        expect(page.channels).toEqual([{ key: CHANNEL, name: expect.any(String) }]);
+        expect((await json("/api/history?limit=2&offset=2")).messages.map((message: { text: string }) => message.text)).toEqual(["one"]);
+    });
+
+    it("filters by text, treating wildcards literally, and by every account of a person", async () => {
+        const { adapter, store, json } = await setup({ people: ALICE_ACCOUNTS });
+        adapter.say("alice", "100% sure");
+        adapter.say("bob", "100 percent");
+        store.logMessage(
+            {
+                platform: "discord",
+                channelId: "9",
+                messageId: "d1",
+                sender: { id: "42", displayName: "Al", isBot: false },
+                text: "from discord",
+                sentAt: 5,
+                mentionsSelf: false,
+                repliesToSelf: false,
+                isBacklog: false,
+                isSelf: false,
+            },
+            "discord:42",
+            false,
+        );
+        const search = (query: string) =>
+            json(`/api/history?${query}`).then((page) => page.messages.map((message: { text: string }) => message.text));
+        expect(await search(`q=${encodeURIComponent("100%")}`)).toEqual(["100% sure"]);
+        expect((await search(`user=${ALICE_KEY}`)).sort()).toEqual(["100% sure", "from discord"]);
+        expect(await search("channel=discord%3A9")).toEqual(["from discord"]);
+    });
+
+    it("rejects a bad page", async () => {
+        const { call, errors } = await setup();
+        expect((await call("/api/history?limit=0")).status).toBe(400);
+        expect((await call("/api/history?offset=-1")).status).toBe(400);
+        expect(errors).toEqual([]);
+    });
+});

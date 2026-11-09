@@ -27,7 +27,7 @@ import type { DecisionTrace, TraceEvent } from "./lib/trace.ts";
 import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
-import type { MemoryStats, MemoryStore } from "./memory/store.ts";
+import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutForwarded, withoutQuote } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
@@ -455,6 +455,22 @@ export class Runtime {
                 };
             })
             .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || a.name.localeCompare(b.name));
+    }
+
+    /** The raw log for the operator, one page at a time. A person's filter covers all their accounts. */
+    history(query: Omit<LogQuery, "users"> & { user?: string | undefined }): {
+        messages: (LoggedMessage & { channelName: string })[];
+        total: number;
+        channels: { key: string; name: string }[];
+    } {
+        const { user, ...rest } = query;
+        const { store } = this.memory;
+        const { messages, total } = store.browseLog({ ...rest, ...(user ? { users: this.#people.accountsOf(user) } : {}) });
+        return {
+            messages: messages.map((message) => ({ ...message, channelName: this.channelName(message.channel) ?? message.channel })),
+            total,
+            channels: store.logChannels().map((key) => ({ key, name: this.channelName(key) ?? key })),
+        };
     }
 
     channelName(key: string): string | undefined {

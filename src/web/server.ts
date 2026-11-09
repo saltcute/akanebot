@@ -23,6 +23,7 @@ const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/dialogs.js", { file: "dialogs.js", type: "text/javascript; charset=utf-8" }],
     ["/people.js", { file: "people.js", type: "text/javascript; charset=utf-8" }],
     ["/status.js", { file: "status.js", type: "text/javascript; charset=utf-8" }],
+    ["/history.js", { file: "history.js", type: "text/javascript; charset=utf-8" }],
     ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 
@@ -54,6 +55,14 @@ const memoryEditSchema = z.strictObject({
 const reachSchema = z.strictObject({ reach: z.enum(["group", "shared"]) });
 
 const muteSchema = z.strictObject({ minutes: z.number().positive().max(MAX_MUTE_MINUTES) });
+
+const historyQuerySchema = z.object({
+    channel: z.string().min(1).optional(),
+    user: z.string().min(1).optional(),
+    q: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+    offset: z.coerce.number().int().min(0).default(0),
+});
 
 const standingSchema = z
     .strictObject({ familiarity: z.number().min(0).max(1).optional(), affinity: z.number().min(-1).max(1).optional() })
@@ -333,6 +342,14 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             },
         },
 
+        {
+            method: "GET",
+            path: /^\/api\/history$/,
+            handle: (request) => {
+                const { q, ...filters } = historyQuerySchema.parse(Object.fromEntries(request.query));
+                return runtime.history({ ...filters, ...(q ? { text: q } : {}) });
+            },
+        },
         { method: "GET", path: /^\/api\/body$/, handle: () => runtime.bodySnapshot() },
         {
             method: "PUT",

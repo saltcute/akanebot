@@ -234,6 +234,10 @@ dialog p {
     grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
 }
 
+.split.one-pane {
+    grid-template-columns: minmax(0, 1fr);
+}
+
 .single {
     flex: 1;
     min-height: 0;
@@ -656,6 +660,10 @@ dialog::backdrop {
     .split.wide-list {
         grid-template-columns: minmax(0, 1fr);
         grid-template-rows: minmax(0, 2fr) minmax(0, 3fr);
+    }
+
+    .split.one-pane {
+        grid-template-rows: minmax(0, 1fr);
     }
 
     .pane + .pane {
