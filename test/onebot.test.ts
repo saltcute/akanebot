@@ -683,6 +683,49 @@ describe("OneBot group notices", () => {
         expect(toGroupEvent(notice({ notice_type: "group_upload" }), NOW, names)).toBeUndefined();
     });
 
+    describe("pokes", () => {
+        const poke = { notice_type: "notify", sub_type: "poke", user_id: "8", target_id: "7" };
+
+        it("reads the poker from user_id and the one poked from target_id", () => {
+            expect(toGroupEvent(notice(poke), NOW, names)).toMatchObject({
+                kind: "poked",
+                actor: { displayName: "admin" },
+                target: { displayName: "bob" },
+                targetIsSelf: false,
+            });
+        });
+
+        it("knows when she's the one poked", () => {
+            expect(toGroupEvent(notice({ ...poke, target_id: "999" }), NOW, names)?.targetIsSelf).toBe(true);
+        });
+
+        it("looks up the name of whoever was poked", async () => {
+            const { socket, groupEvents } = await connected();
+            socket.emit("message", { post_type: "notice", self_id: 999, group_id: 181, time: NOW / 1000, ...poke });
+            const lookups = socket.sent.slice(-2);
+            expect(lookups.map(({ params }) => params)).toEqual([
+                { group_id: 181, user_id: 8 },
+                { group_id: 181, user_id: 7 },
+            ]);
+            for (const [index, lookup] of lookups.entries()) {
+                socket.emit("message", { status: "ok", retcode: 0, data: { nickname: `n${index}` }, echo: lookup.echo });
+            }
+            await vi.waitFor(() => expect(groupEvents).toHaveLength(1));
+            expect(groupEvents[0]).toMatchObject({ actor: { displayName: "n0" }, target: { displayName: "n1" } });
+        });
+
+        it("ignores a private poke and other notifications without complaint", async () => {
+            const { socket, groupEvents, statuses } = await connected();
+            const before = socket.sent.length;
+            socket.emit("message", { post_type: "notice", self_id: 999, time: NOW / 1000, ...poke });
+            socket.emit("message", { post_type: "notice", self_id: 999, time: NOW / 1000, notice_type: "notify", sub_type: "profile_like" });
+            socket.emit("message", { post_type: "notice", self_id: 999, group_id: 181, time: NOW / 1000, notice_type: "notify", sub_type: "honor" });
+            expect(socket.sent).toHaveLength(before);
+            expect(groupEvents).toHaveLength(0);
+            expect(statuses.filter((status) => status.includes("message_failed"))).toEqual([]);
+        });
+    });
+
     it("looks up names it hasn't seen, and carries on if it can't", async () => {
         const { socket, groupEvents } = await connected();
         socket.emit("message", { post_type: "notice", self_id: 999, group_id: 181, time: NOW / 1000, ...ban });

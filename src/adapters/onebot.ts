@@ -46,8 +46,8 @@ const NOTICE_KINDS: Readonly<Record<string, GroupEventKind>> = {
     "group_admin/unset": "admin_removed",
     "essence/add": "pinned",
     "essence/delete": "unpinned",
+    "notify/poke": "poked",
 };
-const GROUP_NOTICE_TYPES = new Set(Object.keys(NOTICE_KINDS).map((key) => key.split("/")[0]));
 
 const idSchema = z.union([z.number(), z.string()]).transform(String);
 const segmentSchema = z.object({ type: z.string(), data: z.record(z.string(), z.unknown()).default({}) });
@@ -86,6 +86,7 @@ const groupNoticeSchema = z.object({
     sub_type: z.string().default(""),
     user_id: idSchema.optional(),
     operator_id: idSchema.optional(),
+    target_id: idSchema.optional(),
     message_id: idSchema.optional(),
     duration: z.number().default(0),
 });
@@ -287,23 +288,34 @@ export function toReactionEvents(event: ReactionNotice, names: ReadonlyMap<strin
     }));
 }
 
+function noticeKey(notice: { notice_type?: unknown; sub_type?: unknown }): string {
+    return `${String(notice.notice_type)}/${String(notice.sub_type)}`;
+}
+
+/** A poke in a private chat arrives the same way as one in a group, just with no group to parse. */
+function isGroupNoticeWeRead(payload: Record<string, unknown>): boolean {
+    return payload.post_type === "notice" && payload.group_id !== undefined && NOTICE_KINDS[noticeKey(payload)] !== undefined;
+}
+
 /** Returns undefined for notices it has no use for, and for stale ones replayed after being offline. */
 export function toGroupEvent(notice: GroupNotice, now: number, names: ReadonlyMap<string, string>): GroupEvent | undefined {
     const at = notice.time * 1000;
-    const individual = NOTICE_KINDS[`${notice.notice_type}/${notice.sub_type}`];
+    const individual = NOTICE_KINDS[noticeKey(notice)];
     if (!individual || now - at > MAX_LIVE_AGE_MS) return undefined;
     const person = (id: string | undefined): Sender | undefined =>
         id && id !== NOBODY ? { id, displayName: names.get(id) ?? id, isBot: false } : undefined;
     const wholeGroup = notice.notice_type === "group_ban" && notice.user_id === NOBODY;
     const kind = wholeGroup ? (individual === "muted" ? "muted_all" : "unmuted_all") : individual;
+    // In a poke `user_id` is who did it, where every other notice has that person being acted on.
+    const [actorId, targetId] = kind === "poked" ? [notice.user_id, notice.target_id] : [notice.operator_id, notice.user_id];
     return {
         platform: "qq",
         channelId: notice.group_id,
         kind,
         // On a join or a departure this is whoever approved it, or the person themselves, which nobody in the chat sees.
-        actor: kind === "left" || kind === "joined" ? undefined : person(notice.operator_id),
-        target: person(notice.user_id),
-        targetIsSelf: notice.user_id === notice.self_id,
+        actor: kind === "left" || kind === "joined" ? undefined : person(actorId),
+        target: person(targetId),
+        targetIsSelf: targetId === notice.self_id,
         durationMs: kind === "muted" ? notice.duration * 1000 : undefined,
         messageId: notice.message_id,
         at,
@@ -456,7 +468,7 @@ export class OneBotAdapter implements Adapter {
             else if (payload.post_type === "message" && payload.message_type === "group") this.#onGroupMessage(groupMessageSchema.parse(payload));
             else if (payload.post_type === "notice" && payload.notice_type === "group_msg_emoji_like") {
                 for (const event of toReactionEvents(reactionNoticeSchema.parse(payload), this.#names)) this.#onReaction?.(event);
-            } else if (payload.post_type === "notice" && GROUP_NOTICE_TYPES.has(String(payload.notice_type))) {
+            } else if (isGroupNoticeWeRead(payload)) {
                 void this.#onGroupNotice(groupNoticeSchema.parse(payload)).catch((error) => this.#onStatus("message_failed", String(error)));
             }
         } catch (error) {
@@ -475,7 +487,7 @@ export class OneBotAdapter implements Adapter {
     }
 
     async #onGroupNotice(notice: GroupNotice): Promise<void> {
-        await Promise.all([notice.user_id, notice.operator_id].map((id) => this.#learnName(notice.group_id, id)));
+        await Promise.all([notice.user_id, notice.operator_id, notice.target_id].map((id) => this.#learnName(notice.group_id, id)));
         const event = toGroupEvent(notice, this.#clock.now(), this.#names);
         if (event) this.#onGroupEvent?.(event);
     }

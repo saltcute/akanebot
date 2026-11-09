@@ -34,7 +34,8 @@ export type GroupEventKind =
     | "admin_added"
     | "admin_removed"
     | "pinned"
-    | "unpinned";
+    | "unpinned"
+    | "poked";
 
 /** Something the platform itself reports happening in a group, as opposed to anything someone said. */
 export type GroupEvent = ChannelRef & {

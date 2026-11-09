@@ -146,6 +146,7 @@ export function renderGroupEvent(event: GroupEvent, pinned?: ChatMessage): strin
         case "kicked":
         case "banned":
         case "unbanned":
+        case "poked":
             return done(event.kind);
         case "muted_all":
             return `${by ?? "an admin"} muted the whole group`;

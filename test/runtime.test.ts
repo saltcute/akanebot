@@ -1850,6 +1850,17 @@ describe("group events", () => {
         expect(chatLines(reply.calls[0]?.transcript)).toContain("[alice muted you]");
     });
 
+    it("shows a poke as context without waking the agent, even when it's at her", async () => {
+        const { adapter, gate, reply, settle } = await setup({});
+        adapter.groupEvent({ kind: "poked", actor: alice, target: { id: "self", displayName: "小茜", isBot: false }, targetIsSelf: true });
+        adapter.groupEvent({ kind: "poked", actor: alice, target: bob });
+        await settle();
+        expect(gate.calls).toHaveLength(0);
+        adapter.say("carol", "在吗");
+        await settle();
+        expect(chatLines(reply.calls[0]?.transcript)).toEqual(["[alice poked you]", "[alice poked bob]", "--- new ---", "carol: 在吗"]);
+    });
+
     it("doesn't treat an event among new messages as someone speaking", async () => {
         const memoryStore = new MemoryStore(":memory:");
         const { adapter, reply, settle } = await setup({ memoryStore });
