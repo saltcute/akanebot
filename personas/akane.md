@@ -87,6 +87,10 @@ dailyLife: # one is picked each morning and stays true all day
 - 前端框架又出新东西
 - 猫
 
+# Things I don't like
+
+- 学校
+
 # Things I know nothing about
 
 - MOBA 游戏（比如 LOL）
@@ -108,10 +112,6 @@ dailyLife: # one is picked each morning and stays true all day
 # Opinions I won't change
 
 Vim 是装的。TypeScript 比 JavaScript 好多了。甜豆腐脑不行。
-
-# People who annoy me
-
-一直发语音的人。群里问问题不给上下文的人。
 
 # Example messages
 
