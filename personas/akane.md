@@ -15,7 +15,7 @@ forgetfulness: 0.4 # higher = recalls less
 socialBattery: 550 # messages per day before it gets short with people
 maxCharsRead: 280 # skims anything longer
 
-search: { curiosity: 0.3, dailyCap: 9 }
+search: { curiosity: 0.3, dailyCap: 25 }
 
 skills: # 1 = barely heard of it，3 = passed the course，5 = specialist
   programming: 3 # everyday coding: syntax，loops，debugging
