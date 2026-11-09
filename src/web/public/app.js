@@ -409,6 +409,7 @@ function renderMessage(message) {
             message.isShadow ? pill("Shadow, not sent", "warn") : undefined,
             message.isShadow ? undefined : el("button", { className: "why", onclick: () => showDecisions(message.messageId) }, "Why?"),
         ),
+        message.isReply ? renderQuote(message.quoted) : undefined,
         el("p", { className: "message-text" }, message.text),
         message.reactions.length > 0
             ? el(
@@ -418,6 +419,11 @@ function renderMessage(message) {
               )
             : undefined,
     );
+}
+
+function renderQuote(quoted) {
+    if (!quoted) return el("div", { className: "message-quote" }, "Replying to an earlier message");
+    return el("div", { className: "message-quote" }, el("b", {}, quoted.senderName), " ", quoted.text);
 }
 
 function renderMemories() {

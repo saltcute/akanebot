@@ -382,6 +382,20 @@ dialog p {
     font-size: 12px;
 }
 
+.message-quote {
+    margin-top: 4px;
+    padding-left: 8px;
+    border-left: 2px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+}
+
 .message-text {
     margin: 2px 0 0;
     white-space: pre-wrap;
