@@ -526,6 +526,16 @@ export class Runtime {
         return this.#forgetUser(user);
     }
 
+    /** Removes it from the log and from what she can see. False if it wasn't logged. */
+    deleteMessage(channel: string, messageId: string): boolean {
+        if (!this.memory.store.deleteLogged(channel, messageId)) return false;
+        const perception = this.#channels.get(channel)?.perception;
+        perception?.purge((message) => message.messageId === messageId);
+        perception?.purgeQuotesOf(messageId);
+        this.#options.trace.record("control.web", { channel, messageId, detail: { action: "delete_message" } });
+        return true;
+    }
+
     setBattery(level: number): void {
         this.vitals.setBattery(level);
         this.#options.trace.record("control.web", { detail: { action: "set_battery", level } });

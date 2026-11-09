@@ -350,6 +350,13 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
                 return runtime.history({ ...filters, ...(q ? { text: q } : {}) });
             },
         },
+        {
+            method: "DELETE",
+            path: /^\/api\/history\/([^/]+)\/([^/]+)$/,
+            handle: (request) => {
+                if (!runtime.deleteMessage(request.params[0] ?? "", request.params[1] ?? "")) throw new HttpError(404, "No such message");
+            },
+        },
         { method: "GET", path: /^\/api\/body$/, handle: () => runtime.bodySnapshot() },
         {
             method: "PUT",

@@ -656,6 +656,26 @@ describe("web console history", () => {
         expect(await search("channel=discord%3A9")).toEqual(["from discord"]);
     });
 
+    it("deletes a message from the log, the window and any quote of it, keeping memory sources", async () => {
+        const { adapter, store, runtime, json, trace } = await setup();
+        const id = adapter.say("alice", "secret");
+        adapter.say("bob", "replying", "group", { messageId: id, by: "alice", byUser: "cli:alice", text: "secret", isSelf: false });
+        store.addMemory(draft({ sources: [{ messageId: id, speaker: "cli:alice" }] }));
+        await json(`/api/history/${CHANNEL_PATH}/${encodeURIComponent(id)}`, { method: "DELETE" });
+        const page = await json("/api/history");
+        expect(page.total).toBe(1);
+        expect(JSON.stringify(page)).not.toContain("secret");
+        expect(JSON.stringify(runtime.conversation(CHANNEL))).not.toContain("secret");
+        const [memory] = store.all();
+        expect(memory && store.sourcesOf(memory.id)).toHaveLength(1);
+        expect(trace.ofKind("control.web").at(-1)).toMatchObject({ channel: CHANNEL, messageId: id, detail: { action: "delete_message" } });
+    });
+
+    it("says so when the message doesn't exist", async () => {
+        const { call } = await setup();
+        expect((await call(`/api/history/${CHANNEL_PATH}/nope`, { method: "DELETE" })).status).toBe(404);
+    });
+
     it("rejects a bad page", async () => {
         const { call, errors } = await setup();
         expect((await call("/api/history?limit=0")).status).toBe(400);

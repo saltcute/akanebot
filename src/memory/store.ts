@@ -246,6 +246,14 @@ export class MemoryStore {
         return { messages: rows.map(toLoggedMessage), total: count?.total ?? 0 };
     }
 
+    /** Also clears the text quoted in replies to it. Memory sources stay, because forgetting and write quotas rely on them. False if it wasn't logged. */
+    deleteLogged(channel: string, messageId: string): boolean {
+        const { changes } = this.#run("DELETE FROM rawLog WHERE channel = ? AND messageId = ?", channel, messageId);
+        if (changes === 0) return false;
+        this.#run("UPDATE rawLog SET replyTo = NULL WHERE channel = ? AND json_extract(replyTo, '$.messageId') = ?", channel, messageId);
+        return true;
+    }
+
     logChannels(): string[] {
         return this.#all<{ channel: string }>("SELECT DISTINCT channel FROM rawLog ORDER BY channel").map((row) => row.channel);
     }

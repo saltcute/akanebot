@@ -112,6 +112,13 @@ export class ChannelPerception {
         }
     }
 
+    /** A deleted message can't live on in the preview above a reply to it. */
+    purgeQuotesOf(messageId: string): void {
+        for (const entry of this.#window) {
+            if (entry.message.replyTo?.messageId === messageId) entry.message = withoutQuote(entry.message);
+        }
+    }
+
     window(): readonly ChatMessage[] {
         return this.#window.map((entry) => entry.message);
     }

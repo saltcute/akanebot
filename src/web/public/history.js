@@ -14,6 +14,20 @@ async function load() {
     history.people = people;
 }
 
+function remove(message) {
+    if (
+        !confirm(
+            "Delete this message from her log and what she can see? Memories already made from it stay, and the copy on Discord or QQ isn't touched.",
+        )
+    )
+        return;
+    act(async () => {
+        await api(`/history/${encodeURIComponent(message.channel)}/${encodeURIComponent(message.messageId)}`, { method: "DELETE" });
+        await fetchPage();
+        render();
+    }, "Deleted");
+}
+
 function renderLine(message) {
     return el(
         "article",
@@ -29,6 +43,7 @@ function renderLine(message) {
             message.attended ? undefined : pill("Not read"),
             message.digested ? pill("Digested", "ok") : undefined,
             el("button", { className: "why", onclick: () => showDecisions(message.messageId) }, "Why?"),
+            el("button", { className: "why", onclick: () => remove(message) }, "Delete"),
         ),
         message.quoted ? el("div", { className: "message-quote" }, el("b", {}, message.quoted.senderName), " ", message.quoted.text) : undefined,
         el("p", { className: "message-text" }, message.text),
