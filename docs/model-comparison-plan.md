@@ -34,7 +34,7 @@ Find out which model should do each job, and whether smaller models under the LL
 
 | Role | Current default | Compare against |
 |---|---|---|
-| `gate` | Haiku 5.5 | Rules only; local embeddings with logistic regression trained on labelled logs; local 8–9B LLM |
+| `gate` | Haiku 5.5 | Rules only; local embeddings with logistic regression trained on labelled logs; local 8–9B LLM; Jev (not adopted, see below) |
 | `reply` | Opus 5.5, low effort | Sonnet 5.5; local 8–9B LLM; hosted DeepSeek or Qwen, which may suit QQ-style Chinese better |
 | `technical` | Opus 5.5, medium effort | Sonnet 5.5; local 8–9B LLM, only if it clears the competence floor |
 | `extract` | Haiku 5.5 | Sonnet 5.5; local 8–9B LLM |
@@ -64,3 +64,27 @@ The machine has 6 CPU cores, 62 GB of RAM, and an RTX 3070 Ti (8 GB) or 3080 (10
 - Embeddings and any reranker stay on CPU and system RAM.
 - The 3080's extra 2 GB goes to a larger context, not a second model.
 - Speed and VRAM figures so far come from third-party guides. Measure them on the actual card, including peak VRAM.
+
+## Jev as the gate (evaluated 2026-11-09, not adopted)
+
+**Decision:** keep Haiku. No Jev code, config or API key was added.
+
+**What it is:** TypeSafe's hosted decision model. `POST /v1/systemone` takes `state` and named `questions`, and returns typed answers with probabilities (yes/no, choice, or a score of up to 10 levels). It never generates text.
+
+**Fit, by gate feature:**
+
+- Could be answered by Jev (11): `addressedToMe`, `interest`, `canFollow`, `someoneAlreadyAnswered`, `isTechnical`, `domain`, `difficulty`, `highStakes`, `towardMe`, `quickReaction`, `safeToRepeat`.
+- Can't be (3): `privateThought`, `lookUp`, `topic`. They're free text. On the 2026-11-09 trace `privateThought` was filled on all 89 decisions and feeds the reply prompt, and `lookUp` on 3. `topic` is only logged.
+
+**Why not:**
+
+- Cost doesn't justify it. Estimated Haiku gate spend is $0.02–0.045/day at 89 decisions. Jev alone would be about $0.014/day. Jev first with Haiku only when she speaks (49 of 89) would be about $0.026–0.039/day. These are estimates, because token usage isn't traced per role.
+- No published evidence on Chinese, slang-heavy or mixed-language group chat.
+- Known weaknesses that matter here: it favours the first option, loses accuracy on long context, and doesn't treat `state` as hostile by default. Custom training isn't offered.
+- It adds a second processor for chat text: hosted in the US, no fixed retention period, zero data retention for enterprise customers only. Group members would need to be told.
+- Latency is unproven as a benefit: vendor figures are 70–500 ms from the US West Coast, gate latency isn't recorded here, and reply pacing is deliberately slow.
+- No open alternative is confirmed to fit 8 GB of VRAM with good multilingual quality.
+
+**If this is revisited:** run it as a shadow beside Haiku on live attends, tracing both sets of features, in a group that has agreed to the extra processor. Offline replay can't reproduce the gate input, because `rawLog` lacks mentions and forwards. It would need its own provider-neutral interface in `src/llm/`, like `Embedder` and `SearchBackend`, because `LlmBackend` returns text and Jev takes questions. Put the persona and chat in `state` rather than repeating the persona in each question. Compare features and probabilities rather than the `speak` result, which is a dice roll.
+
+Sources: [API](https://docs.typesafe.ai/api), [confidence](https://docs.typesafe.ai/confidence), [data processing](https://typesafe.ai/legal/data-processing), [OpenRouter comparison](https://openrouter.ai/blog/insights/jev-vs-claude-opus-5-classification/).
