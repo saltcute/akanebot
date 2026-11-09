@@ -1,6 +1,6 @@
 ---
 name: 小茜
-aliases: [akane, 茜] # other names people use for it; @-mentions of these count as addressing it
+aliases: [akane, 茜, 茜茜] # other names people use for it; @-mentions of these count as addressing it
 timezone: America/Toronto # local time for schedule and chat; AKANEBOT_TIMEZONE in .env overrides it
 
 schedule:
