@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliAdapter } from "../src/adapters/cli.ts";
+import { People } from "../src/control/people.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
@@ -9,7 +10,7 @@ import { DecisionTrace } from "../src/lib/trace.ts";
 import { NullEmbedder } from "../src/llm/embedder.ts";
 import { FakeBackend } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
-import { type MemoryDraft, MemoryStore } from "../src/memory/store.ts";
+import { type MemoryDraft, MemoryStore, type RelationshipRow } from "../src/memory/store.ts";
 import { Runtime } from "../src/runtime.ts";
 import { isLoopback, resolveWebToken, WebServer } from "../src/web/server.ts";
 import { PERSONA } from "./fixtures.ts";
@@ -48,7 +49,7 @@ function draft(overrides: Partial<MemoryDraft> = {}): MemoryDraft {
     };
 }
 
-async function setup() {
+async function setup(options: { people?: People } = {}) {
     const clock = new ManualClock(1_000_000);
     const trace = new DecisionTrace(clock);
     const adapter = new CliAdapter({ clock, selfName: PERSONA.name });
@@ -79,6 +80,7 @@ async function setup() {
         memoryStore: store,
         embedder: new NullEmbedder(),
         memorySettings: { segmentGapMs: 60_000, maxSegmentMessages: 60, rawRetentionMs: 86_400_000, dailyWritesPerUser: 30 },
+        ...(options.people ? { people: options.people } : {}),
     });
     await runtime.start();
     const errors: string[] = [];
@@ -100,7 +102,7 @@ async function setup() {
         return (await response.json()) as any;
     };
     const post = (path: string, body?: unknown) => json(path, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { adapter, store, runtime, base, call, json, post, errors, trace };
+    return { adapter, store, runtime, base, call, json, post, errors, trace, clock };
 }
 
 describe("web console access", () => {
@@ -412,5 +414,70 @@ describe("web console memories", () => {
     it("refuses to forget the persona herself", async () => {
         const { call } = await setup();
         expect((await call(`/api/people/${encodeURIComponent("cli:self")}`, { method: "DELETE" })).status).toBe(400);
+    });
+});
+
+const ALICE_ACCOUNTS = new People([{ name: "Alice", ids: ["cli:alice", "discord:42"], note: "from the old server" }]);
+
+function relationshipRow(overrides: Partial<RelationshipRow> = {}): RelationshipRow {
+    return {
+        channel: CHANNEL,
+        userKey: "cli:alice",
+        familiarity: 0.5,
+        affinity: 0.4,
+        updatedAt: 1_000_000,
+        gainDay: 11,
+        dayGain: 0.02,
+        ...overrides,
+    };
+}
+
+describe("web console people", () => {
+    it("lists a person once across linked accounts, with their standing", async () => {
+        const { adapter, store, json } = await setup({ people: ALICE_ACCOUNTS });
+        adapter.say("alice", "hi");
+        adapter.say("bob", "hello");
+        store.saveRelationship(relationshipRow({ channel: "discord:9", userKey: "discord:42", familiarity: 0.7 }));
+        const { people } = await json("/api/people");
+        expect(people.map((person: { name: string }) => person.name).sort()).toEqual(["Alice", "bob"]);
+        const alice = people.find((person: { name: string }) => person.name === "Alice");
+        expect(alice).toMatchObject({
+            key: "cli:alice",
+            accounts: ["cli:alice", "discord:42"],
+            note: "from the old server",
+            messages: 1,
+            optedOut: false,
+            standing: { familiarity: 0.7, affinity: 0.4 },
+        });
+        expect(alice.groups).toHaveLength(1);
+    });
+
+    it("includes someone the config declares before they have said anything", async () => {
+        const { json } = await setup({ people: ALICE_ACCOUNTS });
+        const { people } = await json("/api/people");
+        expect(people).toHaveLength(1);
+        expect(people[0]).toMatchObject({ name: "Alice", messages: 0 });
+        expect(people[0]).not.toHaveProperty("standing");
+        expect(people[0]).not.toHaveProperty("lastSeen");
+    });
+
+    it("doesn't list her own lines or group events as people", async () => {
+        const { store, json } = await setup();
+        const base = {
+            platform: "cli",
+            channelId: "group",
+            text: "x",
+            sentAt: 1,
+            mentionsSelf: false,
+            repliesToSelf: false,
+            isBacklog: false,
+        } as const;
+        store.logMessage({ ...base, messageId: "a", sender: { id: "self", displayName: "Akane", isBot: true }, isSelf: true }, "cli:self", true);
+        store.logMessage(
+            { ...base, messageId: "b", sender: { id: "event", displayName: "(group event)", isBot: false }, isSelf: false },
+            "cli:event",
+            false,
+        );
+        expect((await json("/api/people")).people).toEqual([]);
     });
 });

@@ -1,6 +1,7 @@
 // Everything shown here can come from strangers in a chat, so text only ever enters the page as text nodes.
 
 import { showDecisions, showPerson } from "./dialogs.js";
+import { peopleTab } from "./people.js";
 import { act, api, count, el, formatTime, hooks, openDialog, PAGE_SIZE, pill, renderEvents, SEARCH_DELAY_MS, session, toast } from "./ui.js";
 
 const POLL_MS = 3000;
@@ -615,6 +616,7 @@ const TABS = {
         live: () => JSON.stringify([ui.conversations, ui.conversation]),
     },
     memories: { label: "Memories", load: refreshMemories, render: renderMemories },
+    people: peopleTab,
 };
 
 function start() {

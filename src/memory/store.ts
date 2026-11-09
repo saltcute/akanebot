@@ -57,6 +57,8 @@ export type MemoryQuery = {
 /** Where a memory came from. The message fields are null once the raw log has aged out. */
 export type MemorySource = { messageId: string; speaker: string; displayName: string | null; text: string | null; sentAt: number | null };
 
+export type LoggedSpeaker = { userKey: string; displayName: string; messages: number; lastSeen: number };
+
 export type RelationshipRow = {
     channel: string;
     userKey: string;
@@ -453,6 +455,17 @@ export class MemoryStore {
     /** Every row for these accounts, in any group. */
     relationshipsOf(accounts: readonly string[]): RelationshipRow[] {
         return accounts.flatMap((account) => this.#all<RelationshipRow>("SELECT * FROM relationships WHERE userKey = ?", account));
+    }
+
+    allRelationships(): RelationshipRow[] {
+        return this.#all<RelationshipRow>("SELECT * FROM relationships");
+    }
+
+    /** Everyone with a logged message, under the name they used most recently. Group events and her own lines aren't anyone. */
+    loggedSpeakers(): LoggedSpeaker[] {
+        return this.#all<LoggedSpeaker>(
+            "SELECT userKey, displayName, COUNT(*) AS messages, MAX(sentAt) AS lastSeen FROM rawLog WHERE isSelf = 0 AND userKey NOT LIKE '%:event' GROUP BY userKey",
+        );
     }
 
     saveRelationship(row: RelationshipRow): void {

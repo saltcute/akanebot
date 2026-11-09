@@ -33,6 +33,10 @@ export class People {
         for (const entry of entries) for (const id of entry.ids) this.#byAccount.set(id, entry);
     }
 
+    entries(): readonly PersonEntry[] {
+        return [...new Set(this.#byAccount.values())];
+    }
+
     accountsOf(user: string): readonly string[] {
         return this.#byAccount.get(user)?.ids ?? [user];
     }

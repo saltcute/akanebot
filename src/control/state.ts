@@ -107,6 +107,11 @@ export class ControlState {
         return this.#people.accountsOf(user).some((account) => this.#optedOut.has(account));
     }
 
+    /** Accounts as they were opted out. One person can show up here through any of their accounts. */
+    optedOut(): readonly string[] {
+        return [...this.#optedOut];
+    }
+
     optOut(user: string): void {
         this.#optedOut.add(user);
         this.#persist();

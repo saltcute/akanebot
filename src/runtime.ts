@@ -2,7 +2,7 @@ import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, QuotedMess
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
 import { dayState } from "./body/life.ts";
-import { currentRelationship, describeRelationship, updateRelationship } from "./body/relationships.ts";
+import { currentRelationship, describeRelationship, fadedAffinity, type Relationship, updateRelationship } from "./body/relationships.ts";
 import { Routine } from "./body/routine.ts";
 import { Vitals } from "./body/vitals.ts";
 import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
@@ -106,6 +106,21 @@ export type ConversationDetail = ConversationSummary & {
     messages: ConversationMessage[];
     /** Where the unread messages begin, or undefined if there are none. */
     firstNewIndex: number | undefined;
+};
+
+/** One person as the operator sees them, across all their accounts. */
+export type PersonSummary = {
+    /** Works anywhere the API takes a person. */
+    key: string;
+    name: string;
+    accounts: readonly string[];
+    note: string | undefined;
+    messages: number;
+    lastSeen: number | undefined;
+    optedOut: boolean;
+    /** Undefined when she has no feelings about them yet. */
+    standing: Relationship | undefined;
+    groups: { channel: string; name: string; familiarity: number; affinity: number; updatedAt: number }[];
 };
 
 export type RuntimeStatus = {
@@ -350,6 +365,44 @@ export class Runtime {
             messages,
             firstNewIndex: firstNew === undefined ? undefined : messages.findIndex((message) => message.messageId === window[firstNew]?.messageId),
         };
+    }
+
+    /** Everyone she has any data on, or the operator has declared, most recently seen first. */
+    roster(): PersonSummary[] {
+        const { store } = this.memory;
+        const now = this.#options.clock.now();
+        const speakers = new Map(store.loggedSpeakers().map((speaker) => [speaker.userKey, speaker]));
+        const relationships = store.allRelationships();
+        const accounts = [
+            ...this.#people.entries().flatMap((entry) => entry.ids),
+            ...speakers.keys(),
+            ...relationships.map((row) => row.userKey),
+            ...this.#state.optedOut(),
+        ];
+        return [...new Set(accounts.map((account) => this.#people.personOf(account)))]
+            .map((key): PersonSummary => {
+                const linked = this.#people.accountsOf(key);
+                const seen = linked.flatMap((account) => speakers.get(account) ?? []).sort((a, b) => b.lastSeen - a.lastSeen);
+                const rows = relationships.filter((row) => linked.includes(row.userKey));
+                return {
+                    key,
+                    name: this.#people.nameOf(key) ?? seen[0]?.displayName ?? key,
+                    accounts: linked,
+                    note: this.#people.noteOf(key),
+                    messages: seen.reduce((total, speaker) => total + speaker.messages, 0),
+                    lastSeen: seen[0]?.lastSeen,
+                    optedOut: this.#state.isOptedOut(key),
+                    standing: rows.length > 0 ? currentRelationship(store, key, now, this.#people) : undefined,
+                    groups: rows.map((row) => ({
+                        channel: row.channel,
+                        name: this.channelName(row.channel) ?? row.channel,
+                        familiarity: row.familiarity,
+                        affinity: fadedAffinity(row, now),
+                        updatedAt: row.updatedAt,
+                    })),
+                };
+            })
+            .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0) || a.name.localeCompare(b.name));
     }
 
     channelName(key: string): string | undefined {

@@ -30,6 +30,11 @@ function standingOf(store: MemoryStore, user: string, people: People): Relations
     return newest && { ...newest, familiarity: Math.max(...rows.map((row) => row.familiarity)) };
 }
 
+/** Where a single group's row stands today. Only meaningful for display, since standing goes by person. */
+export function fadedAffinity(row: RelationshipRow, now: number): number {
+    return faded(row, now);
+}
+
 export function currentRelationship(store: MemoryStore, user: string, now: number, people: People = NO_LINKS): Relationship {
     const row = standingOf(store, user, people);
     return row ? { familiarity: row.familiarity, affinity: faded(row, now) } : STRANGER;

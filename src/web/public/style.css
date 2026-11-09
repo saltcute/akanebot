@@ -453,6 +453,12 @@ dialog p {
     gap: 12px;
 }
 
+.detail-title {
+    margin: 0;
+    font-size: 17px;
+    overflow-wrap: anywhere;
+}
+
 label.field {
     display: flex;
     flex-direction: column;
