@@ -632,7 +632,10 @@ export class Runtime {
     #admit(channel: Channel, message: ChatMessage): void {
         this.memory.recordIncoming(message);
         if (this.#state.isMuted(channelKey(channel.ref))) channel.perception.recordSeen(message);
-        else channel.perception.ingest(message);
+        else {
+            channel.perception.ingest(message);
+            if (isAddressed(message)) this.#routine?.noteMention();
+        }
     }
 
     #inBackground(work: Promise<void>): void {

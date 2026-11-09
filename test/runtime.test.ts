@@ -670,7 +670,9 @@ describe("living like a person", () => {
     const minute = 60_000;
     const baseSchedule = { sleep: { weekday: "01:00-08:00", weekend: "01:00-08:00" }, busy: [] };
     const awakeAllDay = { timezone: "UTC", schedule: baseSchedule };
-    const classes = [{ days: "mon-fri", time: "10:00-16:30", checkPhoneEveryMin: [10, 10] as [number, number] }];
+    const classPeriod = { days: "mon-fri", time: "10:00-16:30", checkPhoneEveryMin: [10, 10] as [number, number], mentionUrgency: 0 };
+    const classes = [classPeriod];
+    const urgentClasses = [{ ...classPeriod, mentionUrgency: 0.5 }];
 
     describe("routine", () => {
         it("sleeps through a message, then answers it after waking", async () => {
@@ -702,6 +704,62 @@ describe("living like a person", () => {
             expect(gate.calls).toHaveLength(0);
             await settle(10 * minute);
             expect(gate.calls).toHaveLength(1);
+        });
+
+        it("checks its phone sooner with each direct mention during class", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { adapter, gate, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });
+            await settle(minute);
+            for (let i = 0; i < 2; i++) {
+                adapter.say("alice", `@小茜 在吗 ${i}`);
+                await settle(minute);
+            }
+            expect(gate.calls).toHaveLength(0);
+            adapter.say("alice", "@小茜 人呢");
+            await settle(minute);
+            expect(gate.calls).toHaveLength(1);
+        });
+
+        it("waits out most of the gap after a single mention", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { adapter, gate, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });
+            await settle(minute);
+            adapter.say("alice", "@小茜 在吗");
+            await settle(4 * minute);
+            expect(gate.calls).toHaveLength(0);
+            await settle(minute);
+            expect(gate.calls).toHaveLength(1);
+        });
+
+        it("doesn't check its phone sooner for ordinary chat", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { adapter, trace, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });
+            await settle(minute);
+            adapter.say("alice", "今天好困");
+            await settle(minute);
+            expect(trace.ofKind("routine.hurried")).toHaveLength(0);
+        });
+
+        it("doesn't count mentions in a muted channel", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { adapter, trace, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });
+            await settle(minute);
+            adapter.say("admin", "/akanebot mute");
+            await settle(minute);
+            adapter.say("alice", "@小茜 在吗");
+            await settle(minute);
+            expect(trace.ofKind("routine.hurried")).toHaveLength(0);
+        });
+
+        it("can't be woken by mentions while asleep", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { adapter, gate, trace, settle } = await setup({ routine: true, persona, startAt: wednesday + 3 * hour });
+            for (let i = 0; i < 5; i++) {
+                adapter.say("alice", `@小茜 醒醒 ${i}`);
+                await settle(minute);
+            }
+            expect(gate.calls).toHaveLength(0);
+            expect(trace.ofKind("routine.hurried")).toHaveLength(0);
         });
 
         it("waking up doesn't override the kill switch", async () => {

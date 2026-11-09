@@ -663,7 +663,7 @@ describe("busy periods", () => {
         timezone: "UTC",
         schedule: {
             sleep: { weekday: "01:00-08:00", weekend: "01:00-08:00" },
-            busy: [{ days, time: "10:00-12:00", checkPhoneEveryMin: [10, 50] as [number, number] }],
+            busy: [{ days, time: "10:00-12:00", checkPhoneEveryMin: [10, 50] as [number, number], mentionUrgency: 0 }],
         },
     });
 

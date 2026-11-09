@@ -50,6 +50,15 @@ export class Routine {
         this.#cancel?.();
     }
 
+    /** A direct mention buzzes the phone, so each one takes a share off the wait for the next glance. What it says stays unread until then. */
+    noteMention(): void {
+        const now = this.#clock.now();
+        const urgency = busyPeriod(this.#persona(), now)?.mentionUrgency;
+        if (this.#present || !urgency || this.#nextPhoneCheck === 0) return;
+        this.#nextPhoneCheck = now + (this.#nextPhoneCheck - now) * (1 - urgency);
+        this.#trace.record("routine.hurried", { detail: { waitMs: this.#nextPhoneCheck - now } });
+    }
+
     #tick(): void {
         const persona = this.#persona();
         const now = this.#clock.now();

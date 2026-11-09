@@ -30,6 +30,7 @@ export const personaSettingsSchema = z.strictObject({
                         ),
                     time: timeRange,
                     checkPhoneEveryMin: z.tuple([z.number().positive(), z.number().positive()]),
+                    mentionUrgency: unit.default(0),
                 }),
             )
             .default([]),

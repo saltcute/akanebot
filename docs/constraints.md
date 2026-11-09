@@ -14,6 +14,7 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `maxCodeLines` | Code longer than this is never sent | Active |
 | `stubbornness` | How rarely it concedes on matters of taste | Prompt only |
 | `schedule` | Sleep and busy hours. While busy it only checks its phone now and then | Active |
+| `schedule.busy[].mentionUrgency` | Share of the wait for the next phone check that each direct mention takes off, so repeated mentions get a reply sooner. Never wakes it from sleep | Active |
 | `forgetfulness` | How strong a memory must be to come to mind. Higher recalls less | Active |
 | `socialBattery` | Messages per day before it gets short with people, then stops joining in | Active |
 | `dailyLife` | One is picked each morning and colours the whole day | Active |
