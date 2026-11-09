@@ -9,7 +9,7 @@ import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
 import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
-import { decideToRepeat, decideToSpeak, overruleMisaddress } from "./gate/policy.ts";
+import { allAimedElsewhere, decideToRepeat, decideToSpeak, overruleMisaddress } from "./gate/policy.ts";
 import { findRepeatChain } from "./gate/repeat.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
@@ -569,6 +569,7 @@ export class Runtime {
             staleMs: newest ? now - newest.sentAt : 0,
             forceAnswer: this.vitals.wasRecentlyIgnored(ignoreKey),
             outOfDepth: competence.mode === "out_of_depth",
+            aimedElsewhere: allAimedElsewhere(newMessages, persona),
         };
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, speakContext);
         const overruled = features === gate.data ? {} : { addressOverruled: gate.data.addressedToMe };

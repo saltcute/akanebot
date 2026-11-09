@@ -20,9 +20,19 @@ export type SpeakContext = {
     forceAnswer: boolean;
     /** The question is technical and beyond the persona's skills. */
     outOfDepth: boolean;
+    /** Every new message is meant for someone else. */
+    aimedElsewhere: boolean;
 };
 
-export const NEUTRAL_CONTEXT: SpeakContext = { battery: 1, joinFactor: 1, affinity: 0, staleMs: 0, forceAnswer: false, outOfDepth: false };
+export const NEUTRAL_CONTEXT: SpeakContext = {
+    battery: 1,
+    joinFactor: 1,
+    affinity: 0,
+    staleMs: 0,
+    forceAnswer: false,
+    outOfDepth: false,
+    aimedElsewhere: false,
+};
 
 const ALREADY_ANSWERED_FACTOR = 0.4;
 const UNCLEAR_ADDRESS_FACTOR = 1.5;
@@ -43,10 +53,13 @@ function aimedAtSomeoneElse(message: ChatMessage, persona: Persona): boolean {
     return ![persona.name, ...persona.aliases].some((name) => rest.includes(name.toLowerCase()));
 }
 
+export function allAimedElsewhere(newMessages: readonly ChatMessage[], persona: Persona): boolean {
+    return newMessages.length > 0 && newMessages.every((message) => aimedAtSomeoneElse(message, persona));
+}
+
 /** The model takes "you" after someone else's @ to mean the persona. The platform says who it's for, so code settles it. */
 export function overruleMisaddress(features: GateFeatures, newMessages: readonly ChatMessage[], persona: Persona): GateFeatures {
-    if (features.addressedToMe === "no" || newMessages.length === 0) return features;
-    if (!newMessages.every((message) => aimedAtSomeoneElse(message, persona))) return features;
+    if (features.addressedToMe === "no" || !allAimedElsewhere(newMessages, persona)) return features;
     return { ...features, addressedToMe: "no", towardMe: "neutral" };
 }
 
@@ -86,8 +99,8 @@ function answerProbability(persona: Persona, context: SpeakContext): number {
 }
 
 function joinProbability(features: GateFeatures, persona: Persona, context: SpeakContext): number {
-    // Nobody asked, so a person who can't follow the conversation just stays out of it.
-    if (!features.canFollow || context.outOfDepth) return 0;
+    // Nobody asked, so a person who can't follow the conversation, or sees it's between other people, just stays out of it.
+    if (!features.canFollow || context.outOfDepth || context.aimedElsewhere) return 0;
     const interest = clamp(features.interest);
     let probability = persona.talkativeness * (0.25 + 1.5 * interest) * context.joinFactor;
     if (features.someoneAlreadyAnswered) probability *= ALREADY_ANSWERED_FACTOR;

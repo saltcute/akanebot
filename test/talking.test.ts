@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ChatMessage } from "../src/adapters/types.ts";
 import { appConfigSchema } from "../src/config.ts";
 import { assessCompetence } from "../src/gate/competence.ts";
-import { decideToSpeak, NEUTRAL_CONTEXT, overruleMisaddress } from "../src/gate/policy.ts";
+import { allAimedElsewhere, decideToSpeak, NEUTRAL_CONTEXT, overruleMisaddress } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -56,6 +56,16 @@ describe("decideToSpeak", () => {
 
     it("counts the model's judgment as being addressed too", () => {
         expect(decideToSpeak(features({ addressedToMe: "yes" }), PERSONA, false, rng()).addressed).toBe(true);
+    });
+
+    it("doesn't join in on messages meant for someone else", () => {
+        const context = { ...NEUTRAL_CONTEXT, aimedElsewhere: true };
+        expect(decideToSpeak(features({ interest: 1 }), { ...PERSONA, talkativeness: 1 }, false, rng(), context).probability).toBe(0);
+    });
+
+    it("still answers when it was really addressed, whoever else was mentioned", () => {
+        const context = { ...NEUTRAL_CONTEXT, aimedElsewhere: true };
+        expect(decideToSpeak(features(), { ...PERSONA, ignoreDirectAsks: 0 }, true, rng(), context).speak).toBe(true);
     });
 
     it("is more likely to join on an interesting topic", () => {
@@ -148,6 +158,13 @@ describe("overruleMisaddress", () => {
     it("leaves a batch alone if any message isn't aimed at someone else", () => {
         expect(overruleMisaddress(yes, [said("你吃了吗"), toBob("@bob 在吗")], persona)).toBe(yes);
         expect(overruleMisaddress(yes, [toBob("@bob 在吗"), toBob("@bob 人呢")], persona).addressedToMe).toBe("no");
+    });
+
+    it("reports when a whole batch is meant for someone else", () => {
+        expect(allAimedElsewhere([toBob("@bob 在吗"), toBob("@bob 人呢")], persona)).toBe(true);
+        expect(allAimedElsewhere([toBob("@bob 小茜也来")], persona)).toBe(false);
+        expect(allAimedElsewhere([said("你吃了吗"), toBob("@bob 在吗")], persona)).toBe(false);
+        expect(allAimedElsewhere([], persona)).toBe(false);
     });
 
     it("doesn't apply with no mentions or no messages", () => {

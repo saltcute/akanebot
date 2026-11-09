@@ -180,6 +180,14 @@ describe("Runtime", () => {
         expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ addressed: false, addressOverruled: "yes" });
     });
 
+    it("stays out of a message @-ing someone else, however talkative it is", async () => {
+        const { adapter, reply, trace, settle } = await setup({ gate: { interest: 1 }, persona: { talkativeness: 1 } });
+        adapter.say("alice", "@1507524536");
+        await settle();
+        expect(reply.calls).toHaveLength(0);
+        expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ speak: false, probability: 0 });
+    });
+
     it("notifies someone in the conversation when it writes their @name", async () => {
         const { adapter, trace, settle } = await setup({ reply: () => "@alice 你说呢" });
         adapter.say("alice", "@小茜 在吗");
