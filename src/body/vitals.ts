@@ -31,6 +31,12 @@ export class Vitals {
         this.#store.setMeta(BATTERY_KEY, JSON.stringify({ ...today, used: today.used + amount }));
     }
 
+    /** An operator's correction, from 0 to 1. Today's search count stays as it is. */
+    setBattery(level: number): void {
+        const today = this.#today();
+        this.#store.setMeta(BATTERY_KEY, JSON.stringify({ ...today, used: (1 - level) * this.#persona().socialBattery }));
+    }
+
     searchesToday(): number {
         return this.#today().searches ?? 0;
     }

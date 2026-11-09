@@ -59,6 +59,8 @@ const standingSchema = z
     .strictObject({ familiarity: z.number().min(0).max(1).optional(), affinity: z.number().min(-1).max(1).optional() })
     .refine((correction) => correction.familiarity !== undefined || correction.affinity !== undefined, "Nothing to change");
 
+const batterySchema = z.strictObject({ level: z.number().min(0).max(1) });
+
 class HttpError extends Error {
     readonly status: number;
 
@@ -332,6 +334,13 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
         },
 
         { method: "GET", path: /^\/api\/body$/, handle: () => runtime.bodySnapshot() },
+        {
+            method: "PUT",
+            path: /^\/api\/body\/battery$/,
+            handle: (request) => {
+                runtime.setBattery(batterySchema.parse(request.body).level);
+            },
+        },
         { method: "GET", path: /^\/api\/people$/, handle: () => ({ people: runtime.roster() }) },
         {
             method: "GET",

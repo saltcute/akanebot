@@ -589,6 +589,23 @@ describe("web console status", () => {
         expect(body).not.toHaveProperty("present");
     });
 
+    it("sets the battery without touching today's searches, and audits it", async () => {
+        const { runtime, json, trace } = await setup();
+        runtime.vitals.noteSearch();
+        await json("/api/body/battery", { method: "PUT", body: JSON.stringify({ level: 0.25 }) });
+        expect(runtime.vitals.battery()).toBeCloseTo(0.25);
+        expect(runtime.vitals.searchesToday()).toBe(1);
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "set_battery", level: 0.25 });
+    });
+
+    it("rejects a battery level out of range", async () => {
+        const { call, errors } = await setup();
+        for (const body of [{ level: 1.5 }, { level: -1 }, {}, { level: "full" }]) {
+            expect((await call("/api/body/battery", { method: "PUT", body: JSON.stringify(body) })).status).toBe(400);
+        }
+        expect(errors).toEqual([]);
+    });
+
     it("doesn't use up anything by being looked at", async () => {
         const { json, clock } = await setup();
         await clock.advance(1000);

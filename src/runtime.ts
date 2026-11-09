@@ -510,6 +510,11 @@ export class Runtime {
         return this.#forgetUser(user);
     }
 
+    setBattery(level: number): void {
+        this.vitals.setBattery(level);
+        this.#options.trace.record("control.web", { detail: { action: "set_battery", level } });
+    }
+
     /** What the chat command does: she stops reading them and everything derived from them goes. Returns how many memories went. */
     optOutPerson(user: string): number {
         this.#state.optOut(user);

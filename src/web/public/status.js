@@ -1,4 +1,4 @@
-import { api, BODY_STATES, count, el, formatTime, pill } from "./ui.js";
+import { act, api, BODY_STATES, count, el, formatTime, pill } from "./ui.js";
 
 const ACTIVITIES = { asleep: "Asleep", busy: "Busy with her day", free: "Free" };
 
@@ -62,7 +62,30 @@ function renderDay() {
 }
 
 function renderEnergy() {
-    return card("Social battery", el("dl", { className: "facts" }, fact("Left today", percent(body.battery))));
+    const output = el("output", {}, percent(body.battery));
+    const input = el("input", {
+        type: "range",
+        min: "0",
+        max: "1",
+        step: "0.01",
+        value: String(body.battery),
+        "aria-label": "Social battery",
+        oninput: () => {
+            output.textContent = percent(Number(input.value));
+        },
+    });
+    const save = () =>
+        act(async () => {
+            await api("/body/battery", { method: "PUT", body: { level: Number(input.value) } });
+            await load();
+            render();
+        }, "Saved");
+    return card(
+        "Social battery",
+        el("div", { className: "range" }, input, output),
+        el("div", { className: "actions" }, el("button", { onclick: save }, "Set battery")),
+        el("p", { className: "meta" }, "Refills by itself when her day rolls over."),
+    );
 }
 
 function renderGuard() {
