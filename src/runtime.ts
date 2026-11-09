@@ -74,6 +74,8 @@ export type ConversationMessage = {
     isSelf: boolean;
     /** A platform event such as a mute, rather than something someone said. */
     isEvent: boolean;
+    /** Something it would have posted, held back by shadow mode. Nobody in the chat saw it. */
+    isShadow: boolean;
     addressed: boolean;
     text: string;
     sentAt: number;
@@ -318,10 +320,12 @@ export class Runtime {
     conversation(key: string): ConversationDetail | undefined {
         if (!this.hasConversation(key)) return undefined;
         const window = this.#visibleMessages(key);
+        const messages = withShadowSends(window.map(toConversationMessage), this.#shadowSends(key, window[0]?.sentAt ?? Infinity));
+        const firstNew = this.#channels.get(key)?.perception.firstNewIndex();
         return {
             ...this.#summarize(key, window),
-            messages: window.map(toConversationMessage),
-            firstNewIndex: this.#channels.get(key)?.perception.firstNewIndex(),
+            messages,
+            firstNewIndex: firstNew === undefined ? undefined : messages.findIndex((message) => message.messageId === window[firstNew]?.messageId),
         };
     }
 
@@ -381,6 +385,17 @@ export class Runtime {
     /** The live window, or what a restart would restore if nobody has spoken here yet. */
     #visibleMessages(key: string): readonly ChatMessage[] {
         return this.#channels.get(key)?.perception.window() ?? this.memory.restoreWindow(key, this.#options.timing.windowSize);
+    }
+
+    /** For the operator only. These stay out of the window, so the agent never sees words it didn't send. */
+    #shadowSends(key: string, since: number): ConversationMessage[] {
+        const channel = this.#channels.get(key);
+        if (!channel) return [];
+        return this.#options.trace.ofKind("send.shadow").flatMap((event, index) => {
+            if (event.channel !== key || event.at < since) return [];
+            const own = ownMessage(channel.ref, `shadow:${index}`, String(event.detail?.text ?? ""), event.at, this.#persona.name);
+            return [{ ...toConversationMessage(own), isShadow: true }];
+        });
     }
 
     #summarize(key: string, window: readonly ChatMessage[]): ConversationSummary {
@@ -736,11 +751,21 @@ function toConversationMessage(message: ChatMessage): ConversationMessage {
         senderKey: userKey(message),
         isSelf: message.isSelf,
         isEvent: message.groupEvent !== undefined,
+        isShadow: false,
         addressed: isAddressed(message),
         text: message.text,
         sentAt: message.sentAt,
         reactions: (message.reactions ?? []).map(({ emoji, by }) => ({ emoji, by })),
     };
+}
+
+function withShadowSends(messages: readonly ConversationMessage[], shadowSends: readonly ConversationMessage[]): ConversationMessage[] {
+    const merged = [...messages];
+    for (const shadow of shadowSends) {
+        const next = merged.findIndex((message) => message.sentAt > shadow.sentAt);
+        merged.splice(next === -1 ? merged.length : next, 0, shadow);
+    }
+    return merged;
 }
 
 function isSpoken(message: ChatMessage): boolean {

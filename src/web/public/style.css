@@ -354,6 +354,10 @@ dialog p {
     background: var(--self);
 }
 
+.message.shadow {
+    border: 1px dashed var(--warn);
+}
+
 .message.addressed {
     border-left: 3px solid var(--accent);
 }

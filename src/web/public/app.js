@@ -398,7 +398,7 @@ function renderTranscript(conversation) {
 function renderMessage(message) {
     return el(
         "article",
-        { className: `message${message.isSelf ? " self" : ""}${message.addressed ? " addressed" : ""}` },
+        { className: `message${message.isSelf ? " self" : ""}${message.isShadow ? " shadow" : ""}${message.addressed ? " addressed" : ""}` },
         el(
             "div",
             { className: "message-head" },
@@ -406,7 +406,8 @@ function renderMessage(message) {
                 ? el("b", {}, message.senderName)
                 : el("button", { className: "link", onclick: () => showPerson(message.senderKey) }, message.senderName),
             el("time", { dateTime: new Date(message.sentAt).toISOString() }, formatTime(message.sentAt)),
-            el("button", { className: "why", onclick: () => showDecisions(message.messageId) }, "Why?"),
+            message.isShadow ? pill("Shadow, not sent", "warn") : undefined,
+            message.isShadow ? undefined : el("button", { className: "why", onclick: () => showDecisions(message.messageId) }, "Why?"),
         ),
         el("p", { className: "message-text" }, message.text),
         message.reactions.length > 0

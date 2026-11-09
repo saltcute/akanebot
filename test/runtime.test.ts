@@ -584,6 +584,27 @@ describe("shadow mode", () => {
         expect(chatLines(reply.calls[1]?.transcript)).toEqual(["alice: one", "--- new ---", "alice: two"]);
     });
 
+    it("shows the operator what it held back, labeled and in order", async () => {
+        const { adapter, runtime, settle } = await setup({ shadow: true });
+        adapter.say("alice", "one");
+        await settle();
+        await settle();
+        adapter.say("alice", "two");
+        await settle();
+        await settle();
+        adapter.say("alice", "unread");
+        const conversation = runtime.conversation("cli:group");
+        expect(conversation?.messages.map((message) => [message.text, message.isShadow])).toEqual([
+            ["one", false],
+            ["哈哈", true],
+            ["two", false],
+            ["哈哈", true],
+            ["unread", false],
+        ]);
+        expect(conversation?.firstNewIndex).toBe(4);
+        expect(conversation?.lastMessage?.isShadow).toBe(false);
+    });
+
     it("doesn't post command confirmations either", async () => {
         const { adapter, settle } = await setup({ shadow: true });
         adapter.say("admin", "/akanebot status");
