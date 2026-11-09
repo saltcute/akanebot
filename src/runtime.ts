@@ -44,6 +44,7 @@ import {
     renderReplyState,
     renderTranscript,
     replySchema,
+    timezoneNote,
 } from "./reply/prompt.ts";
 import { type Pacing, readingDelay, thinkingDelay, typingDelay } from "./reply/timing.ts";
 
@@ -842,6 +843,7 @@ export class Runtime {
         const lowBattery = battery < LOW_BATTERY;
         const situation = [
             ...day.notes,
+            timezoneNote(channel.ref.platform, now),
             ...(lowBattery ? ["You've been chatting all day and are running out of energy for it. Keep it very short."] : []),
             ...lateReplyNote(asker && decision.addressed ? now - asker.sentAt : 0),
             ...(lookup ? ["You just looked this up online and only half get it."] : []),

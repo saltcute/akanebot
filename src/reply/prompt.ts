@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChatMessage, GroupEvent } from "../adapters/types.ts";
+import type { ChatMessage, GroupEvent, Platform } from "../adapters/types.ts";
 import type { Competence } from "../gate/competence.ts";
 import type { GateFeatures } from "../gate/features.ts";
 import { FROM_ANOTHER_GROUP } from "../memory/recall.ts";
@@ -13,6 +13,7 @@ const MAX_REACTIONS_SHOWN = 6;
 const MAX_REACTION_QUOTE_CHARS = 40;
 const MAX_REPLY_QUOTE_CHARS = 100;
 const MAX_MENTIONS_SHOWN = 4;
+const QQ_DEFAULT_TIMEZONE = "Asia/Shanghai";
 export const OWN_REACTION_PREFIX = "[reacted";
 
 /** A structured list keeps stray reasoning and preamble out of what gets sent. */
@@ -187,6 +188,18 @@ export function renderReplyState(options: {
     const guidance = competenceGuidance(competence);
     if (guidance) state.push(guidance);
     return state.join("\n");
+}
+
+/** What to assume about other people's clocks when nothing better is known. The conversion is done here so the model doesn't have to. */
+export function timezoneNote(platform: Platform, now: number): string {
+    const clocks = "The times shown in the chat are your own clock.";
+    if (platform !== "qq") {
+        return `People on here could be anywhere. Unless you know where someone is, don't assume it's the same time for them as for you. ${clocks}`;
+    }
+    const china = new Intl.DateTimeFormat("en-GB", { timeZone: QQ_DEFAULT_TIMEZONE, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(
+        now,
+    );
+    return `People on QQ are usually in China, so unless you know otherwise, assume someone here is on China time, where it's ${china}. ${clocks}`;
 }
 
 function competenceGuidance({ mode, slip }: Competence): string | undefined {

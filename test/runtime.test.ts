@@ -214,6 +214,13 @@ describe("Runtime", () => {
         expect(adapter.sent).toEqual([]);
     });
 
+    it("tells the reply what to assume about other people's clocks", async () => {
+        const { adapter, reply, settle } = await setup({});
+        adapter.say("alice", "在吗");
+        await settle();
+        expect(reply.calls[0]?.volatile).toContain("don't assume it's the same time");
+    });
+
     it("routes technical questions to the technical role with competence guidance", async () => {
         const { adapter, technical, reply, settle } = await setup({ gate: { isTechnical: true, domain: "web", difficulty: 2 } });
         adapter.say("alice", "useEffect 依赖数组干嘛的");

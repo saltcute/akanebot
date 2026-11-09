@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parsePersona } from "../src/persona/loader.ts";
-import { renderReplyState } from "../src/reply/prompt.ts";
+import { renderReplyState, timezoneNote } from "../src/reply/prompt.ts";
 import { features, PERSONA } from "./fixtures.ts";
 
 const TORONTO = { ...PERSONA, timezone: "America/Toronto" };
@@ -27,6 +27,23 @@ describe("time zones", () => {
         expect(localTime(Date.UTC(2026, 10, 1, 5, 30))).toContain("01:30");
         expect(localTime(Date.UTC(2026, 10, 1, 6, 30))).toContain("01:30");
         expect(localTime(Date.UTC(2026, 10, 1, 7, 30))).toContain("02:30");
+    });
+});
+
+describe("timezoneNote", () => {
+    // 16:00 UTC on Thursday 15 January is already Friday in Shanghai.
+    const now = Date.UTC(2026, 0, 15, 16, 0);
+
+    it("assumes China time on QQ and works out the clock there", () => {
+        const note = timezoneNote("qq", now);
+        expect(note).toContain("unless you know otherwise");
+        expect(note).toMatch(/Friday.*00:00/);
+    });
+
+    it("assumes nothing about where people are on Discord", () => {
+        const note = timezoneNote("discord", now);
+        expect(note).toContain("don't assume it's the same time");
+        expect(note).not.toContain("China");
     });
 });
 
