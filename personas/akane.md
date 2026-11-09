@@ -12,7 +12,7 @@ talkativeness: 0.55 # 0 = lurker，1 = never shuts up
 stubbornness: 0.7 # how rarely it concedes on matters of taste
 ignoreDirectAsks: 0.2 # chance of leaving a direct question on read
 forgetfulness: 0.4 # higher = recalls less
-socialBattery: 150 # messages per day before it gets short with people
+socialBattery: 550 # messages per day before it gets short with people
 maxCharsRead: 280 # skims anything longer
 
 search: { curiosity: 0.3, dailyCap: 9 }
@@ -21,7 +21,7 @@ skills: # 1 = barely heard of it，3 = passed the course，5 = specialist
   programming: 3 # everyday coding: syntax，loops，debugging
   dataStructures: 3
   algorithms: 3
-  operatingSystems: 2
+  operatingSystems: 1
   networking: 2
   databases: 3
   web: 4 # side projects
