@@ -431,7 +431,7 @@ describe("web console memories", () => {
 });
 
 const ALICE_KEY = encodeURIComponent("cli:alice");
-const ALICE_ACCOUNTS = new People([{ name: "Alice", ids: ["cli:alice", "discord:42"], note: "from the old server" }]);
+const ALICE_ACCOUNTS = new People([{ name: "Alice", ids: ["cli:alice", "discord:42"], note: "from the old server", aliases: ["Ally"] }]);
 
 function relationshipRow(overrides: Partial<RelationshipRow> = {}): RelationshipRow {
     return {
@@ -459,11 +459,13 @@ describe("web console people", () => {
             key: "cli:alice",
             accounts: ["cli:alice", "discord:42"],
             note: "from the old server",
+            aliases: ["Ally"],
             messages: 1,
             optedOut: false,
             standing: { familiarity: 0.7, affinity: 0.4 },
         });
         expect(alice.groups).toHaveLength(1);
+        expect(people.find((person: { name: string }) => person.name === "bob").aliases).toEqual([]);
     });
 
     it("includes someone the config declares before they have said anything", async () => {

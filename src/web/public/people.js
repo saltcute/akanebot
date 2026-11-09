@@ -11,7 +11,7 @@ async function load() {
 
 function matches(person) {
     const search = people.search.toLowerCase();
-    return search === "" || person.name.toLowerCase().includes(search) || person.accounts.some((account) => account.toLowerCase().includes(search));
+    return search === "" || [person.name, ...person.accounts, ...person.aliases].some((text) => text.toLowerCase().includes(search));
 }
 
 function personBadges(person) {
@@ -152,6 +152,7 @@ function renderDetail() {
             "dl",
             { className: "facts" },
             fact("Accounts", person.accounts.join(", ")),
+            person.aliases.length === 0 ? undefined : fact("Also called", person.aliases.join(", ")),
             person.note === undefined ? undefined : fact("How she knows them", person.note),
             fact("Familiarity", score(person.standing?.familiarity)),
             fact("Affinity", score(person.standing?.affinity)),

@@ -124,6 +124,7 @@ export type PersonSummary = {
     name: string;
     accounts: readonly string[];
     note: string | undefined;
+    aliases: readonly string[];
     messages: number;
     lastSeen: number | undefined;
     optedOut: boolean;
@@ -459,6 +460,7 @@ export class Runtime {
                     name: this.#people.nameOf(key) ?? seen[0]?.displayName ?? key,
                     accounts: linked,
                     note: this.#people.noteOf(key),
+                    aliases: this.#people.aliasesOf(key),
                     messages: seen.reduce((total, speaker) => total + speaker.messages, 0),
                     lastSeen: seen[0]?.lastSeen,
                     optedOut: this.#state.isOptedOut(key),
