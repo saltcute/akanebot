@@ -42,7 +42,7 @@ export const appConfigSchema = z.strictObject({
         dailyWritesPerUser: z.number().int().positive().default(30),
     }),
     control: z.strictObject({
-        commandPrefix: z.string().min(1).default("/gabriel"),
+        commandPrefix: z.string().min(1).default("/akanebot"),
         /** `platform:userId` of each person allowed to run admin commands. */
         admins: z.array(z.string().min(1)).default([]),
         /** The agent acts only in groups listed here with `disclosed: true`. */
@@ -55,7 +55,7 @@ export const appConfigSchema = z.strictObject({
     dailyBudgetUsd: z.number().positive(),
     /** A OneBot 11 server such as NapCat, needed for any `qq` group. Its access token, if any, comes from ONEBOT_TOKEN. */
     qq: z.strictObject({ url: z.string().min(1) }).optional(),
-    /** The operator's web UI. The login token comes from GABRIEL_WEB_TOKEN, or is generated at startup. */
+    /** The operator's web UI. The login token comes from AKANEBOT_WEB_TOKEN, or is generated at startup. */
     web: z
         .strictObject({
             enabled: z.boolean().default(true),
@@ -69,7 +69,7 @@ export type AppConfig = z.infer<typeof appConfigSchema>;
 
 /** `config.yaml` is the maintainer's own copy. Without one, the tracked example applies. */
 export function loadConfig(path?: string): { config: AppConfig; path: string } {
-    const resolved = path ?? process.env.GABRIEL_CONFIG ?? (existsSync("config.yaml") ? "config.yaml" : "config.example.yaml");
+    const resolved = path ?? process.env.AKANEBOT_CONFIG ?? (existsSync("config.yaml") ? "config.yaml" : "config.example.yaml");
     const parsed = appConfigSchema.safeParse(parse(readFileSync(resolved, "utf8")));
     if (!parsed.success) throw new Error(`Invalid config in ${resolved}:\n${z.prettifyError(parsed.error)}`);
     return { config: parsed.data, path: resolved };

@@ -8,7 +8,7 @@ export function loadPersona(path: string, timezoneOverride?: string): Persona {
 
 /** Errors name the file and line, because a maintainer edits this by hand. */
 export function parsePersona(source: string, path = "persona", timezoneOverride?: string): Persona {
-    if (timezoneOverride && !isTimeZone(timezoneOverride)) throw new Error(`GABRIEL_TIMEZONE: unknown time zone "${timezoneOverride}"`);
+    if (timezoneOverride && !isTimeZone(timezoneOverride)) throw new Error(`AKANEBOT_TIMEZONE: unknown time zone "${timezoneOverride}"`);
 
     const normalized = source.replaceAll("\r\n", "\n");
     const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(normalized);

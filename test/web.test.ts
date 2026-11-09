@@ -68,7 +68,7 @@ async function setup() {
         timing: { quietMs: 1000, maxWaitMs: 5000, candidateTtlMs: 60_000, windowSize: 40 },
         limits: { bucketCapacity: 10, refillPerMinute: 6, shareWindow: 20, maxShare: 0.4, minShareSample: 5 },
         control: {
-            commandPrefix: "/gabriel",
+            commandPrefix: "/akanebot",
             admins: [],
             groups: [{ platform: "cli", channelId: "group", disclosed: true }],
             crisisResources: "988",

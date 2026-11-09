@@ -1,7 +1,7 @@
 ---
 name: 小茜
 aliases: [akane, 茜] # other names people use for it; @-mentions of these count as addressing it
-timezone: America/Toronto # local time for schedule and chat; GABRIEL_TIMEZONE in .env overrides it
+timezone: America/Toronto # local time for schedule and chat; AKANEBOT_TIMEZONE in .env overrides it
 
 schedule:
   sleep: { weekday: "01:30-08:40", weekend: "03:00-11:30" }

@@ -27,7 +27,7 @@ function fail(message: string): never {
 }
 
 const { config, path: configPath } = loadConfig();
-const timezoneOverride = process.env.GABRIEL_TIMEZONE || undefined;
+const timezoneOverride = process.env.AKANEBOT_TIMEZONE || undefined;
 const persona = loadPersona(config.persona, timezoneOverride);
 
 if (!process.env.ANTHROPIC_API_KEY) fail("ANTHROPIC_API_KEY is empty. Add it to .env.");
@@ -123,7 +123,7 @@ console.log(`${persona.name} is online${discord ? ` as ${discord.botTag} on Disc
 console.log(`Watching ${groups.length} channel(s). Mode: ${config.shadow ? "SHADOW, she decides but sends nothing" : "LIVE, she will post"}.`);
 if (admins.length === 0) console.log(`No admins set, so ${config.control.commandPrefix} kill and mute won't work for anyone.`);
 
-const webConsole = await startWebConsole(config.web, runtime, process.env.GABRIEL_WEB_TOKEN, (message) =>
+const webConsole = await startWebConsole(config.web, runtime, process.env.AKANEBOT_WEB_TOKEN, (message) =>
     trace.record("alert", { detail: { reason: "web_failed", message } }),
 );
 

@@ -70,7 +70,7 @@ export type WebServerOptions = {
 /** Uses the configured token, or makes one up for this run so the UI is never open by accident. */
 export function resolveWebToken(configured: string | undefined): { token: string; generated: boolean } {
     if (!configured) return { token: randomBytes(24).toString("hex"), generated: true };
-    if (configured.length < MIN_TOKEN_CHARS) throw new Error(`GABRIEL_WEB_TOKEN must be at least ${MIN_TOKEN_CHARS} characters.`);
+    if (configured.length < MIN_TOKEN_CHARS) throw new Error(`AKANEBOT_WEB_TOKEN must be at least ${MIN_TOKEN_CHARS} characters.`);
     return { token: configured, generated: false };
 }
 

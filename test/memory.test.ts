@@ -429,7 +429,7 @@ describe("MemorySystem extraction", () => {
 
 describe("older databases", () => {
     it("gains the reactions column without losing messages", () => {
-        const directory = mkdtempSync(join(tmpdir(), "gabriel-"));
+        const directory = mkdtempSync(join(tmpdir(), "akanebot-"));
         const path = join(directory, "old.db");
         const old = new DatabaseSync(path);
         old.exec(`CREATE TABLE rawLog (

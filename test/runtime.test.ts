@@ -125,7 +125,7 @@ async function setup(options: Setup) {
         timing: { quietMs: 1000, maxWaitMs: 5000, candidateTtlMs: 60_000, windowSize: 40 },
         limits: { bucketCapacity: 10, refillPerMinute: 6, shareWindow: 20, maxShare: 0.9, minShareSample: 5 },
         control: {
-            commandPrefix: "/gabriel",
+            commandPrefix: "/akanebot",
             admins: ["cli:admin"],
             groups: [{ platform: "cli", channelId: "group", disclosed: true }],
             crisisResources: "call 988",
@@ -368,24 +368,24 @@ describe("control plane", () => {
     describe("kill switch", () => {
         it("stops everything, including crisis responses, until resumed", async () => {
             const { adapter, gate, crisis, settle } = await setup({});
-            adapter.say("admin", "/gabriel kill");
+            adapter.say("admin", "/akanebot kill");
             await settle();
             adapter.say("alice", "hi");
             adapter.say("bob", CrisisText);
             await settle();
             expect(gate.calls).toHaveLength(0);
             expect(crisis.calls).toHaveLength(0);
-            adapter.say("admin", "/gabriel resume");
+            adapter.say("admin", "/akanebot resume");
             await settle();
             adapter.say("alice", "back?");
             await settle();
-            expect(sentTexts(adapter)).toEqual(["[gabriel] Stopped everywhere.", "[gabriel] Running again.", "哈哈"]);
+            expect(sentTexts(adapter)).toEqual(["[akanebot] Stopped everywhere.", "[akanebot] Running again.", "哈哈"]);
         });
 
         it("stays killed after a restart", async () => {
             const store = new MemoryControlStore();
             const first = await setup({ store });
-            first.adapter.say("admin", "/gabriel kill");
+            first.adapter.say("admin", "/akanebot kill");
             await first.settle();
             const second = await setup({ store });
             second.adapter.say("alice", "hi");
@@ -395,7 +395,7 @@ describe("control plane", () => {
 
         it("ignores admin commands from anyone else, without replying or reading them as chat", async () => {
             const { adapter, gate, settle } = await setup({});
-            adapter.say("mallory", "/gabriel kill");
+            adapter.say("mallory", "/akanebot kill");
             await settle();
             expect(adapter.sent).toEqual([]);
             expect(gate.calls).toHaveLength(0);
@@ -408,7 +408,7 @@ describe("control plane", () => {
     describe("mute", () => {
         it("stays quiet for the duration but keeps the context, then speaks again", async () => {
             const { adapter, gate, reply, settle } = await setup({});
-            adapter.say("admin", "/gabriel mute 5");
+            adapter.say("admin", "/akanebot mute 5");
             await settle();
             adapter.say("alice", "说过的话");
             await settle();
@@ -422,9 +422,9 @@ describe("control plane", () => {
 
         it("can be lifted early", async () => {
             const { adapter, settle } = await setup({});
-            adapter.say("admin", "/gabriel mute");
+            adapter.say("admin", "/akanebot mute");
             await settle();
-            adapter.say("admin", "/gabriel unmute");
+            adapter.say("admin", "/akanebot unmute");
             await settle();
             adapter.say("alice", "hi");
             await settle();
@@ -433,7 +433,7 @@ describe("control plane", () => {
 
         it("rejects a nonsense duration", async () => {
             const { adapter, settle } = await setup({});
-            adapter.say("admin", "/gabriel mute forever");
+            adapter.say("admin", "/akanebot mute forever");
             await settle();
             adapter.say("alice", "hi");
             await settle();
@@ -444,7 +444,7 @@ describe("control plane", () => {
     describe("opt-out", () => {
         it("drops the person's messages entirely, and anyone can use it", async () => {
             const { adapter, gate, reply, settle } = await setup({});
-            adapter.say("alice", "/gabriel opt-out");
+            adapter.say("alice", "/akanebot opt-out");
             await settle();
             adapter.say("alice", "my secret");
             await settle();
@@ -457,13 +457,13 @@ describe("control plane", () => {
         it("survives a restart and can be undone", async () => {
             const store = new MemoryControlStore();
             const first = await setup({ store });
-            first.adapter.say("alice", "/gabriel opt-out");
+            first.adapter.say("alice", "/akanebot opt-out");
             await first.settle();
             const second = await setup({ store });
             second.adapter.say("alice", "still out");
             await second.settle();
             expect(second.gate.calls).toHaveLength(0);
-            second.adapter.say("alice", "/gabriel opt-in");
+            second.adapter.say("alice", "/akanebot opt-in");
             await second.settle();
             second.adapter.say("alice", "back in");
             await second.settle();
@@ -489,7 +489,7 @@ describe("control plane", () => {
 
         it("responds while muted and over budget", async () => {
             const { adapter, settle } = await setup({ budget: 0 });
-            adapter.say("admin", "/gabriel mute 60");
+            adapter.say("admin", "/akanebot mute 60");
             await settle();
             adapter.say("alice", CrisisText);
             await settle();
@@ -652,7 +652,7 @@ describe("memory in the running agent", () => {
         await settle(1000);
         await settle(Gap);
         expect(memoryStore.all()).toHaveLength(1);
-        adapter.say("alice", "/gabriel opt-out");
+        adapter.say("alice", "/akanebot opt-out");
         await settle();
         expect(memoryStore.all()).toEqual([]);
         adapter.say("bob", "hello");
@@ -700,7 +700,7 @@ describe("shadow mode", () => {
     it("doesn't post crisis responses or command confirmations either", async () => {
         const { adapter, trace, settle } = await setup({ shadow: true });
         adapter.say("alice", "我真的不想活了");
-        adapter.say("admin", "/gabriel status");
+        adapter.say("admin", "/akanebot status");
         await settle();
         expect(adapter.sent).toEqual([]);
         expect(trace.ofKind("alert").map((event) => event.detail?.reason)).not.toContain("crisis_send_failed");
@@ -756,7 +756,7 @@ describe("living like a person", () => {
 
         it("waking up doesn't override the kill switch", async () => {
             const { adapter, gate, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 7.9 * hour });
-            adapter.say("admin", "/gabriel kill");
+            adapter.say("admin", "/akanebot kill");
             await settle(minute);
             await settle(hour);
             adapter.say("alice", "hi");
@@ -889,7 +889,7 @@ describe("living like a person", () => {
             adapter.say("alice", "hi");
             await settle();
             expect(memoryStore.getRelationship("cli:group", "cli:alice")).toBeDefined();
-            adapter.say("alice", "/gabriel opt-out");
+            adapter.say("alice", "/akanebot opt-out");
             await settle();
             expect(memoryStore.getRelationship("cli:group", "cli:alice")).toBeUndefined();
         });
@@ -1219,7 +1219,7 @@ describe("senses", () => {
                 const id = adapter.say("alice", "hi");
                 await settle();
                 adapter.reactFrom("bob", id, "👍");
-                adapter.say("bob", "/gabriel opt-out");
+                adapter.say("bob", "/akanebot opt-out");
                 await settle();
                 adapter.reactFrom("bob", id, "😭");
                 adapter.say("alice", "还在吗");
@@ -1268,7 +1268,7 @@ describe("senses", () => {
                 await settle();
                 adapter.reactFrom("bob", id, "😭");
                 adapter.reactFrom("carol", id, "💀");
-                adapter.say("bob", "/gabriel opt-out");
+                adapter.say("bob", "/akanebot opt-out");
                 await settle();
                 expect(memoryStore.recentAttended("cli:group", 10)[0]?.reactions?.map((r) => r.by)).toEqual(["carol"]);
             });

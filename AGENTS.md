@@ -1,4 +1,4 @@
-# Gabriel
+# Akanebot
 
 A persona agent that joins Discord and QQ group chats as an ordinary member, for entertainment. It chats casually, chooses when to speak, remembers selectively and imperfectly, has moods and a daily routine, and can disagree, ignore or forget. Its technical ability targets an average undergraduate computer or software engineering student. A maintainer tunes it through one personality file, `personas/akane.md`.
 

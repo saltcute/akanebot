@@ -13,7 +13,7 @@ export async function startWebConsole(
         const { token, generated } = resolveWebToken(configuredToken || undefined);
         const server = new WebServer({ runtime, token, host: settings.host, port: settings.port, onError });
         const url = await server.start();
-        console.log(generated ? `Web UI: ${url}#token=${token}` : `Web UI: ${url} (sign in with GABRIEL_WEB_TOKEN)`);
+        console.log(generated ? `Web UI: ${url}#token=${token}` : `Web UI: ${url} (sign in with AKANEBOT_WEB_TOKEN)`);
         if (!isLoopback(settings.host))
             console.log("Warning: the web UI is reachable from other machines and has no TLS, so the token can be intercepted.");
         return server;

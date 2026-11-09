@@ -1,7 +1,7 @@
 import type { Clock } from "../lib/clock.ts";
 import type { Adapter, ChannelRef, ChatMessage, ReactionEvent, SendOptions } from "./types.ts";
 
-const SELF_ID = "gabriel";
+const SELF_ID = "akanebot";
 
 /** A simulated group chat, driven by the simulator and by tests. */
 export class CliAdapter implements Adapter {

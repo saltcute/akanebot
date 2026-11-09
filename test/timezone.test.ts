@@ -58,6 +58,6 @@ body`;
     });
 
     it("names the env variable when the override is invalid", () => {
-        expect(() => parsePersona(source, "p.md", "Mars/Olympus")).toThrow(/GABRIEL_TIMEZONE.*Mars\/Olympus/);
+        expect(() => parsePersona(source, "p.md", "Mars/Olympus")).toThrow(/AKANEBOT_TIMEZONE.*Mars\/Olympus/);
     });
 });

@@ -31,7 +31,7 @@ memory:
   dailyWritesPerUser: 30
 
 control:
-  commandPrefix: /gabriel
+  commandPrefix: /akanebot
   # platform:userId of each admin. These can run mute, unmute, kill, resume and status.
   admins: []
   # The bot acts ONLY in groups listed here with disclosed: true, meaning members have been told it's an AI persona.
@@ -46,7 +46,7 @@ control:
 #   url: ws://127.0.0.1:3001
 
 # The operator's web UI, for managing memories and live conversations. It shows private chat, so it needs a token:
-# set GABRIEL_WEB_TOKEN in .env, or the bot makes one up at startup and prints a sign-in link.
+# set AKANEBOT_WEB_TOKEN in .env, or the bot makes one up at startup and prints a sign-in link.
 # It has no TLS. Keep it on 127.0.0.1 and use an SSH tunnel to reach it from another machine.
 web:
   enabled: true

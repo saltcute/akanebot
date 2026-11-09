@@ -1,6 +1,6 @@
 // Everything shown here can come from strangers in a chat, so text only ever enters the page as text nodes.
 
-const TOKEN_KEY = "gabriel.token";
+const TOKEN_KEY = "akanebot.token";
 const POLL_MS = 3000;
 const PAGE_SIZE = 50;
 const SEARCH_DELAY_MS = 250;
@@ -127,8 +127,8 @@ function showLogin(message) {
                 await signIn(input.value.trim());
             },
         },
-        el("h1", {}, "Gabriel Console"),
-        el("p", {}, "Paste the token printed when the bot started, or your GABRIEL_WEB_TOKEN."),
+        el("h1", {}, "Akanebot Console"),
+        el("p", {}, "Paste the token printed when the bot started, or your AKANEBOT_WEB_TOKEN."),
         input,
         message ? el("div", { className: "error" }, message) : undefined,
         el("button", { className: "primary", type: "submit" }, "Sign in"),
@@ -209,7 +209,7 @@ function renderTop() {
     return el(
         "header",
         { className: "top" },
-        el("div", { className: "brand", id: "brand" }, ui.status?.personaName ?? "Gabriel"),
+        el("div", { className: "brand", id: "brand" }, ui.status?.personaName ?? "Akanebot"),
         el("nav", { className: "tabs", role: "tablist" }, tab("conversations", "Conversations"), tab("memories", "Memories")),
         el("div", { className: "vitals", id: "vitals" }, renderVitals()),
     );
@@ -255,7 +255,7 @@ function renderBanner() {
 function updateChrome() {
     const brand = document.getElementById("brand");
     const vitals = document.getElementById("vitals");
-    if (brand) brand.textContent = ui.status?.personaName ?? "Gabriel";
+    if (brand) brand.textContent = ui.status?.personaName ?? "Akanebot";
     if (vitals) vitals.replaceChildren(...renderVitals());
     renderBanner();
 }

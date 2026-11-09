@@ -37,7 +37,7 @@ const CANNED_GATE = JSON.stringify({
 
 const useFake = process.argv.includes("--fake");
 const { config, path: configPath } = loadConfig();
-const timezoneOverride = process.env.GABRIEL_TIMEZONE || undefined;
+const timezoneOverride = process.env.AKANEBOT_TIMEZONE || undefined;
 const persona = loadPersona(config.persona, timezoneOverride);
 
 if (!useFake && !process.env.ANTHROPIC_API_KEY && Object.values(config.backends).some((backend) => backend.type === "anthropic")) {
@@ -148,7 +148,7 @@ console.log(
 );
 
 const webConsole = process.argv.includes("--web")
-    ? await startWebConsole({ ...config.web, enabled: true }, runtime, process.env.GABRIEL_WEB_TOKEN, (message) => console.log(`  [web] ${message}`))
+    ? await startWebConsole({ ...config.web, enabled: true }, runtime, process.env.AKANEBOT_WEB_TOKEN, (message) => console.log(`  [web] ${message}`))
     : undefined;
 
 const input = createInterface({ input: process.stdin });

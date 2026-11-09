@@ -28,11 +28,16 @@ export function runCommand(message: ChatMessage, options: { prefix: string; admi
 
     if (command === "opt-out") {
         state.optOut(user);
-        return { handled: true, urgent: false, forgetUser: user, ack: "[gabriel] Done. It has forgotten you and will no longer read your messages." };
+        return {
+            handled: true,
+            urgent: false,
+            forgetUser: user,
+            ack: "[akanebot] Done. It has forgotten you and will no longer read your messages.",
+        };
     }
     if (command === "opt-in") {
         state.optIn(user);
-        return { handled: true, urgent: false, ack: "[gabriel] Done. It can see your messages again." };
+        return { handled: true, urgent: false, ack: "[akanebot] Done. It can see your messages again." };
     }
 
     if (!options.admins.includes(user)) return { handled: true, urgent: false };
@@ -40,23 +45,23 @@ export function runCommand(message: ChatMessage, options: { prefix: string; admi
     switch (command) {
         case "kill":
             state.setKilled(true);
-            return { handled: true, urgent: true, ack: "[gabriel] Stopped everywhere.", bodyEffect: "stop" };
+            return { handled: true, urgent: true, ack: "[akanebot] Stopped everywhere.", bodyEffect: "stop" };
         case "resume":
             state.setKilled(false);
-            return { handled: true, urgent: true, ack: "[gabriel] Running again.", bodyEffect: "resume" };
+            return { handled: true, urgent: true, ack: "[akanebot] Running again.", bodyEffect: "resume" };
         case "mute": {
             const minutes = argument === undefined ? DEFAULT_MUTE_MINUTES : Number(argument);
             if (!Number.isFinite(minutes) || minutes <= 0 || minutes > MAX_MUTE_MINUTES) {
-                return { handled: true, urgent: true, ack: `[gabriel] Mute takes minutes, from 1 to ${MAX_MUTE_MINUTES}.` };
+                return { handled: true, urgent: true, ack: `[akanebot] Mute takes minutes, from 1 to ${MAX_MUTE_MINUTES}.` };
             }
             state.mute(channel, minutes * 60_000);
-            return { handled: true, urgent: true, ack: `[gabriel] Muted here for ${minutes} min.` };
+            return { handled: true, urgent: true, ack: `[akanebot] Muted here for ${minutes} min.` };
         }
         case "unmute":
             state.unmute(channel);
-            return { handled: true, urgent: true, ack: "[gabriel] Unmuted here." };
+            return { handled: true, urgent: true, ack: "[akanebot] Unmuted here." };
         case "status":
-            return { handled: true, urgent: true, ack: `[gabriel] killed=${state.killed} muted=${state.isMuted(channel)}` };
+            return { handled: true, urgent: true, ack: `[akanebot] killed=${state.killed} muted=${state.isMuted(channel)}` };
         default:
             return { handled: true, urgent: false };
     }
