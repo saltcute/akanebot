@@ -18,6 +18,7 @@ import { MemoryStore } from "./memory/store.ts";
 import { loadPersona } from "./persona/loader.ts";
 import { watchPersona } from "./persona/watch.ts";
 import { Runtime } from "./runtime.ts";
+import { createConfigView } from "./web/config-view.ts";
 import { startWebConsole } from "./web/start.ts";
 
 const DAY_MS = 86_400_000;
@@ -125,8 +126,12 @@ console.log(`${persona.name} is online${discord ? ` as ${discord.botTag} on Disc
 console.log(`Watching ${groups.length} channel(s). Mode: ${config.shadow ? "SHADOW, she decides but sends nothing" : "LIVE, she will post"}.`);
 if (admins.length === 0) console.log(`No admins set, so ${config.control.commandPrefix} kill and mute won't work for anyone.`);
 
-const webConsole = await startWebConsole(config.web, runtime, process.env.AKANEBOT_WEB_TOKEN, (message) =>
-    trace.record("alert", { detail: { reason: "web_failed", message } }),
+const webConsole = await startWebConsole(
+    config.web,
+    runtime,
+    process.env.AKANEBOT_WEB_TOKEN,
+    (message) => trace.record("alert", { detail: { reason: "web_failed", message } }),
+    createConfigView(config, configPath),
 );
 
 let stopping = false;

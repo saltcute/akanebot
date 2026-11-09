@@ -256,6 +256,10 @@ export class Runtime {
         });
     }
 
+    get persona(): Persona {
+        return this.#persona;
+    }
+
     setPersona(persona: Persona): void {
         this.#persona = persona;
     }

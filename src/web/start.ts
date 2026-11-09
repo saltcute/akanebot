@@ -7,11 +7,12 @@ export async function startWebConsole(
     runtime: Runtime,
     configuredToken: string | undefined,
     onError: (message: string) => void,
+    configView?: () => unknown,
 ): Promise<WebServer | undefined> {
     if (!settings.enabled) return undefined;
     try {
         const { token, generated } = resolveWebToken(configuredToken || undefined);
-        const server = new WebServer({ runtime, token, host: settings.host, port: settings.port, onError });
+        const server = new WebServer({ runtime, token, host: settings.host, port: settings.port, onError, configView });
         const url = await server.start();
         console.log(generated ? `Web UI: ${url}#token=${token}` : `Web UI: ${url} (sign in with AKANEBOT_WEB_TOKEN)`);
         if (!isLoopback(settings.host))

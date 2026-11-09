@@ -4,6 +4,7 @@ import { activityTab } from "./activity.js";
 import { showDecisions, showPerson } from "./dialogs.js";
 import { historyTab } from "./history.js";
 import { peopleTab } from "./people.js";
+import { settingsTab } from "./settings.js";
 import { statusTab } from "./status.js";
 import {
     act,
@@ -637,6 +638,7 @@ const TABS = {
     people: peopleTab,
     status: statusTab,
     activity: activityTab,
+    settings: settingsTab,
 };
 
 function start() {

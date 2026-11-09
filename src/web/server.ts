@@ -28,6 +28,7 @@ const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/status.js", { file: "status.js", type: "text/javascript; charset=utf-8" }],
     ["/history.js", { file: "history.js", type: "text/javascript; charset=utf-8" }],
     ["/activity.js", { file: "activity.js", type: "text/javascript; charset=utf-8" }],
+    ["/settings.js", { file: "settings.js", type: "text/javascript; charset=utf-8" }],
     ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 
@@ -98,6 +99,8 @@ export type WebServerOptions = {
     host: string;
     port: number;
     onError: (message: string) => void;
+    /** What the running config looks like, made safe to display. */
+    configView?: (() => unknown) | undefined;
 };
 
 /** Uses the configured token, or makes one up for this run so the UI is never open by accident. */
@@ -122,7 +125,7 @@ export class WebServer {
     constructor(options: WebServerOptions) {
         this.#options = options;
         this.#tokenDigest = digest(options.token);
-        this.#routes = buildRoutes(options.runtime);
+        this.#routes = buildRoutes(options.runtime, options.configView);
         for (const [path, { file, type }] of ASSETS) {
             this.#assets.set(path, { content: readFileSync(new URL(`./public/${file}`, import.meta.url)), type });
         }
@@ -202,7 +205,7 @@ export class WebServer {
     }
 }
 
-function buildRoutes(runtime: Runtime): readonly Route[] {
+function buildRoutes(runtime: Runtime, configView: (() => unknown) | undefined): readonly Route[] {
     const { store } = runtime.memory;
 
     const conversationKey = (request: ApiRequest): string => {
@@ -381,6 +384,15 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
                     kinds: runtime.traceKinds(),
                     channels: runtime.conversations().map(({ key, name }) => ({ key, name: name ?? key })),
                 };
+            },
+        },
+        { method: "GET", path: /^\/api\/persona$/, handle: () => runtime.persona },
+        {
+            method: "GET",
+            path: /^\/api\/config$/,
+            handle: () => {
+                if (!configView) throw new HttpError(404, "This run has no config to show");
+                return configView();
             },
         },
         { method: "GET", path: /^\/api\/body$/, handle: () => runtime.bodySnapshot() },

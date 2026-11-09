@@ -1,7 +1,11 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse, stringify } from "yaml";
 import { CliAdapter } from "../src/adapters/cli.ts";
 import { currentRelationship } from "../src/body/relationships.ts";
+import { loadConfig } from "../src/config.ts";
 import { People } from "../src/control/people.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import { ManualClock } from "../src/lib/clock.ts";
@@ -13,6 +17,7 @@ import { FakeBackend } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 import { type MemoryDraft, MemoryStore, type RelationshipRow } from "../src/memory/store.ts";
 import { Runtime } from "../src/runtime.ts";
+import { createConfigView } from "../src/web/config-view.ts";
 import { isLoopback, resolveWebToken, WebServer } from "../src/web/server.ts";
 import { PERSONA } from "./fixtures.ts";
 
@@ -50,7 +55,7 @@ function draft(overrides: Partial<MemoryDraft> = {}): MemoryDraft {
     };
 }
 
-async function setup(options: { people?: People } = {}) {
+async function setup(options: { people?: People; configView?: () => unknown } = {}) {
     const clock = new ManualClock(1_000_000);
     const trace = new DecisionTrace(clock);
     const adapter = new CliAdapter({ clock, selfName: PERSONA.name });
@@ -85,7 +90,14 @@ async function setup(options: { people?: People } = {}) {
     });
     await runtime.start();
     const errors: string[] = [];
-    const server = new WebServer({ runtime, token: TOKEN, host: "127.0.0.1", port: 0, onError: (message) => errors.push(message) });
+    const server = new WebServer({
+        runtime,
+        token: TOKEN,
+        host: "127.0.0.1",
+        port: 0,
+        onError: (message) => errors.push(message),
+        configView: options.configView,
+    });
     running.push(server);
     const base = (await server.start()).replace(/\/$/, "");
     const call = (path: string, init: RequestInit = {}, token: string | null = TOKEN) =>
@@ -743,5 +755,61 @@ describe("web console activity", () => {
         expect((await call("/api/trace?limit=0")).status).toBe(400);
         expect((await call("/api/trace?limit=100000")).status).toBe(400);
         expect(errors).toEqual([]);
+    });
+});
+
+describe("web console settings", () => {
+    const Credential = "planted-credential-value";
+
+    function plantedConfig() {
+        const raw = parse(readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8"));
+        const backend = Object.keys(raw.backends)[0] as string;
+        const role = Object.keys(raw.roles)[0] as string;
+        raw.backends[backend] = { ...raw.backends[backend], apiKey: Credential, baseUrl: `https://user:${Credential}@example.com` };
+        raw.roles[role].options = { effort: "low", thinking: { type: "adaptive", token: Credential }, headers: { authorization: Credential } };
+        raw.qq = { url: `wss://napcat.example:3001/ws?access_token=${Credential}` };
+        const path = join(mkdtempSync(join(tmpdir(), "akanebot-config-")), "config.yaml");
+        writeFileSync(path, stringify(raw));
+        return { raw, path, role, config: loadConfig(path).config };
+    }
+
+    it("shows the live persona, read-only", async () => {
+        const { json, call } = await setup();
+        expect(await json("/api/persona")).toMatchObject({ name: PERSONA.name, timezone: PERSONA.timezone });
+        expect((await call("/api/persona", { method: "PUT", body: "{}" })).status).toBe(405);
+    });
+
+    it("never shows a credential, wherever it was planted", async () => {
+        const { path, config, role } = plantedConfig();
+        const { json, call } = await setup({ configView: createConfigView(config, path) });
+        const view = await json("/api/config");
+        expect(JSON.stringify(view)).not.toContain(Credential);
+        expect(view.config.qq.url).toBe("wss://napcat.example:3001");
+        expect(view.config.llm.roles[role].options).toEqual({ effort: "low", thinking: "adaptive" });
+        expect(view.disk).toEqual({ state: "matches" });
+        expect((await call("/api/config", { method: "PATCH", body: "{}" })).status).toBe(405);
+    });
+
+    it("names the sections that changed on disk, and nothing else about them", async () => {
+        const { raw, path, config } = plantedConfig();
+        const view = createConfigView(config, path);
+        writeFileSync(path, stringify({ ...raw, dailyBudgetUsd: 123.45 }));
+        const disk = (view() as { disk: unknown }).disk;
+        expect(disk).toEqual({ state: "differs", sections: ["dailyBudgetUsd"] });
+        expect(JSON.stringify(disk)).not.toContain("123.45");
+    });
+
+    it("says only that the file can't be read when it's broken", () => {
+        const { path, config } = plantedConfig();
+        const view = createConfigView(config, path);
+        writeFileSync(path, `dailyBudgetUsd: [${Credential}`);
+        expect((view() as { disk: unknown }).disk).toEqual({ state: "unreadable" });
+    });
+
+    it("reports what a run replaces, and that some runs have no config", async () => {
+        const { path, config } = plantedConfig();
+        expect(createConfigView(config, path, ["timing"])()).toMatchObject({ overrides: ["timing"] });
+        const { call } = await setup();
+        expect((await call("/api/config")).status).toBe(404);
     });
 });

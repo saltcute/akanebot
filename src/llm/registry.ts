@@ -18,6 +18,35 @@ export const llmConfigSchema = z.strictObject({
 });
 
 export type LlmConfig = z.infer<typeof llmConfigSchema>;
+
+const SHOWN_ROLE_OPTIONS = ["effort", "refusalFallback"];
+
+function describeRoleOptions(options: Readonly<Record<string, unknown>>): Record<string, unknown> {
+    const shown = SHOWN_ROLE_OPTIONS.flatMap((name) => {
+        const value = options[name];
+        return typeof value === "string" || typeof value === "boolean" ? [[name, value] as const] : [];
+    });
+    const thinking = options.thinking;
+    const thinkingType = typeof thinking === "object" && thinking !== null ? (thinking as { type?: unknown }).type : undefined;
+    return { ...Object.fromEntries(shown), ...(typeof thinkingType === "string" ? { thinking: thinkingType } : {}) };
+}
+
+function describeRoleTarget(target: z.infer<typeof roleTargetSchema>) {
+    return { backend: target.backend, model: target.model, options: describeRoleOptions(target.options) };
+}
+
+/** LLM settings safe to show an operator. Backends accept arbitrary fields, and any of them might hold a credential, so only the type comes out. */
+export function describeLlmConfig(config: LlmConfig) {
+    return {
+        backends: Object.fromEntries(Object.entries(config.backends).map(([name, backend]) => [name, { type: backend.type }])),
+        roles: Object.fromEntries(
+            Object.entries(config.roles).map(([name, role]) => [
+                name,
+                { ...describeRoleTarget(role), ...(role.fallback ? { fallback: describeRoleTarget(role.fallback) } : {}) },
+            ]),
+        ),
+    };
+}
 type RoleTarget = z.infer<typeof roleTargetSchema>;
 
 export type BackendConfig = LlmConfig["backends"][string];
