@@ -337,6 +337,28 @@ describe("MemorySystem extraction", () => {
         expect(store.all()).toEqual([]);
     });
 
+    it("keeps something scored as minor, to fade on its own", async () => {
+        const { store, system, attend } = setup(() => output([candidate({ importance: 0.2 })]));
+        attend(chat("m1", "alice", "你好"));
+        await system.closeSegment(SCOPE);
+        expect(store.all()).toHaveLength(1);
+    });
+
+    it("leaves a faint episode of everyday chat", async () => {
+        const quiet = JSON.stringify({ summary: "随便聊了聊", importance: 0.1, emotion: 0.1, memories: [] });
+        const { store, system, attend } = setup(() => quiet);
+        attend(chat("m1", "alice", "你好"));
+        await system.closeSegment(SCOPE);
+        expect(store.all()[0]).toMatchObject({ kind: "episode", importance: 0.1 });
+    });
+
+    it("keeps no episode when the model says it was nothing", async () => {
+        const { store, system, attend } = setup(() => output([], ""));
+        attend(chat("m1", "alice", "你好"));
+        await system.closeSegment(SCOPE);
+        expect(store.all()).toEqual([]);
+    });
+
     it("keeps the conversation open to retry if the model fails", async () => {
         const responses = [{ kind: "error" as const, retryable: true }, output([candidate()])];
         const { store, system, alerts, attend } = setup(() => responses.shift() ?? output([]));

@@ -382,6 +382,11 @@ export class Runtime {
         this.#options.trace.record("control.web", { detail: { action: "resume" } });
     }
 
+    /** Leaves a record of what an operator changed. IDs only, so a deleted memory's text doesn't live on in the trace. */
+    noteOperatorAction(action: string, detail: Record<string, unknown>): void {
+        this.#options.trace.record("control.web", { detail: { action, ...detail } });
+    }
+
     /** Also clears the live windows. Returns how many memories went. */
     forgetPerson(user: string): number {
         this.#options.trace.record("control.web", { detail: { action: "forget_person", user } });

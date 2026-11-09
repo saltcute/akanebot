@@ -22,7 +22,8 @@ export type MemorySettings = {
     dailyWritesPerUser: number;
 };
 
-const MIN_KEPT_IMPORTANCE = 0.3;
+/** Scoring below this means even the model calls it nothing. Anything above is kept and left to fade on its own. */
+const MIN_KEPT_IMPORTANCE = 0.2;
 const EXTRACTION_MAX_OUTPUT = 3000;
 const NIGHTLY_CHECK_MS = 10 * 60_000;
 const DAY_MS = 86_400_000;
@@ -160,7 +161,10 @@ export class MemorySystem {
         }
         const written = await this.#write(channel, messages, result.data);
         this.store.markSegmented(channel, ids);
-        this.#trace.record("memory.extracted", { channel, detail: { written, messages: messages.length } });
+        this.#trace.record("memory.extracted", {
+            channel,
+            detail: { written, messages: messages.length, importance: clampUnit(result.data.importance), candidates: result.data.memories.length },
+        });
     }
 
     async #write(channel: string, messages: readonly ChatMessage[], extraction: Extraction): Promise<number> {
@@ -178,7 +182,8 @@ export class MemorySystem {
         });
         let written = 0;
 
-        if (extraction.summary.trim() !== "" && clampUnit(extraction.importance) >= MIN_KEPT_IMPORTANCE && live.some((message) => !message.isSelf)) {
+        // Every real conversation leaves at least a faint episode. Everyday chat scores low, and low scores fade quickly.
+        if (extraction.summary.trim() !== "" && live.some((message) => !message.isSelf)) {
             await this.#add({
                 scope: channel,
                 kind: "episode",

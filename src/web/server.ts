@@ -187,6 +187,7 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
         if (!/^[a-z]+:.+$/.test(key) || key.endsWith(":self")) throw new HttpError(400, "Not a person");
         return key;
     };
+    const audit = (action: string, memory: number) => runtime.noteOperatorAction(action, { memory });
     const describeKey = (key: string | null): string | null => (key ? (store.displayNameOf(key) ?? key.replace(/^name:/, "")) : null);
     const present = (memory: MemoryView) => ({
         ...memory,
@@ -271,14 +272,18 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             method: "PATCH",
             path: /^\/api\/memories\/(\d+)$/,
             handle: (request) => {
-                runtime.memory.edit(memoryId(request), memoryEditSchema.parse(request.body));
+                const id = memoryId(request);
+                runtime.memory.edit(id, memoryEditSchema.parse(request.body));
+                audit("edit_memory", id);
             },
         },
         {
             method: "POST",
             path: /^\/api\/memories\/(\d+)\/archive$/,
             handle: (request) => {
-                store.setStatus(memoryId(request), "archived");
+                const id = memoryId(request);
+                store.setStatus(id, "archived");
+                audit("archive_memory", id);
             },
         },
         {
@@ -288,13 +293,16 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
                 const id = memoryId(request);
                 store.supersede(id, null);
                 store.setStatus(id, "active");
+                audit("restore_memory", id);
             },
         },
         {
             method: "DELETE",
             path: /^\/api\/memories\/(\d+)$/,
             handle: (request) => {
-                store.forget(memoryId(request));
+                const id = memoryId(request);
+                store.forget(id);
+                audit("delete_memory", id);
             },
         },
 

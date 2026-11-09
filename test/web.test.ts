@@ -324,6 +324,19 @@ describe("web console memories", () => {
         expect((await call(`/api/memories/${id}`)).status).toBe(404);
     });
 
+    it("leaves an audit record of changes, without the memory's text", async () => {
+        const { store, json, post, trace } = await setup();
+        const id = store.addMemory(draft());
+        await post(`/api/memories/${id}/archive`);
+        await json(`/api/memories/${id}`, { method: "DELETE" });
+        const actions = trace.ofKind("control.web").map((event) => event.detail);
+        expect(actions).toEqual([
+            { action: "archive_memory", memory: id },
+            { action: "delete_memory", memory: id },
+        ]);
+        expect(JSON.stringify(actions)).not.toContain("noodles");
+    });
+
     it("forgets a person from memory and from the live window", async () => {
         const { adapter, store, runtime, json } = await setup();
         adapter.say("alice", "secret");
