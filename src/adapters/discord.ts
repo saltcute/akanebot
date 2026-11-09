@@ -1,12 +1,15 @@
 import {
     AuditLogEvent,
     Client,
+    cleanContent,
     Events,
     GatewayIntentBits,
     type Guild,
     type GuildAuditLogsEntry,
     type Message,
     type MessageReaction,
+    MessageReferenceType,
+    type MessageSnapshot,
     MessageType,
     Partials,
     type User,
@@ -15,6 +18,7 @@ import type {
     Adapter,
     ChannelRef,
     ChatMessage,
+    ForwardedLine,
     GroupEvent,
     GroupEventKind,
     OutgoingMention,
@@ -31,12 +35,43 @@ function isDescribableImage(contentType: string | null, size: number): boolean {
     return Boolean(contentType?.startsWith("image/")) && size <= MAX_DESCRIBABLE_IMAGE_BYTES;
 }
 
-function readableText(message: Message): string {
-    const placeholders = [
+function mediaPlaceholders(message: Pick<Message, "attachments" | "stickers">): string[] {
+    return [
         ...message.attachments.map((attachment) => (attachment.contentType?.startsWith("image/") ? "[image]" : "[file]")),
         ...message.stickers.map((sticker) => (sticker.name ? `[sticker: ${sticker.name}]` : "[sticker]")),
     ];
-    return [message.cleanContent, ...placeholders].filter(Boolean).join(" ");
+}
+
+function isForward(message: Message): boolean {
+    return message.reference?.type === MessageReferenceType.Forward;
+}
+
+function forwardSnapshot(message: Message): MessageSnapshot | undefined {
+    return isForward(message) ? message.messageSnapshots.first() : undefined;
+}
+
+function describableImages(message: Pick<Message, "attachments">): { url: string }[] {
+    return message.attachments.filter((attachment) => isDescribableImage(attachment.contentType, attachment.size)).map(({ url }) => ({ url }));
+}
+
+/** A forward's own text is empty. An `[image]` is left for the captioner, which writes into a message's own text. */
+function readableText(message: Message): string {
+    if (isForward(message)) {
+        const snapshot = forwardSnapshot(message);
+        return snapshot && describableImages(snapshot).length > 0 ? "[forwarded messages] [image]" : "[forwarded messages]";
+    }
+    return [message.cleanContent, ...mediaPlaceholders(message)].filter(Boolean).join(" ");
+}
+
+/** Names resolve against this channel's server, since the source channel may be one the bot can't see. Anyone not found there has no name to show. */
+function forwardedLines(message: Message): ForwardedLine[] {
+    const snapshot = forwardSnapshot(message);
+    if (!snapshot) return [];
+    const content = cleanContent(snapshot.content, message.channel)
+        .replace(/<@[!&]?\d+>/g, "@someone")
+        .replace(/<#\d+>/g, "#some-channel");
+    const text = [content, ...mediaPlaceholders(snapshot)].filter(Boolean).join(" ");
+    return text === "" ? [] : [{ text }];
 }
 
 /** The names `cleanContent` writes after each @. A reply that pings its author lists them too, even with no @ in the text. */
@@ -64,12 +99,11 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
     const text = readableText(message);
     if (text === "") return undefined;
 
-    const images = [
-        ...message.attachments
-            .filter((attachment) => isDescribableImage(attachment.contentType, attachment.size))
-            .map((attachment) => ({ url: attachment.url })),
-    ];
-    const repliedToId = message.reference?.messageId;
+    const snapshot = forwardSnapshot(message);
+    const images = describableImages(snapshot ?? message);
+    const forwarded = forwardedLines(message);
+    // A forward points at its source through the same field as a reply, but it isn't answering anything.
+    const repliedToId = isForward(message) ? undefined : message.reference?.messageId;
     // The gateway sends the original along with a reply, so it's cached by now. A reaction can leave a partial with no author or text.
     const cached = repliedToId ? message.channel.messages.cache.get(repliedToId) : undefined;
     const repliedTo = cached?.partial ? undefined : cached;
@@ -93,6 +127,7 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
         repliesToSelf: repliedTo?.author.id === selfId || message.mentions.repliedUser?.id === selfId,
         ...(repliedToId ? { replyToMessageId: repliedToId } : {}),
         ...(quoted ? { replyTo: quoted } : {}),
+        ...(forwarded.length > 0 ? { forwarded } : {}),
         isSelf: message.author.id === selfId,
         // The gateway only delivers live events and never replays history after a reconnect.
         isBacklog: false,

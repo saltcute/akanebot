@@ -1,4 +1,15 @@
-import { AuditLogEvent, type Client, GatewayIntentBits, type Message, type MessageReaction, MessageType, Partials, type User } from "discord.js";
+import {
+    AuditLogEvent,
+    type Client,
+    Collection,
+    GatewayIntentBits,
+    type Message,
+    type MessageReaction,
+    MessageReferenceType,
+    MessageType,
+    Partials,
+    type User,
+} from "discord.js";
 import { describe, expect, it } from "vitest";
 import { createDiscordClient, DiscordAdapter, readAuditEntry, toChatMessage, toReactionEvent, toSystemGroupEvent } from "../src/adapters/discord.ts";
 
@@ -26,6 +37,72 @@ function discordMessage(overrides: Record<string, unknown> = {}): Message {
         ...overrides,
     } as unknown as Message;
 }
+
+function forwardOf(snapshot: Record<string, unknown>, overrides: Record<string, unknown> = {}): Message {
+    return discordMessage({
+        cleanContent: "",
+        reference: { messageId: "original", channelId: "elsewhere", type: MessageReferenceType.Forward },
+        messageSnapshots: new Collection([["original", { content: "", attachments: new Collection(), stickers: new Collection(), ...snapshot }]]),
+        ...overrides,
+    });
+}
+
+describe("forwarded messages", () => {
+    it("reads what was forwarded without treating it as the sender's words", () => {
+        expect(toChatMessage(forwardOf({ content: "看这个" }), SELF)).toMatchObject({
+            text: "[forwarded messages]",
+            forwarded: [{ text: "看这个" }],
+        });
+    });
+
+    it("doesn't mistake a forward for a reply, even of the agent's own message", () => {
+        const original = {
+            id: "original",
+            partial: false,
+            author: { id: SELF, displayName: "me" },
+            attachments: [],
+            stickers: [],
+            cleanContent: "x",
+        };
+        const channel = { messages: { cache: new Map([["original", original]]) } };
+        const mapped = toChatMessage(forwardOf({ content: "x" }, { channel }), SELF);
+        expect(mapped?.repliesToSelf).toBe(false);
+        expect(mapped?.replyToMessageId).toBeUndefined();
+        expect(mapped?.replyTo).toBeUndefined();
+    });
+
+    it("has pictures described through the forward's own text", () => {
+        const image = { contentType: "image/png", size: 10, url: "https://cdn/a.png" };
+        expect(toChatMessage(forwardOf({ attachments: new Collection([["a", image]]) }), SELF)).toMatchObject({
+            text: "[forwarded messages] [image]",
+            images: [{ url: "https://cdn/a.png" }],
+            forwarded: [{ text: "[image]" }],
+        });
+    });
+
+    it("shows anyone it can't name as someone, rather than a raw ID", () => {
+        const channel = {
+            messages: { cache: new Map() },
+            guild: { members: { cache: new Map() } },
+            client: { users: { cache: new Map() }, channels: { cache: new Map() } },
+        };
+        expect(toChatMessage(forwardOf({ content: "<@!123456789012345678> <#123456789012345678> 看" }, { channel }), SELF)?.forwarded).toEqual([
+            { text: "@someone #some-channel 看" },
+        ]);
+    });
+
+    it("still shows a forward it can't read", () => {
+        const mapped = toChatMessage(forwardOf({ content: "" }), SELF);
+        expect(mapped?.text).toBe("[forwarded messages]");
+        expect(mapped?.forwarded).toBeUndefined();
+    });
+
+    it("previews a forward someone replies to", () => {
+        const original = forwardOf({ content: "x" }, { id: "fwd" });
+        const channel = { messages: { cache: new Map([["fwd", original]]) } };
+        expect(toChatMessage(discordMessage({ reference: { messageId: "fwd" }, channel }), SELF)?.replyTo?.text).toBe("[forwarded messages]");
+    });
+});
 
 describe("toChatMessage", () => {
     it("maps an ordinary message", () => {
