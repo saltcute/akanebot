@@ -52,6 +52,14 @@ export const personaSettingsSchema = z.strictObject({
             qq: z.record(z.string().min(1), z.number().int().nonnegative()).default({}),
         })
         .default({ discord: [], qq: {} }),
+    savedImages: z
+        .strictObject({
+            taste: z.string().default(""),
+            pickiness: unit.default(0.7),
+            useRate: unit.default(0),
+            maxKept: z.number().int().positive().default(200),
+        })
+        .prefault({}),
     dailyLife: z.array(z.string().min(1)).default([]),
     maxCodeLines: z.number().int().positive(),
 });

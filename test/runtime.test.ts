@@ -4,6 +4,8 @@ import type { ChatMessage } from "../src/adapters/types.ts";
 import { People } from "../src/control/people.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import type { GateFeatures } from "../src/gate/features.ts";
+import type { ImageFetcher } from "../src/images/download.ts";
+import type { ImageLook } from "../src/images/look.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -41,6 +43,7 @@ type Setup = {
     rngSeed?: number;
     search?: SearchBackend;
     vision?: FakeResponder;
+    fetchImage?: ImageFetcher;
 };
 
 const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
@@ -53,6 +56,18 @@ function asMessages(respond: FakeResponder): FakeResponder {
         const response = respond(request);
         return typeof response === "string" ? JSON.stringify({ messages: [response] }) : response;
     };
+}
+
+/** Lets tests script a look as just its description. */
+function asLook(respond: FakeResponder): FakeResponder {
+    return (request) => {
+        const response = respond(request);
+        return typeof response === "string" && !response.startsWith("{") ? JSON.stringify(look({ description: response })) : response;
+    };
+}
+
+function look(overrides: Partial<ImageLook> = {}): ImageLook {
+    return { description: "猫猫瞪眼", reactionImage: false, sensitive: false, appeal: 0, useFor: "", ...overrides };
 }
 
 function chatLines(transcript: string | undefined): string[] {
@@ -69,7 +84,7 @@ async function setup(options: Setup) {
     const gateQueue = [...(options.gates ?? [])];
     const gate = new FakeBackend(() => JSON.stringify(features({ addressedToMe: "yes", ...options.gate, ...gateQueue.shift() })));
     const extract = new FakeBackend(options.extract ?? (() => EMPTY_EXTRACTION));
-    const vision = new FakeBackend(options.vision ?? (() => "一只橘猫"));
+    const vision = new FakeBackend(asLook(options.vision ?? (() => "一只橘猫")));
     const consolidateBackend = new FakeBackend(() => JSON.stringify({ replaced: [] }));
     const memoryStore = options.memoryStore ?? new MemoryStore(":memory:");
     const reply = new FakeBackend(asMessages(options.reply ?? (() => "哈哈")));
@@ -129,6 +144,7 @@ async function setup(options: Setup) {
         ...(options.routine ? { routine: true } : {}),
         ...(options.search ? { search: options.search } : {}),
         ...(options.people ? { people: options.people } : {}),
+        ...(options.fetchImage ? { fetchImage: options.fetchImage } : {}),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -1480,6 +1496,85 @@ describe("senses", () => {
             adapter.say("alice", `[img:${url}]`);
             await settle();
             expect(gate.calls[0]?.transcript).toContain("[image]");
+        });
+
+        describe("keeping them", () => {
+            const gifBytes = Uint8Array.of(0x47, 0x49, 0x46, 0x38, 1, 2);
+            const fetchImage: ImageFetcher = async () => gifBytes;
+            const liked = () => JSON.stringify(look({ reactionImage: true, appeal: 0.9, useFor: "无语" }));
+
+            it("saves a reaction image she likes, with what it's good for", async () => {
+                const { adapter, memoryStore, settle } = await setup({ vision: liked, fetchImage });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(memoryStore.savedImages()).toMatchObject([{ userKey: "cli:alice", scope: "cli:group", mime: "image/gif", useFor: "无语" }]);
+            });
+
+            it("doesn't keep one she isn't taken with", async () => {
+                const vision = () => JSON.stringify(look({ reactionImage: true, appeal: 0.4, useFor: "无语" }));
+                const { adapter, memoryStore, trace, settle } = await setup({ vision, fetchImage });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(memoryStore.savedImages()).toEqual([]);
+                expect(trace.ofKind("image.judged")[0]?.detail).toMatchObject({ verdict: "not_interested" });
+            });
+
+            it.each([
+                ["ordinary pictures", look({ reactionImage: false, appeal: 1, useFor: "x" }), "not_reaction"],
+                ["sensitive ones however much she likes them", look({ reactionImage: true, sensitive: true, appeal: 1, useFor: "x" }), "sensitive"],
+            ])("never keeps %s", async (_name, seen, verdict) => {
+                const { adapter, memoryStore, trace, settle } = await setup({ vision: () => JSON.stringify(seen), fetchImage });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(memoryStore.savedImages()).toEqual([]);
+                expect(trace.ofKind("image.judged")[0]?.detail).toMatchObject({ verdict });
+            });
+
+            it("drops a picture if its poster opts out while it's still downloading", async () => {
+                let say: (text: string) => void = () => {};
+                const optingOut: ImageFetcher = async () => {
+                    say("/akanebot opt-out");
+                    return gifBytes;
+                };
+                const { adapter, memoryStore, settle } = await setup({ vision: liked, fetchImage: optingOut });
+                say = (text) => adapter.say("alice", text);
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(memoryStore.savedImages()).toEqual([]);
+            });
+
+            it("stops at the daily limit for one person", async () => {
+                let n = 0;
+                const unique: ImageFetcher = async () => Uint8Array.of(0x47, 0x49, 0x46, 0x38, n++);
+                const { adapter, memoryStore, trace, settle } = await setup({ vision: liked, fetchImage: unique });
+                for (let i = 0; i < 7; i++) {
+                    adapter.say("alice", `[img:${url}]`);
+                    await settle();
+                }
+                expect(memoryStore.savedImages()).toHaveLength(5);
+                expect(trace.ofKind("image.skipped").at(-1)?.detail).toMatchObject({ reason: "daily_quota" });
+            });
+
+            it("carries on quietly if the download fails", async () => {
+                const failing: ImageFetcher = async () => {
+                    throw new Error("expired");
+                };
+                const { adapter, memoryStore, trace, settle } = await setup({ vision: liked, fetchImage: failing });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(adapter.sent).toHaveLength(1);
+                expect(memoryStore.savedImages()).toEqual([]);
+                expect(trace.ofKind("image.skipped")[0]?.detail?.reason).toContain("expired");
+            });
+
+            it("doesn't save anything that isn't really an image file", async () => {
+                const html: ImageFetcher = async () => new TextEncoder().encode("<html>");
+                const { adapter, memoryStore, trace, settle } = await setup({ vision: liked, fetchImage: html });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(memoryStore.savedImages()).toEqual([]);
+                expect(trace.ofKind("image.skipped")[0]?.detail).toMatchObject({ reason: "not_an_image" });
+            });
         });
 
         it("flattens a caption so it can't forge chat lines", async () => {

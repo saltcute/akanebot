@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { People } from "../src/control/people.ts";
+import { downloadImage, type ImageFetcher, isImageSource, MAX_IMAGE_BYTES, sniffImageType } from "../src/images/download.ts";
+import { ManualClock } from "../src/lib/clock.ts";
 import { MemoryStore, type SavedImageDraft } from "../src/memory/store.ts";
 
 function draft(overrides: Partial<SavedImageDraft> = {}): SavedImageDraft {
@@ -63,5 +65,58 @@ describe("saved images in the store", () => {
         store.noteImageSent(used, 2000);
         expect(store.trimSavedImages(2)).toBe(1);
         expect(store.savedImages().map((image) => image.appeal)).toEqual([0.1, 0.9]);
+    });
+});
+
+describe("downloading", () => {
+    const pngBytes = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0, 0);
+
+    it.each([
+        ["discord", "https://cdn.discordapp.com/attachments/1/2/a.png?ex=1", true],
+        ["discord", "https://evil.example/a.png", false],
+        ["discord", "https://cdn.discordapp.com.evil.example/a.png", false],
+        ["qq", "https://multimedia.nt.qq.com.cn/download?fileid=1", true],
+        ["qq", "http://gchat.qpic.cn/gchatpic_new/1", true],
+        ["qq", "http://127.0.0.1:6099/a.png", false],
+        ["qq", "file:///etc/passwd", false],
+        ["cli", "not a url", false],
+        ["cli", "https://example.com/cat.png", true],
+    ] as const)("%s %s allowed: %s", (platform, url, allowed) => {
+        expect(isImageSource(platform, url)).toBe(allowed);
+    });
+
+    it("recognizes the formats it keeps from the file itself, and nothing else", () => {
+        expect(sniffImageType(pngBytes)).toBe("image/png");
+        expect(sniffImageType(Uint8Array.of(0xff, 0xd8, 0xff, 0xe0))).toBe("image/jpeg");
+        expect(sniffImageType(new TextEncoder().encode("GIF89a"))).toBe("image/gif");
+        expect(sniffImageType(new TextEncoder().encode("RIFF....WEBPVP8 "))).toBe("image/webp");
+        expect(sniffImageType(new TextEncoder().encode("<svg onload=alert(1)>"))).toBeUndefined();
+    });
+
+    it("never calls out to a host it doesn't expect", async () => {
+        let called = false;
+        const fetcher: ImageFetcher = async () => {
+            called = true;
+            return pngBytes;
+        };
+        await expect(downloadImage(fetcher, "discord", "https://evil.example/a.png", new ManualClock(0))).resolves.toMatchObject({
+            kind: "failed",
+            reason: "unexpected_host",
+        });
+        expect(called).toBe(false);
+    });
+
+    it("refuses an oversized file even from a fetcher that didn't stop", async () => {
+        const fetcher: ImageFetcher = async () => new Uint8Array(MAX_IMAGE_BYTES + 1).fill(0x89);
+        await expect(downloadImage(fetcher, "cli", "https://x.test/a", new ManualClock(0))).resolves.toMatchObject({ reason: "too_large" });
+    });
+
+    it("gives up on a download that hangs", async () => {
+        const clock = new ManualClock(0);
+        const hanging: ImageFetcher = (_url, _max, signal) =>
+            new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("timed out"))));
+        const download = downloadImage(hanging, "cli", "https://x.test/a", clock);
+        await clock.advance(60_000);
+        await expect(download).resolves.toMatchObject({ kind: "failed" });
     });
 });

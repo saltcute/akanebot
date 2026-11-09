@@ -5,6 +5,7 @@ import { printTraceEvent } from "./cli/print-trace.ts";
 import { loadConfig } from "./config.ts";
 import { People } from "./control/people.ts";
 import { JsonFileControlStore } from "./control/state.ts";
+import { fetchOverHttp } from "./images/download.ts";
 import { SystemClock } from "./lib/clock.ts";
 import { CostMeter } from "./lib/cost.ts";
 import { Rng } from "./lib/rng.ts";
@@ -99,6 +100,7 @@ const runtime = new Runtime({
     pacing: config.pacing,
     routine: true,
     search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
+    fetchImage: fetchOverHttp,
 });
 
 const stopWatching = watchPersona({

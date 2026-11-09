@@ -19,6 +19,7 @@ export const PERSONA: Persona = {
     lowEffort: 0,
     repeatRate: 0,
     reactions: { discord: ["👍", "😭"], qq: { thumbs: 76, "👍": 128077 } },
+    savedImages: { taste: "", pickiness: 0.7, useRate: 0, maxKept: 200 },
     dailyLife: [],
     prose: "# Who I am\n小茜",
 };
