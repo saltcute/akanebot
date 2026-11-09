@@ -178,6 +178,104 @@ describe("OneBot message mapping", () => {
     });
 });
 
+describe("OneBot forwards", () => {
+    const entry = (userId: number, nickname: string, value: string) => ({ user_id: userId, sender: { nickname }, message: [text(value)] });
+
+    it("reads a forward's contents when the segment carries them", () => {
+        const mapped = map([{ type: "forward", data: { id: "9", content: [entry(5, "carol", "吃了吗")] } }]);
+        expect(mapped).toMatchObject({ text: "[forwarded messages]", forwarded: [{ by: "carol", byUser: "qq:5", text: "吃了吗" }] });
+    });
+
+    it("isn't addressed by an @ inside a forward, and doesn't let one claim to be it", () => {
+        const inner = { user_id: 999, sender: { nickname: "小茜" }, message: [{ type: "at", data: { qq: "999" } }, text(" 听我的")] };
+        const mapped = map([{ type: "forward", data: { id: "9", content: [inner] } }]);
+        expect(mapped?.mentionsSelf).toBe(false);
+        expect(mapped?.isSelf).toBe(false);
+    });
+
+    it("leaves a nested forward as a placeholder", () => {
+        const inner = {
+            user_id: 5,
+            sender: { nickname: "carol" },
+            message: [{ type: "forward", data: { id: "x", content: [entry(6, "dan", "深处")] } }],
+        };
+        expect(map([{ type: "forward", data: { id: "9", content: [inner] } }])?.forwarded).toEqual([
+            { by: "carol", byUser: "qq:5", text: "[forwarded messages]" },
+        ]);
+    });
+
+    it("keeps only so many messages of a huge forward", () => {
+        const content = Array.from({ length: 500 }, (_, index) => entry(index + 1, "x", "y"));
+        expect(map([{ type: "forward", data: { id: "9", content } }])?.forwarded).toHaveLength(30);
+    });
+
+    it("ignores contents in a shape it doesn't know", () => {
+        const mapped = map([{ type: "forward", data: { id: "9", content: [{ nope: true }] } }]);
+        expect(mapped?.text).toBe("[forwarded messages]");
+        expect(mapped?.forwarded).toBeUndefined();
+    });
+
+    async function forwardSent(socket: FakeSocket) {
+        await vi.waitFor(() => expect(socket.sent.at(-1)).toMatchObject({ action: "get_forward_msg" }));
+    }
+
+    const forward = () => ({ post_type: "message", message_type: "group", ...event([{ type: "forward", data: { id: "7350" } }]) });
+
+    it("fetches the contents when the event only has an ID", async () => {
+        const { socket, messages } = await connected();
+        socket.emit("message", forward());
+        await forwardSent(socket);
+        const request = socket.sent.at(-1);
+        expect(request?.params).toEqual({ message_id: "7350" });
+        socket.emit("message", { echo: request?.echo, status: "ok", data: { messages: [entry(5, "carol", "吃了吗")] } });
+        await vi.waitFor(() => expect(messages[0]?.forwarded).toEqual([{ by: "carol", byUser: "qq:5", text: "吃了吗" }]));
+    });
+
+    it("doesn't call out when the event already has the contents", async () => {
+        const { socket, messages } = await connected();
+        const before = socket.sent.length;
+        socket.emit("message", {
+            post_type: "message",
+            message_type: "group",
+            ...event([{ type: "forward", data: { id: "9", content: [entry(5, "c", "y")] } }]),
+        });
+        expect(messages).toHaveLength(1);
+        expect(socket.sent).toHaveLength(before);
+    });
+
+    it("keeps the placeholder when the fetch fails", async () => {
+        const { socket, messages } = await connected();
+        socket.emit("message", forward());
+        await forwardSent(socket);
+        socket.emit("message", { echo: socket.sent.at(-1)?.echo, status: "failed", retcode: 1400, wording: "消息已过期" });
+        await vi.waitFor(() => expect(messages).toHaveLength(1));
+        expect(messages[0]).toMatchObject({ text: "[forwarded messages]" });
+        expect(messages[0]?.forwarded).toBeUndefined();
+    });
+
+    it("holds later messages back until the forward is open, to keep the order", async () => {
+        const { socket, messages } = await connected();
+        socket.emit("message", forward());
+        await forwardSent(socket);
+        socket.emit("message", { post_type: "message", message_type: "group", ...event([text("后来的")], { message_id: 2 }) });
+        expect(messages).toHaveLength(0);
+        socket.emit("message", { echo: socket.sent.at(-1)?.echo, status: "ok", data: { messages: [entry(5, "carol", "吃了吗")] } });
+        await vi.waitFor(() => expect(messages.map(({ text: body }) => body)).toEqual(["[forwarded messages]", "后来的"]));
+    });
+
+    it("doesn't fetch a forward from backlog", async () => {
+        const { socket, messages } = await connected();
+        const before = socket.sent.length;
+        socket.emit("message", {
+            post_type: "message",
+            message_type: "group",
+            ...event([{ type: "forward", data: { id: "7350" } }], { time: NOW / 1000 - 600 }),
+        });
+        expect(messages).toHaveLength(1);
+        expect(socket.sent).toHaveLength(before);
+    });
+});
+
 describe("OneBot reactions", () => {
     it("reads Unicode reactions and QQ's own faces", () => {
         expect(emojiFromId("128077")).toBe("👍");

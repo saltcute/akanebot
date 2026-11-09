@@ -5,6 +5,7 @@ import type {
     Adapter,
     ChannelRef,
     ChatMessage,
+    ForwardedLine,
     GroupEvent,
     GroupEventKind,
     OutgoingMention,
@@ -21,6 +22,8 @@ const CALL_TIMEOUT_MS = 15_000;
 const LOOKUP_TIMEOUT_MS = 3000;
 /** Someone can @ the whole member list, and only so many of those are worth a call each. */
 const MAX_NAME_LOOKUPS_PER_MESSAGE = 5;
+/** A forward can hold hundreds of messages, and only the start of one gets read. */
+const MAX_FORWARDED_LINES = 30;
 const FIRST_RETRY_MS = 1000;
 const MAX_RETRY_MS = 60_000;
 const MAX_REMEMBERED_SENDS = 1000;
@@ -175,8 +178,33 @@ function isDescribableImage({ type, data }: Segment): boolean {
     return type === "image" && asText(data.url) !== "" && Number(data.file_size ?? 0) <= MAX_DESCRIBABLE_IMAGE_BYTES;
 }
 
+function isUnopenedForward({ type, data }: Segment): boolean {
+    return type === "forward" && data.content === undefined;
+}
+
 function displayName(event: GroupMessage): string {
     return event.sender.card || event.sender.nickname || event.user_id;
+}
+
+/** Reads a forward's contents, from the segment or from `get_forward_msg`. A forward inside it stays a placeholder. Returns nothing if the shape is unfamiliar. */
+export function toForwardedLines(data: unknown, selfId: string, lookup: Lookup): ForwardedLine[] {
+    const parsed = z.array(fetchedMessageSchema).safeParse(data);
+    if (!parsed.success) return [];
+    return parsed.data.slice(0, MAX_FORWARDED_LINES).flatMap(({ user_id: topLevelId, message, sender }) => {
+        const text = message
+            .map((segment) => describeSegment(segment, selfId, lookup))
+            .join("")
+            .trim();
+        if (text === "") return [];
+        const author = topLevelId ?? sender.user_id;
+        return [
+            {
+                by: sender.card || sender.nickname || (author && lookup.names.get(author)) || author,
+                byUser: author && `qq:${author}`,
+                text,
+            },
+        ];
+    });
 }
 
 /** Returns undefined for messages with nothing to read. */
@@ -195,6 +223,7 @@ export function toChatMessage(
     const replyTo = asText(event.message.find((segment) => segment.type === "reply")?.data.id);
     const sentAt = event.time * 1000;
     const mentions = mentionedOthers(event.message, event.self_id, lookup.names);
+    const forwarded = toForwardedLines(event.message.find(({ type }) => type === "forward")?.data.content, event.self_id, lookup);
     return {
         platform: "qq",
         channelId: event.group_id,
@@ -208,6 +237,7 @@ export function toChatMessage(
         ...(mentions.length > 0 ? { mentions } : {}),
         repliesToSelf: replyTo !== "" && repliedToSelf(replyTo),
         ...(replyTo ? { replyToMessageId: replyTo } : {}),
+        ...(forwarded.length > 0 ? { forwarded } : {}),
         isSelf: event.user_id === event.self_id,
         isBacklog: now - sentAt > MAX_LIVE_AGE_MS,
     };
@@ -465,17 +495,18 @@ export class OneBotAdapter implements Adapter {
         const isLive = now - event.time * 1000 <= MAX_LIVE_AGE_MS;
         const unnamed = isLive ? unnamedMentions(event.message, event.self_id, this.#names) : [];
         const isReply = event.message.some(({ type }) => type === "reply");
-        if (unnamed.length === 0 && !isReply && !this.#inbound) {
+        const opensForward = isLive && event.message.some(isUnopenedForward);
+        if (unnamed.length === 0 && !isReply && !opensForward && !this.#inbound) {
             const message = convert();
             if (message) this.#onMessage?.(message);
             return;
         }
-        // QQ gives only an ID for a reply's target and for most @s, and looking one up takes a moment. Whatever arrives meanwhile waits, to keep the chat in order.
+        // QQ gives only an ID for a reply's target, a forward's contents and most @s, and looking one up takes a moment. Whatever arrives meanwhile waits, to keep the chat in order.
         const turn: Promise<void> = (this.#inbound ?? Promise.resolve())
             .then(() => Promise.all(unnamed.map((id) => this.#learnName(event.group_id, id, LOOKUP_TIMEOUT_MS))))
             .then(async () => {
                 const message = convert();
-                if (message) this.#onMessage?.(await this.#withQuote(message, event));
+                if (message) this.#onMessage?.(await this.#withForwarded(await this.#withQuote(message, event), event));
             })
             .catch((error) => this.#onStatus("message_failed", String(error)))
             .finally(() => {
@@ -493,6 +524,19 @@ export class OneBotAdapter implements Adapter {
             const replyTo = toQuotedMessage(data, id, event, { selfName: this.#selfName, names: this.#names });
             // Its record of its own sends is lost on restart, but QQ still knows who wrote the original.
             return replyTo ? { ...message, replyTo, repliesToSelf: message.repliesToSelf || replyTo.isSelf } : message;
+        } catch {
+            return message;
+        }
+    }
+
+    /** A forward that's expired or too slow to open still shows up, as a placeholder. */
+    async #withForwarded(message: ChatMessage, event: GroupMessage): Promise<ChatMessage> {
+        const id = asText(event.message.find(isUnopenedForward)?.data.id);
+        if (id === "" || message.isBacklog) return message;
+        try {
+            const data = (await this.#call("get_forward_msg", { message_id: id }, LOOKUP_TIMEOUT_MS)) as { messages?: unknown };
+            const forwarded = toForwardedLines(data.messages, event.self_id, { selfName: this.#selfName, names: this.#names });
+            return forwarded.length > 0 ? { ...message, forwarded } : message;
         } catch {
             return message;
         }
