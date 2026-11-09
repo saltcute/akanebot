@@ -1,4 +1,4 @@
-import type { Adapter, ChannelRef, ChatMessage, SendOptions } from "../adapters/types.ts";
+import type { Adapter, ChannelRef, ChatMessage, OutgoingImage, SendOptions } from "../adapters/types.ts";
 import { channelKey } from "../adapters/types.ts";
 import type { Clock } from "../lib/clock.ts";
 import type { DecisionTrace } from "../lib/trace.ts";
@@ -20,6 +20,7 @@ export type Observation = "new" | "duplicate" | "self_echo" | "backlog";
 
 type BlockReason = "aborted" | "rate_limited" | "share_breaker" | "bot_loop" | "shadow";
 type Speaker = "self" | "bot" | "human";
+type Post = Promise<{ messageId: string }>;
 
 export type SendOutcome =
     | { kind: "sent"; messageId: string }
@@ -79,12 +80,29 @@ export class SendGuard {
     }
 
     async send(adapter: Adapter, channel: ChannelRef, text: string, options: SendOptions = {}): Promise<SendOutcome> {
+        return this.#checked(channel, text, options, () => adapter.send(channel, text, options));
+    }
+
+    /** A picture counts as talking, under the same limits. `description` stands in for it in the trace. */
+    async sendImage(
+        adapter: Adapter,
+        channel: ChannelRef,
+        image: OutgoingImage,
+        description: string,
+        options: SendOptions = {},
+    ): Promise<SendOutcome> {
+        const post = adapter.sendImage?.bind(adapter);
+        if (!post) return { kind: "failed", detail: "this platform can't send pictures" };
+        return this.#checked(channel, `(sends a picture: ${description})`, options, () => post(channel, image, options));
+    }
+
+    #checked(channel: ChannelRef, text: string, options: SendOptions, post: () => Post): Promise<SendOutcome> | SendOutcome {
         const key = channelKey(channel);
         if (options.signal?.aborted) return this.#blocked(key, "aborted");
         if (this.#shareExceeded(key)) return this.#blocked(key, "share_breaker");
         if (this.#inBotLoop(key)) return this.#blocked(key, "bot_loop");
         if (!this.#takeToken()) return this.#blocked(key, "rate_limited");
-        return this.#deliver(adapter, channel, text, options);
+        return this.#deliver(channel, text, options, post);
     }
 
     /** A reaction counts against the rate limit but not as talking. */
@@ -113,10 +131,10 @@ export class SendGuard {
 
     /** For safety responses and admin confirmations, which must get through. Still at-most-once. */
     sendUrgent(adapter: Adapter, channel: ChannelRef, text: string): Promise<SendOutcome> {
-        return this.#deliver(adapter, channel, text, {});
+        return this.#deliver(channel, text, {}, () => adapter.send(channel, text, {}));
     }
 
-    async #deliver(adapter: Adapter, channel: ChannelRef, text: string, options: SendOptions): Promise<SendOutcome> {
+    async #deliver(channel: ChannelRef, text: string, options: SendOptions, post: () => Post): Promise<SendOutcome> {
         const key = channelKey(channel);
         const mention = options.mention ? { mention: text.slice(options.mention.start + 1, options.mention.end) } : {};
         if (this.#shadow) {
@@ -125,7 +143,7 @@ export class SendGuard {
             return { kind: "blocked", reason: "shadow" };
         }
         try {
-            const { messageId } = await adapter.send(channel, text, options);
+            const { messageId } = await post();
             this.#remember(ownKey(channel, messageId));
             this.#recordSpeaker(key, "self");
             this.#trace.record("send.sent", { channel: key, messageId, detail: { text, ...mention } });

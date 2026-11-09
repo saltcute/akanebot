@@ -90,6 +90,9 @@ export type SendOptions = {
     signal?: AbortSignal;
 };
 
+/** A picture to post, already on disk. Only ever bytes, so nothing a model wrote can make the bot fetch or link anything. */
+export type OutgoingImage = { bytes: Uint8Array; mime: string };
+
 export interface Adapter {
     readonly platform: Platform;
     start(
@@ -99,6 +102,7 @@ export interface Adapter {
     ): Promise<void>;
     stop(): Promise<void>;
     send(channel: ChannelRef, text: string, options?: SendOptions): Promise<{ messageId: string }>;
+    sendImage?(channel: ChannelRef, image: OutgoingImage, options?: SendOptions): Promise<{ messageId: string }>;
     sendTyping(channel: ChannelRef): Promise<void>;
     react?(channel: ChannelRef, messageId: string, emoji: string): Promise<void>;
     /** A human-readable name for a channel, if the platform has one to hand. */

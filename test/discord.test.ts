@@ -288,6 +288,12 @@ describe("DiscordAdapter.send", () => {
         expect(sent[0]).toMatchObject({ reply: { messageReference: "m9", failIfNotExists: false } });
     });
 
+    it("uploads a picture under a name that keeps a GIF animated, and pings nobody", async () => {
+        const { sent, adapter } = setup();
+        await adapter.sendImage(channel, { bytes: Uint8Array.of(1, 2), mime: "image/gif" });
+        expect(sent[0]).toMatchObject({ files: [{ attachment: Buffer.of(1, 2), name: "image.gif" }], allowedMentions: { parse: [] } });
+    });
+
     it("reports a channel it can't post in", async () => {
         const { adapter } = setup(false);
         await expect(adapter.send(channel, "hi")).rejects.toThrow(/can't be sent to/);

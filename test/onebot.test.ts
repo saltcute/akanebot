@@ -338,6 +338,17 @@ describe("OneBotAdapter", () => {
         expect(await sending).toEqual({ messageId: "321" });
     });
 
+    it("sends a picture inline, since the server may not share this disk", async () => {
+        const { adapter, socket } = await connected();
+        const sending = adapter.sendImage({ platform: "qq", channelId: "181" }, { bytes: Uint8Array.of(1, 2, 3), mime: "image/gif" });
+        expect(socket.sent.at(-1)).toMatchObject({
+            action: "send_group_msg",
+            params: { group_id: 181, message: [{ type: "image", data: { file: "base64://AQID" } }] },
+        });
+        socket.reply({ message_id: 322 });
+        expect(await sending).toEqual({ messageId: "322" });
+    });
+
     const sendText = async (body: string, options: SendOptions) => {
         const { adapter, socket } = await connected();
         const sending = adapter.send({ platform: "qq", channelId: "181" }, body, options);

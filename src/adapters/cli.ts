@@ -1,5 +1,15 @@
 import type { Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, ForwardedLine, GroupEvent, QuotedMessage, ReactionEvent, SendOptions } from "./types.ts";
+import type {
+    Adapter,
+    ChannelRef,
+    ChatMessage,
+    ForwardedLine,
+    GroupEvent,
+    OutgoingImage,
+    QuotedMessage,
+    ReactionEvent,
+    SendOptions,
+} from "./types.ts";
 
 const SELF_ID = "akanebot";
 /** Platforms mark a mention as one unit, so whole tokens are read here too and `@akane2` isn't `@akane`. */
@@ -9,6 +19,7 @@ const MENTION_TOKEN = /(?<!\S)@([^\s,.!?，。！？:：]+)/gu;
 export class CliAdapter implements Adapter {
     readonly platform = "cli" as const;
     readonly sent: { channelId: string; text: string; messageId: string; replyToMessageId?: string }[] = [];
+    readonly sentImages: { channelId: string; messageId: string; image: OutgoingImage }[] = [];
     readonly reactions: { messageId: string; emoji: string }[] = [];
     readonly #clock: Clock;
     readonly #selfName: string;
@@ -98,7 +109,20 @@ export class CliAdapter implements Adapter {
             ...(options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
         });
         this.#print(`${this.#selfName}: ${text}`);
-        // Real platforms echo the agent's own messages back, so the simulator does too.
+        this.#echo(channel, messageId, text);
+        return { messageId };
+    }
+
+    async sendImage(channel: ChannelRef, image: OutgoingImage): Promise<{ messageId: string }> {
+        const messageId = `${this.#idPrefix}m${this.#nextId++}`;
+        this.sentImages.push({ channelId: channel.channelId, messageId, image });
+        this.#print(`${this.#selfName}: [sends a ${image.mime} picture, ${image.bytes.length} bytes]`);
+        this.#echo(channel, messageId, "[image]");
+        return { messageId };
+    }
+
+    /** Real platforms echo the agent's own messages back, so the simulator does too. */
+    #echo(channel: ChannelRef, messageId: string, text: string): void {
         this.#onMessage?.({
             platform: this.platform,
             channelId: channel.channelId,
@@ -111,7 +135,6 @@ export class CliAdapter implements Adapter {
             isSelf: true,
             isBacklog: false,
         });
-        return { messageId };
     }
 
     async sendTyping(): Promise<void> {}

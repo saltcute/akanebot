@@ -8,6 +8,7 @@ import type {
     ForwardedLine,
     GroupEvent,
     GroupEventKind,
+    OutgoingImage,
     OutgoingMention,
     QuotedMessage,
     ReactionEvent,
@@ -368,10 +369,16 @@ export class OneBotAdapter implements Adapter {
 
     async send(channel: ChannelRef, text: string, options: SendOptions = {}): Promise<{ messageId: string }> {
         // Always the segment form, because in the plain string form model output could smuggle in a [CQ:at,qq=all].
-        const message = [
-            ...(options.replyToMessageId ? [{ type: "reply", data: { id: options.replyToMessageId } }] : []),
-            ...outgoingSegments(text, options.mention),
-        ];
+        return this.#post(channel, outgoingSegments(text, options.mention), options);
+    }
+
+    /** Sent inline, because the OneBot server may not be able to see this machine's disk. */
+    async sendImage(channel: ChannelRef, image: OutgoingImage, options: SendOptions = {}): Promise<{ messageId: string }> {
+        return this.#post(channel, [{ type: "image", data: { file: `base64://${Buffer.from(image.bytes).toString("base64")}` } }], options);
+    }
+
+    async #post(channel: ChannelRef, segments: readonly Segment[], options: SendOptions): Promise<{ messageId: string }> {
+        const message = [...(options.replyToMessageId ? [{ type: "reply", data: { id: options.replyToMessageId } }] : []), ...segments];
         const result = (await this.#call("send_group_msg", { group_id: Number(channel.channelId), message })) as { message_id: number | string };
         const messageId = String(result.message_id);
         this.#ownMessages.add(messageId);

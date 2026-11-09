@@ -140,6 +140,23 @@ describe("SendGuard.send", () => {
         await expect(guard.send(adapter, channel, "x")).resolves.toEqual({ kind: "blocked", reason: "share_breaker" });
     });
 
+    describe("sendImage", () => {
+        const image = { bytes: Uint8Array.of(1), mime: "image/png" };
+
+        it("counts against the same limits as text", async () => {
+            const { guard, adapter } = setup({ bucketCapacity: 1 });
+            const withImages = { ...adapter, sendImage: async () => ({ messageId: "p1" }) };
+            await expect(guard.sendImage(withImages, channel, image, "a cat")).resolves.toEqual({ kind: "sent", messageId: "p1" });
+            await expect(guard.sendImage(withImages, channel, image, "a cat")).resolves.toMatchObject({ kind: "blocked", reason: "rate_limited" });
+        });
+
+        it("fails without trying on a platform that can't post pictures", async () => {
+            const { guard, adapter } = setup();
+            await expect(guard.sendImage(adapter, channel, image, "a cat")).resolves.toMatchObject({ kind: "failed" });
+            expect(adapter.sends).toBe(0);
+        });
+    });
+
     it("does not trip the share breaker on a tiny sample", async () => {
         const { guard, adapter } = setup({ bucketCapacity: 100 });
         guard.observe(message("in1"));

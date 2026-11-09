@@ -21,6 +21,7 @@ import type {
     ForwardedLine,
     GroupEvent,
     GroupEventKind,
+    OutgoingImage,
     OutgoingMention,
     QuotedMessage,
     ReactionEvent,
@@ -288,6 +289,17 @@ export class DiscordAdapter implements Adapter {
             content: withMention(text, options.mention).slice(0, MAX_MESSAGE_CHARS),
             // Nothing the model typed can ping anyone, least of all @everyone. Only the person code resolved gets notified.
             allowedMentions: { parse: [], ...(options.mention ? { users: [options.mention.userId] } : {}) },
+            ...(options.replyToMessageId ? { reply: { messageReference: options.replyToMessageId, failIfNotExists: false } } : {}),
+        });
+        return { messageId: sent.id };
+    }
+
+    async sendImage(channel: ChannelRef, image: OutgoingImage, options: SendOptions = {}): Promise<{ messageId: string }> {
+        const target = await this.#sendable(channel);
+        const sent = await target.send({
+            // The extension is what makes Discord play a GIF.
+            files: [{ attachment: Buffer.from(image.bytes), name: `image.${image.mime.split("/")[1]}` }],
+            allowedMentions: { parse: [] },
             ...(options.replyToMessageId ? { reply: { messageReference: options.replyToMessageId, failIfNotExists: false } } : {}),
         });
         return { messageId: sent.id };
