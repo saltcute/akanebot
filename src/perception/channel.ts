@@ -102,6 +102,10 @@ export class ChannelPerception {
         return index === -1 ? undefined : index;
     }
 
+    unreadCount(): number {
+        return this.#window.filter((entry) => entry.seq > this.#settledSeq && !entry.message.isSelf).length;
+    }
+
     /** Everything up to `seq` has been answered or deliberately let go. */
     settle(seq: number): void {
         this.#settledSeq = Math.max(this.#settledSeq, seq);

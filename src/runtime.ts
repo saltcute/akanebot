@@ -1,11 +1,11 @@
 import type { Adapter, ChannelRef, ChatMessage, Platform, ReactionEvent } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
-import { type Attend, BodyActor, type Lease } from "./body/actor.ts";
+import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
 import { dayState } from "./body/life.ts";
 import { currentRelationship, describeRelationship, updateRelationship } from "./body/relationships.ts";
 import { Routine } from "./body/routine.ts";
 import { Vitals } from "./body/vitals.ts";
-import { runCommand } from "./control/admin.ts";
+import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
 import {
     CrisisDesk,
     crisisFallback,
@@ -21,7 +21,7 @@ import { decideToSpeak } from "./gate/policy.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
-import type { DecisionTrace } from "./lib/trace.ts";
+import type { DecisionTrace, TraceEvent } from "./lib/trace.ts";
 import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
@@ -72,6 +72,48 @@ export type RuntimeOptions = {
     /** Follow the persona's sleep and busy hours. */
     routine?: boolean;
     search?: SearchBackend;
+};
+
+/** One line of a conversation, as the operator sees it. */
+export type ConversationMessage = {
+    messageId: string;
+    senderName: string;
+    senderKey: string;
+    isSelf: boolean;
+    addressed: boolean;
+    text: string;
+    sentAt: number;
+    reactions: readonly { emoji: string; by: string }[];
+};
+
+export type ConversationSummary = {
+    key: string;
+    name: string | undefined;
+    mutedUntil: number | undefined;
+    attending: boolean;
+    /** Messages it hasn't answered or let go of yet. */
+    unread: number;
+    /** Messages it has read that aren't memories yet. */
+    undigested: number;
+    lastMessage: ConversationMessage | undefined;
+};
+
+export type ConversationDetail = ConversationSummary & {
+    messages: ConversationMessage[];
+    /** Where the unread messages begin, or undefined if there are none. */
+    firstNewIndex: number | undefined;
+};
+
+export type RuntimeStatus = {
+    personaName: string;
+    shadow: boolean;
+    killed: boolean;
+    body: BodyState;
+    attending: string | undefined;
+    awayReasons: readonly string[];
+    battery: number;
+    searchesToday: number;
+    cost: ReturnType<CostMeter["summary"]>;
 };
 
 const KILL_REASON = "kill";
@@ -245,12 +287,123 @@ export class Runtime {
         }
     }
 
-    #forgetUser(user: string): void {
-        this.memory.forgetUser(user);
+    #forgetUser(user: string): number {
+        const removed = this.memory.forgetUser(user);
         for (const channel of this.#channels.values()) {
             channel.perception.purge((message) => userKey(message) === user);
             channel.perception.purgeReactionsBy(user);
         }
+        return removed;
+    }
+
+    status(): RuntimeStatus {
+        return {
+            personaName: this.#persona.name,
+            shadow: this.#options.shadow ?? false,
+            killed: this.#state.killed,
+            body: this.body.state,
+            attending: this.body.attending,
+            awayReasons: this.body.awayReasons,
+            battery: this.vitals.battery(),
+            searchesToday: this.vitals.searchesToday(),
+            cost: this.#options.cost.summary(),
+        };
+    }
+
+    recentAlerts(limit: number): TraceEvent[] {
+        return this.#options.trace.ofKind("alert").slice(-limit);
+    }
+
+    /** Decisions recorded about a message since this process started. */
+    decisionsAbout(messageId: string): TraceEvent[] {
+        return this.#options.trace.forMessage(messageId);
+    }
+
+    hasConversation(key: string): boolean {
+        return this.#allowedChannels.has(key);
+    }
+
+    /** Every allowed channel, including ones nobody has spoken in since startup, most recently active first. */
+    conversations(): ConversationSummary[] {
+        return [...this.#allowedChannels]
+            .map((key) => this.#summarize(key, this.#visibleMessages(key)))
+            .sort((a, b) => (b.lastMessage?.sentAt ?? 0) - (a.lastMessage?.sentAt ?? 0));
+    }
+
+    conversation(key: string): ConversationDetail | undefined {
+        if (!this.hasConversation(key)) return undefined;
+        const window = this.#visibleMessages(key);
+        return {
+            ...this.#summarize(key, window),
+            messages: window.map(toConversationMessage),
+            firstNewIndex: this.#channels.get(key)?.perception.firstNewIndex(),
+        };
+    }
+
+    channelName(key: string): string | undefined {
+        const separator = key.indexOf(":");
+        return this.#adapters.get(key.slice(0, separator) as Platform)?.channelName?.(key.slice(separator + 1));
+    }
+
+    muteConversation(key: string, minutes: number): void {
+        const clamped = Math.min(minutes, MAX_MUTE_MINUTES);
+        this.#state.mute(key, clamped * 60_000);
+        this.#options.trace.record("control.web", { channel: key, detail: { action: "mute", minutes: clamped } });
+    }
+
+    unmuteConversation(key: string): void {
+        this.#state.unmute(key);
+        this.#options.trace.record("control.web", { channel: key, detail: { action: "unmute" } });
+    }
+
+    /** She lets go of whatever is unread. Those messages stay visible but won't be answered or remembered. */
+    markConversationRead(key: string): void {
+        const channel = this.#channels.get(key);
+        channel?.perception.settle(channel.perception.seq);
+        this.#options.trace.record("control.web", { channel: key, detail: { action: "mark_read" } });
+    }
+
+    /** Turns what she has read so far into memories now. Returns how many messages are still undigested. */
+    async digestConversation(key: string): Promise<number> {
+        this.#options.trace.record("control.web", { channel: key, detail: { action: "digest" } });
+        await this.memory.closeSegment(key);
+        return this.memory.store.openSegment(key).length;
+    }
+
+    kill(): void {
+        this.#state.setKilled(true);
+        this.body.goAway(KILL_REASON);
+        this.#options.trace.record("control.web", { detail: { action: "kill" } });
+    }
+
+    resume(): void {
+        this.#state.setKilled(false);
+        this.body.comeBack(KILL_REASON);
+        this.#options.trace.record("control.web", { detail: { action: "resume" } });
+    }
+
+    /** Also clears the live windows. Returns how many memories went. */
+    forgetPerson(user: string): number {
+        this.#options.trace.record("control.web", { detail: { action: "forget_person", user } });
+        return this.#forgetUser(user);
+    }
+
+    /** The live window, or what a restart would restore if nobody has spoken here yet. */
+    #visibleMessages(key: string): readonly ChatMessage[] {
+        return this.#channels.get(key)?.perception.window() ?? this.memory.restoreWindow(key, this.#options.timing.windowSize);
+    }
+
+    #summarize(key: string, window: readonly ChatMessage[]): ConversationSummary {
+        const last = window.at(-1);
+        return {
+            key,
+            name: this.channelName(key),
+            mutedUntil: this.#state.mutedUntil(key),
+            attending: this.body.attending === key,
+            unread: this.#channels.get(key)?.perception.unreadCount() ?? 0,
+            undigested: this.memory.store.openSegment(key).length,
+            lastMessage: last ? toConversationMessage(last) : undefined,
+        };
     }
 
     #admit(channel: Channel, message: ChatMessage): void {
@@ -617,6 +770,19 @@ export class Runtime {
         }
         return !signal.aborted;
     }
+}
+
+function toConversationMessage(message: ChatMessage): ConversationMessage {
+    return {
+        messageId: message.messageId,
+        senderName: message.sender.displayName,
+        senderKey: userKey(message),
+        isSelf: message.isSelf,
+        addressed: isAddressed(message),
+        text: message.text,
+        sentAt: message.sentAt,
+        reactions: (message.reactions ?? []).map(({ emoji, by }) => ({ emoji, by })),
+    };
 }
 
 function lateReplyNote(ageMs: number): string[] {

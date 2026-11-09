@@ -232,10 +232,23 @@ export class MemorySystem {
         this.store.addMemory({ ...draft, embedding, embeddingModel: this.#embedder.modelId });
     }
 
-    /** Removes everything derived from this person. */
-    forgetUser(user: string): void {
+    /** Removes everything derived from this person. Returns how many memories went. */
+    forgetUser(user: string): number {
         const removed = this.store.forgetUser(user);
         this.#trace.record("memory.forget_user", { detail: { user, removed } });
+        return removed;
+    }
+
+    /** Re-indexes changed text right away, so an edited memory doesn't drop out of recall until the nightly run. */
+    edit(id: number, fields: { gist?: string; detail?: string; importance?: number }): void {
+        this.store.edit(id, fields);
+        const memory = this.store.get(id);
+        if (memory && !memory.embedding) this.#inBackground(this.#reindex(memory.id, `${memory.gist} ${memory.detail}`));
+    }
+
+    async #reindex(id: number, text: string): Promise<void> {
+        const embedding = await this.#embedder.embed(text, "passage");
+        if (embedding && this.store.get(id)) this.store.setEmbedding(id, embedding, this.#embedder.modelId);
     }
 
     async consolidateNow(): Promise<ConsolidationReport> {

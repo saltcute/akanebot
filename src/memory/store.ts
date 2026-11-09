@@ -32,6 +32,23 @@ export type Memory = Omit<MemoryDraft, "sources"> & {
     supersededBy: number | null;
 };
 
+export type MemoryState = "active" | "archived" | "replaced";
+
+/** A memory as tools see it, without its embedding. */
+export type MemoryView = Omit<Memory, "embedding" | "embeddingModel"> & { indexed: boolean };
+
+export type MemoryQuery = {
+    scope?: string | undefined;
+    kind?: MemoryKind | undefined;
+    state?: MemoryState | undefined;
+    text?: string | undefined;
+    limit: number;
+    offset: number;
+};
+
+/** Where a memory came from. The message fields are null once the raw log has aged out. */
+export type MemorySource = { messageId: string; speaker: string; displayName: string | null; text: string | null; sentAt: number | null };
+
 export type RelationshipRow = {
     channel: string;
     userKey: string;
@@ -54,6 +71,15 @@ type LoggedRow = {
 };
 
 type MemoryRow = Omit<Memory, "embedding"> & { embedding: Uint8Array | null };
+type MemoryViewRow = Omit<MemoryView, "indexed"> & { indexed: number };
+
+const MEMORY_STATE_CLAUSES: Record<MemoryState, string> = {
+    active: "status = 'active' AND supersededBy IS NULL",
+    archived: "status = 'archived' AND supersededBy IS NULL",
+    replaced: "supersededBy IS NOT NULL",
+};
+const MEMORY_VIEW_COLUMNS =
+    "id, scope, kind, subject, attributedTo, gist, detail, importance, salience, confidence, strength, createdAt, lastRecalledAt, recallCount, status, supersededBy, embedding IS NOT NULL AS indexed";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rawLog (
@@ -209,6 +235,50 @@ export class MemoryStore {
         return this.#all<MemoryRow>("SELECT * FROM memories ORDER BY id").map(toMemory);
     }
 
+    /** One page of memories, newest first. */
+    browse(query: MemoryQuery): { memories: MemoryView[]; total: number } {
+        const clauses: string[] = [];
+        const parameters: SQLInputValue[] = [];
+        if (query.scope) {
+            clauses.push("scope = ?");
+            parameters.push(query.scope);
+        }
+        if (query.kind) {
+            clauses.push("kind = ?");
+            parameters.push(query.kind);
+        }
+        if (query.state) clauses.push(MEMORY_STATE_CLAUSES[query.state]);
+        if (query.text) {
+            clauses.push("(gist LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')");
+            const pattern = `%${query.text.replace(/[\\%_]/g, "\\$&")}%`;
+            parameters.push(pattern, pattern);
+        }
+        const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+        const [count] = this.#all<{ total: number }>(`SELECT COUNT(*) AS total FROM memories ${where}`, ...parameters);
+        const rows = this.#all<MemoryViewRow>(
+            `SELECT ${MEMORY_VIEW_COLUMNS} FROM memories ${where} ORDER BY createdAt DESC, id DESC LIMIT ? OFFSET ?`,
+            ...parameters,
+            query.limit,
+            query.offset,
+        );
+        return { memories: rows.map(toMemoryView), total: count?.total ?? 0 };
+    }
+
+    view(id: number): MemoryView | undefined {
+        const [row] = this.#all<MemoryViewRow>(`SELECT ${MEMORY_VIEW_COLUMNS} FROM memories WHERE id = ?`, id);
+        return row ? toMemoryView(row) : undefined;
+    }
+
+    sourcesOf(id: number): MemorySource[] {
+        return this.#all<MemorySource>(
+            `SELECT s.messageId, s.speaker, r.displayName, r.text, r.sentAt FROM memorySources s
+             JOIN memories m ON m.id = s.memoryId
+             LEFT JOIN rawLog r ON r.channel = m.scope AND r.messageId = s.messageId
+             WHERE s.memoryId = ? ORDER BY r.sentAt, s.messageId`,
+            id,
+        );
+    }
+
     scopes(): string[] {
         return this.#all<{ scope: string }>("SELECT DISTINCT scope FROM memories").map((row) => row.scope);
     }
@@ -240,17 +310,15 @@ export class MemoryStore {
         this.#run("UPDATE memories SET embedding = ?, embeddingModel = ? WHERE id = ?", toBlob(embedding), model, id);
     }
 
-    /** Clears the embedding so that the next nightly run recomputes it from the new text. */
+    /** New text clears the embedding, because it no longer describes the memory. */
     edit(id: number, fields: { gist?: string; detail?: string; importance?: number }): void {
         const current = this.get(id);
         if (!current) return;
-        this.#run(
-            "UPDATE memories SET gist = ?, detail = ?, importance = ?, embedding = NULL, embeddingModel = NULL WHERE id = ?",
-            fields.gist ?? current.gist,
-            fields.detail ?? current.detail,
-            fields.importance ?? current.importance,
-            id,
-        );
+        const gist = fields.gist ?? current.gist;
+        const detail = fields.detail ?? current.detail;
+        this.#run("UPDATE memories SET gist = ?, detail = ?, importance = ? WHERE id = ?", gist, detail, fields.importance ?? current.importance, id);
+        if (gist !== current.gist || detail !== current.detail)
+            this.#run("UPDATE memories SET embedding = NULL, embeddingModel = NULL WHERE id = ?", id);
     }
 
     /** Reversible: clearing the link brings the old memory back. */
@@ -278,6 +346,21 @@ export class MemoryStore {
 
     /** Removes everything derived from a person, including shared summaries they contributed to. Returns how many memories went. */
     forgetUser(user: string): number {
+        const ids = this.#memoriesDerivedFrom(user);
+        for (const id of ids) this.forget(id);
+        this.#run("DELETE FROM rawLog WHERE userKey = ?", user);
+        this.#removeReactionsBy(user);
+        this.#run("DELETE FROM relationships WHERE userKey = ?", user);
+        return ids.size;
+    }
+
+    /** What `forgetUser` would delete. */
+    forgetImpact(user: string): { memories: number; messages: number } {
+        const [row] = this.#all<{ total: number }>("SELECT COUNT(*) AS total FROM rawLog WHERE userKey = ?", user);
+        return { memories: this.#memoriesDerivedFrom(user).size, messages: row?.total ?? 0 };
+    }
+
+    #memoriesDerivedFrom(user: string): Set<number> {
         // Things others said about this person are stored under their display name, so those go too.
         const names = this.#all<{ displayName: string }>("SELECT DISTINCT displayName FROM rawLog WHERE userKey = ?", user).map(
             (row) => `name:${row.displayName}`,
@@ -288,11 +371,7 @@ export class MemoryStore {
             user,
         ).map((row) => row.id);
         for (const name of names) ids.push(...this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ?", name).map((row) => row.id));
-        for (const id of new Set(ids)) this.forget(id);
-        this.#run("DELETE FROM rawLog WHERE userKey = ?", user);
-        this.#removeReactionsBy(user);
-        this.#run("DELETE FROM relationships WHERE userKey = ?", user);
-        return new Set(ids).size;
+        return new Set(ids);
     }
 
     #removeReactionsBy(user: string): void {
@@ -367,6 +446,10 @@ function toBlob(embedding: Float32Array | undefined): Uint8Array | null {
 function toMemory(row: MemoryRow): Memory {
     // Copied first, because a Float32Array needs an aligned buffer and SQLite's blob may not be.
     return { ...row, embedding: row.embedding ? new Float32Array(row.embedding.slice().buffer) : undefined };
+}
+
+function toMemoryView(row: MemoryViewRow): MemoryView {
+    return { ...row, indexed: row.indexed === 1 };
 }
 
 function toReactionsColumn(reactions: readonly MessageReaction[]): string | null {

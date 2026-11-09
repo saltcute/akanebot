@@ -159,6 +159,12 @@ export class DiscordAdapter implements Adapter {
         await target.messages.react(messageId, emoji);
     }
 
+    channelName(channelId: string): string | undefined {
+        const channel = this.#client.channels.cache.get(channelId);
+        if (!channel || !("name" in channel) || !channel.name) return undefined;
+        return "guild" in channel ? `${channel.guild.name} #${channel.name}` : `#${channel.name}`;
+    }
+
     async #sendable(channel: ChannelRef) {
         const target = await this.#client.channels.fetch(channel.channelId);
         if (!target?.isSendable()) throw new Error(`Discord channel ${channel.channelId} can't be sent to`);

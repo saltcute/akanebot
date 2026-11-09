@@ -17,7 +17,7 @@ export type CommandResult =
       };
 
 const DEFAULT_MUTE_MINUTES = 60;
-const MAX_MUTE_MINUTES = 10_080;
+export const MAX_MUTE_MINUTES = 10_080;
 
 /** Identity comes from the platform's sender ID. Display names are never trusted here. */
 export function runCommand(message: ChatMessage, options: { prefix: string; admins: readonly string[]; state: ControlState }): CommandResult {

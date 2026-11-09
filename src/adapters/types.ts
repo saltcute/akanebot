@@ -51,6 +51,8 @@ export interface Adapter {
     send(channel: ChannelRef, text: string, options?: SendOptions): Promise<{ messageId: string }>;
     sendTyping(channel: ChannelRef): Promise<void>;
     react?(channel: ChannelRef, messageId: string, emoji: string): Promise<void>;
+    /** A human-readable name for a channel, if the platform has one to hand. */
+    channelName?(channelId: string): string | undefined;
 }
 
 export function channelKey(channel: ChannelRef): string {

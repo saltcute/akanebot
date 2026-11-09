@@ -50,6 +50,15 @@ export class BodyActor {
         return this.#isAway && !this.#current ? "away" : this.#state;
     }
 
+    /** The channel being attended to right now, if any. */
+    get attending(): string | undefined {
+        return this.#current?.candidate.channel;
+    }
+
+    get awayReasons(): readonly string[] {
+        return [...this.#awayReasons];
+    }
+
     /** A newer candidate replaces any waiting one from the same channel. */
     offer(candidate: Candidate): void {
         this.#pending.set(candidate.channel, candidate);

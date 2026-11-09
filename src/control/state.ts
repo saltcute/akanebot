@@ -84,6 +84,11 @@ export class ControlState {
         return (this.#mutedUntil.get(channel) ?? 0) > this.#clock.now();
     }
 
+    /** When the mute ends, or undefined if this channel isn't muted. */
+    mutedUntil(channel: string): number | undefined {
+        return this.isMuted(channel) ? this.#mutedUntil.get(channel) : undefined;
+    }
+
     mute(channel: string, durationMs: number): void {
         this.#mutedUntil.set(channel, this.#clock.now() + durationMs);
         this.#persist();
