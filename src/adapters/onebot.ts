@@ -17,8 +17,10 @@ import type {
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
 const CALL_TIMEOUT_MS = 15_000;
-/** Everything behind a reply waits for this lookup, so it gives up sooner than other calls. */
-const QUOTE_TIMEOUT_MS = 3000;
+/** Everything behind a reply or an unfamiliar @ waits for this lookup, so it gives up sooner than other calls. */
+const LOOKUP_TIMEOUT_MS = 3000;
+/** Someone can @ the whole member list, and only so many of those are worth a call each. */
+const MAX_NAME_LOOKUPS_PER_MESSAGE = 5;
 const FIRST_RETRY_MS = 1000;
 const MAX_RETRY_MS = 60_000;
 const MAX_REMEMBERED_SENDS = 1000;
@@ -158,6 +160,15 @@ function outgoingSegments(fullText: string, mention: OutgoingMention | undefined
     const text = fullText.slice(0, MAX_MESSAGE_CHARS);
     if (!mention || mention.end > text.length) return textSegment(text);
     return [...textSegment(text.slice(0, mention.start)), { type: "at", data: { qq: mention.userId } }, ...textSegment(text.slice(mention.end))];
+}
+
+/** People @-mentioned who QQ didn't name and who haven't spoken since startup, so all there is to show for them is a QQ number. */
+function unnamedMentions(segments: readonly Segment[], selfId: string, names: Lookup["names"]): string[] {
+    const targets = segments.flatMap(({ type, data }) => {
+        const target = asText(data.qq);
+        return type === "at" && target !== "" && target !== "all" && target !== selfId && !asText(data.name) && !names.has(target) ? [target] : [];
+    });
+    return [...new Set(targets)].slice(0, MAX_NAME_LOOKUPS_PER_MESSAGE);
 }
 
 function isDescribableImage({ type, data }: Segment): boolean {
@@ -433,10 +444,10 @@ export class OneBotAdapter implements Adapter {
     }
 
     /** Admins and people being removed often haven't spoken lately, and a bare QQ number would mean nothing in the chat. */
-    async #learnName(groupId: string, userId: string | undefined): Promise<void> {
+    async #learnName(groupId: string, userId: string | undefined, timeoutMs = CALL_TIMEOUT_MS): Promise<void> {
         if (!userId || userId === NOBODY || this.#names.has(userId)) return;
         try {
-            const member = (await this.#call("get_group_member_info", { group_id: Number(groupId), user_id: Number(userId) })) as {
+            const member = (await this.#call("get_group_member_info", { group_id: Number(groupId), user_id: Number(userId) }, timeoutMs)) as {
                 card?: string;
                 nickname?: string;
             };
@@ -449,17 +460,23 @@ export class OneBotAdapter implements Adapter {
 
     #onGroupMessage(event: GroupMessage): void {
         this.#names.set(event.user_id, displayName(event));
-        const lookup = { selfName: this.#selfName, names: this.#names };
-        const message = toChatMessage(event, this.#clock.now(), lookup, (id) => this.#ownMessages.has(id));
-        if (!message) return;
-        if (!message.replyToMessageId && !this.#inbound) {
-            this.#onMessage?.(message);
+        const now = this.#clock.now();
+        const convert = () => toChatMessage(event, now, { selfName: this.#selfName, names: this.#names }, (id) => this.#ownMessages.has(id));
+        const isLive = now - event.time * 1000 <= MAX_LIVE_AGE_MS;
+        const unnamed = isLive ? unnamedMentions(event.message, event.self_id, this.#names) : [];
+        const isReply = event.message.some(({ type }) => type === "reply");
+        if (unnamed.length === 0 && !isReply && !this.#inbound) {
+            const message = convert();
+            if (message) this.#onMessage?.(message);
             return;
         }
-        // QQ only says which message a reply points at, and looking it up takes a moment. Whatever arrives meanwhile waits, to keep the chat in order.
+        // QQ gives only an ID for a reply's target and for most @s, and looking one up takes a moment. Whatever arrives meanwhile waits, to keep the chat in order.
         const turn: Promise<void> = (this.#inbound ?? Promise.resolve())
-            .then(() => this.#withQuote(message, event))
-            .then((quoted) => this.#onMessage?.(quoted))
+            .then(() => Promise.all(unnamed.map((id) => this.#learnName(event.group_id, id, LOOKUP_TIMEOUT_MS))))
+            .then(async () => {
+                const message = convert();
+                if (message) this.#onMessage?.(await this.#withQuote(message, event));
+            })
             .catch((error) => this.#onStatus("message_failed", String(error)))
             .finally(() => {
                 if (this.#inbound === turn) this.#inbound = undefined;
@@ -472,7 +489,7 @@ export class OneBotAdapter implements Adapter {
         const id = message.replyToMessageId;
         if (!id || message.isBacklog) return message;
         try {
-            const data = await this.#call("get_msg", { message_id: Number(id) }, QUOTE_TIMEOUT_MS);
+            const data = await this.#call("get_msg", { message_id: Number(id) }, LOOKUP_TIMEOUT_MS);
             const replyTo = toQuotedMessage(data, id, event, { selfName: this.#selfName, names: this.#names });
             // Its record of its own sends is lost on restart, but QQ still knows who wrote the original.
             return replyTo ? { ...message, replyTo, repliesToSelf: message.repliesToSelf || replyTo.isSelf } : message;

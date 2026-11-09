@@ -69,6 +69,10 @@ async function lookupSent(socket: FakeSocket) {
     await vi.waitFor(() => expect(socket.sent.at(-1)).toMatchObject({ action: "get_msg" }));
 }
 
+async function memberLookupSent(socket: FakeSocket) {
+    await vi.waitFor(() => expect(socket.sent.at(-1)).toMatchObject({ action: "get_group_member_info" }));
+}
+
 async function connected() {
     const clock = new ManualClock(NOW);
     const sockets: FakeSocket[] = [];
@@ -276,6 +280,87 @@ describe("OneBotAdapter", () => {
         socket.reply(null, "failed");
         await vi.waitFor(() => expect(messages).toHaveLength(1));
         expect(messages[0]?.repliesToSelf).toBe(true);
+    });
+
+    describe("names of people @-mentioned", () => {
+        const incoming = (segments: Parameters<typeof event>[0], overrides: Record<string, unknown> = {}) => ({
+            post_type: "message",
+            message_type: "group",
+            ...event(segments),
+            ...overrides,
+        });
+        const atStranger = [{ type: "at", data: { qq: "1507524536" } }, text(" 在吗")];
+
+        it("looks up someone who hasn't spoken, so the chat shows a name and not a number", async () => {
+            const { socket, messages } = await connected();
+            socket.emit("message", incoming(atStranger));
+            await memberLookupSent(socket);
+            expect(socket.sent.at(-1)).toMatchObject({ params: { group_id: 181, user_id: 1507524536 } });
+            expect(messages).toHaveLength(0);
+            socket.reply({ card: "土豆" });
+            await vi.waitFor(() => expect(messages).toHaveLength(1));
+            expect(messages[0]).toMatchObject({ text: "@土豆 在吗", mentions: ["土豆"] });
+        });
+
+        it("remembers the name, so the next @ needs no lookup", async () => {
+            const { socket, messages } = await connected();
+            socket.emit("message", incoming(atStranger));
+            await memberLookupSent(socket);
+            socket.reply({ nickname: "土豆" });
+            await vi.waitFor(() => expect(messages).toHaveLength(1));
+            const callsBefore = socket.sent.length;
+            socket.emit("message", incoming(atStranger, { message_id: 56 }));
+            await vi.waitFor(() => expect(messages).toHaveLength(2));
+            expect(socket.sent).toHaveLength(callsBefore);
+        });
+
+        it("still delivers with the number if the lookup fails or times out", async () => {
+            const { socket, messages, clock } = await connected();
+            socket.emit("message", incoming(atStranger));
+            await memberLookupSent(socket);
+            await clock.advance(3000);
+            await vi.waitFor(() => expect(messages).toHaveLength(1));
+            expect(messages[0]?.text).toBe("@1507524536 在吗");
+        });
+
+        it("keeps later messages behind the one being looked up", async () => {
+            const { socket, messages } = await connected();
+            socket.emit("message", incoming(atStranger));
+            socket.emit("message", incoming([text("second")], { message_id: 56 }));
+            await memberLookupSent(socket);
+            expect(messages).toHaveLength(0);
+            socket.reply({ card: "土豆" });
+            await vi.waitFor(() => expect(messages.map((message) => message.text)).toEqual(["@土豆 在吗", "second"]));
+        });
+
+        it("doesn't look up @all, itself, or someone QQ already named", async () => {
+            const { socket, messages } = await connected();
+            const callsBefore = socket.sent.length;
+            const segments = [
+                { type: "at", data: { qq: "all" } },
+                { type: "at", data: { qq: "999" } },
+                { type: "at", data: { qq: "43", name: "carol" } },
+            ];
+            socket.emit("message", incoming(segments));
+            expect(messages).toHaveLength(1);
+            expect(socket.sent).toHaveLength(callsBefore);
+        });
+
+        it("makes no lookups for history replayed after being offline", async () => {
+            const { socket, messages } = await connected();
+            const callsBefore = socket.sent.length;
+            socket.emit("message", incoming(atStranger, { time: NOW / 1000 - 600 }));
+            expect(messages[0]?.isBacklog).toBe(true);
+            expect(socket.sent).toHaveLength(callsBefore);
+        });
+
+        it("limits how many members one message can look up", async () => {
+            const { socket } = await connected();
+            const callsBefore = socket.sent.length;
+            socket.emit("message", incoming(Array.from({ length: 20 }, (_, i) => ({ type: "at", data: { qq: String(5000 + i) } }))));
+            await memberLookupSent(socket);
+            expect(socket.sent.length - callsBefore).toBe(5);
+        });
     });
 
     const quoteSegment = { type: "reply", data: { id: "55" } };
