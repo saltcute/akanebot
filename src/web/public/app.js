@@ -406,7 +406,7 @@ function renderForward(lines, path, topLevel = false) {
         },
         el("summary", {}, `Forwarded, ${count(lines.length, "message", "messages")}`),
         topLevel
-            ? el("p", { className: "meta" }, "Names are only what the forward claims. She skims this, and doesn't open forwards inside it.")
+            ? el("p", { className: "meta" }, "Names are only what the forward claims. She only skims this, so she may not have reached the end.")
             : undefined,
         lines.map((line, index) =>
             el(

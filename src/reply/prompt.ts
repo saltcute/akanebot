@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChatMessage, GroupEvent, Platform } from "../adapters/types.ts";
+import type { ChatMessage, ForwardedLine, GroupEvent, Platform } from "../adapters/types.ts";
 import type { Competence } from "../gate/competence.ts";
 import type { GateFeatures } from "../gate/features.ts";
 import { FROM_ANOTHER_GROUP } from "../memory/recall.ts";
@@ -92,8 +92,17 @@ function renderReplyContext({ replyToMessageId, replyTo }: ChatMessage, persona:
 /** One opaque quote however many messages it holds, skimmed like anything else long, so a forward can't pose as chat lines. */
 function renderForwarded({ forwarded }: ChatMessage, persona: Persona): string {
     if (!forwarded?.length) return "";
-    const log = forwarded.map(({ by, text }) => (by === undefined ? text : `${sanitizeName(by)}: ${text}`)).join("\n");
-    return ` (forwarded: "${skim(log, persona.maxCharsRead).replace(/[<>"]/g, " ")}")`;
+    return ` (forwarded: "${skim(forwardLog(forwarded), persona.maxCharsRead).replace(/[<>"]/g, " ")}")`;
+}
+
+/** A forward inside a forward follows the line that carried it. */
+function forwardLog(lines: readonly ForwardedLine[]): string {
+    return lines
+        .flatMap(({ by, text, forwarded }) => [
+            by === undefined ? text : `${sanitizeName(by)}: ${text}`,
+            ...(forwarded?.length ? [forwardLog(forwarded)] : []),
+        ])
+        .join("\n");
 }
 
 export function renderReactions(reactions: ChatMessage["reactions"]): string {

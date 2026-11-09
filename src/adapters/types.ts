@@ -58,7 +58,7 @@ export type ForwardedLine = {
     by?: string | undefined;
     byUser?: string | undefined;
     text: string;
-    /** A forward inside this one. Only the operator sees these: she gets the placeholder in `text`. */
+    /** A forward inside this one. `text` holds its placeholder. */
     forwarded?: readonly ForwardedLine[];
 };
 

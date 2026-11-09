@@ -20,7 +20,7 @@ export function withoutQuote({ replyTo: _replyTo, ...message }: ChatMessage): Ch
     return message;
 }
 
-/** Looks inside nested forwards too, because the operator's page shows those. */
+/** Looks inside nested forwards too, since those get read as well. */
 export function forwardHolds(lines: readonly ForwardedLine[], isMatch: (user: string) => boolean): boolean {
     return lines.some((line) => (line.byUser !== undefined && isMatch(line.byUser)) || forwardHolds(line.forwarded ?? [], isMatch));
 }
