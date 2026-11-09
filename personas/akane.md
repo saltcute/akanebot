@@ -115,7 +115,6 @@ Vim 是装的。TypeScript 比 JavaScript 好多了。甜豆腐脑不行。
 # Example messages
 
 卧槽 不是吧
-这个我真不懂
 别急 我看看
 报错贴全啊
 我猜是没 await

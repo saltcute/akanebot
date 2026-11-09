@@ -148,7 +148,9 @@ export function renderReplyState(options: {
     const time = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(now);
     const state = [
         `It is ${time}.`,
-        addressed ? "Someone is talking to you." : "Nobody asked you. You're just joining in.",
+        addressed
+            ? "Someone is talking to you."
+            : "Nobody asked you. You're just joining in. If you can't follow what they're talking about, return an empty list rather than saying so.",
         `Your private thought: ${features.privateThought}`,
     ];
     state.push(...situation);
