@@ -11,16 +11,19 @@ import {
     MessageReferenceType,
     type MessageSnapshot,
     MessageType,
+    type PartialMessage,
     Partials,
     type User,
 } from "discord.js";
 import type {
     Adapter,
     ChannelRef,
+    ChatImage,
     ChatMessage,
     ForwardedLine,
     GroupEvent,
     GroupEventKind,
+    LateImages,
     OutgoingImage,
     OutgoingMention,
     QuotedMessage,
@@ -31,6 +34,9 @@ import type {
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
+/** What the GIF picker posts: only a link, which Discord plays by itself. */
+const GIF_LINK =
+    /^https:\/\/(?:(?:www\.)?tenor\.com\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?view\/|media\d*\.tenor\.com\/|(?:www\.)?giphy\.com\/gifs\/|media\d*\.giphy\.com\/)\S+$/;
 
 function isDescribableImage(contentType: string | null, size: number): boolean {
     return Boolean(contentType?.startsWith("image/")) && size <= MAX_DESCRIBABLE_IMAGE_BYTES;
@@ -55,12 +61,24 @@ function describableImages(message: Pick<Message, "attachments">): { url: string
     return message.attachments.filter((attachment) => isDescribableImage(attachment.contentType, attachment.size)).map(({ url }) => ({ url }));
 }
 
+function isGifLink(message: Pick<Message, "cleanContent" | "attachments" | "stickers">): boolean {
+    return GIF_LINK.test(message.cleanContent.trim()) && mediaPlaceholders(message).length === 0;
+}
+
+/** Undefined until Discord has fetched the preview, which is often a moment after the message arrives. */
+function gifLinkImage(message: Message): ChatImage | undefined {
+    if (!isGifLink(message)) return undefined;
+    const preview = message.embeds.find((embed) => embed.thumbnail)?.thumbnail;
+    return preview ? { url: preview.proxyURL ?? preview.url, link: message.cleanContent.trim() } : undefined;
+}
+
 /** A forward's own text is empty. An `[image]` is left for the captioner, which writes into a message's own text. */
 function readableText(message: Message): string {
     if (isForward(message)) {
         const snapshot = forwardSnapshot(message);
         return snapshot && describableImages(snapshot).length > 0 ? "[forwarded messages] [image]" : "[forwarded messages]";
     }
+    if (isGifLink(message)) return "[image]";
     return [message.cleanContent, ...mediaPlaceholders(message)].filter(Boolean).join(" ");
 }
 
@@ -101,7 +119,8 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
     if (text === "") return undefined;
 
     const snapshot = forwardSnapshot(message);
-    const images = describableImages(snapshot ?? message);
+    const gif = snapshot ? undefined : gifLinkImage(message);
+    const images = gif ? [gif] : describableImages(snapshot ?? message);
     const forwarded = forwardedLines(message);
     // A forward points at its source through the same field as a reply, but it isn't answering anything.
     const repliedToId = isForward(message) ? undefined : message.reference?.messageId;
@@ -133,6 +152,13 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
         // The gateway only delivers live events and never replays history after a reconnect.
         isBacklog: false,
     };
+}
+
+/** A GIF's preview usually turns up as an edit. Returns undefined for every other kind of edit. */
+export function toLateImages(message: Message | PartialMessage, selfId: string): LateImages | undefined {
+    if (message.partial || message.author.id === selfId) return undefined;
+    const gif = gifLinkImage(message);
+    return gif ? { platform: "discord", channelId: message.channelId, messageId: message.id, images: [gif] } : undefined;
 }
 
 /** Works on partial objects: a reaction may be on a message the client has never cached. */
@@ -239,6 +265,7 @@ export class DiscordAdapter implements Adapter {
         onMessage: (message: ChatMessage) => void,
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
+        onLateImages?: (event: LateImages) => void,
     ): Promise<void> {
         const client = this.#client;
         const handleReaction = async (
@@ -267,6 +294,15 @@ export class DiscordAdapter implements Adapter {
                 if (event) onGroupEvent?.(event);
                 const mapped = selfId ? toChatMessage(message, selfId) : undefined;
                 if (mapped) onMessage(mapped);
+            } catch (error) {
+                this.#onStatus("message_failed", String(error));
+            }
+        });
+        client.on(Events.MessageUpdate, (_old, updated) => {
+            try {
+                const selfId = client.user?.id;
+                const event = selfId ? toLateImages(updated as Message | PartialMessage, selfId) : undefined;
+                if (event) onLateImages?.(event);
             } catch (error) {
                 this.#onStatus("message_failed", String(error));
             }

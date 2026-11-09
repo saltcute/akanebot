@@ -114,7 +114,7 @@ switch (command) {
     case "images":
         for (const image of store.savedImages()) {
             console.log(
-                `#${image.id} ${image.mime} ${image.size} bytes, sent ${image.timesSent}x, from ${image.userKey} in ${image.scope}\n    ${image.useFor}: ${image.description}`,
+                `#${image.id} ${image.link ?? `${image.mime} ${image.size} bytes`}, sent ${image.timesSent}x, from ${image.userKey} in ${image.scope}\n    ${image.useFor}: ${image.description}`,
             );
         }
         break;

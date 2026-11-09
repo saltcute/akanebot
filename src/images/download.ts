@@ -5,6 +5,7 @@ import type { Clock } from "../lib/clock.ts";
 /** The adapters already refuse to describe anything larger. */
 export const MAX_IMAGE_BYTES = 5_000_000;
 const DOWNLOAD_TIMEOUT_MS = 20_000;
+const LINK_MIME = "text/uri-list";
 /** Links come from the platform, but the bot itself fetches them, so they may only point at where that platform keeps pictures. The simulator's are typed by the operator. */
 const IMAGE_HOSTS: Readonly<Record<Platform, readonly string[] | undefined>> = {
     discord: ["cdn.discordapp.com", "media.discordapp.net"],
@@ -13,7 +14,7 @@ const IMAGE_HOSTS: Readonly<Record<Platform, readonly string[] | undefined>> = {
 };
 
 export type ImageFetcher = (url: string, maxBytes: number, signal: AbortSignal) => Promise<Uint8Array>;
-export type DownloadResult = { kind: "ok"; bytes: Uint8Array; mime: string; sha256: string } | { kind: "failed"; reason: string };
+export type DownloadResult = { kind: "ok"; bytes: Uint8Array; mime: string; sha256: string; link?: string } | { kind: "failed"; reason: string };
 
 /** Counts while reading, because a platform's stated size is only a claim. A redirect could lead anywhere, so it fails instead. */
 export const fetchOverHttp: ImageFetcher = async (url, maxBytes, signal) => {
@@ -49,6 +50,11 @@ export function sniffImageType(bytes: Uint8Array): string | undefined {
     if (starts(0x47, 0x49, 0x46, 0x38)) return "image/gif";
     if (starts(0x52, 0x49, 0x46, 0x46) && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
     return undefined;
+}
+
+/** For a GIF that only exists as a link. Nothing is fetched, and posting the link again is what shares it. */
+export function linkedImage(link: string): DownloadResult {
+    return { kind: "ok", bytes: new Uint8Array(), mime: LINK_MIME, sha256: createHash("sha256").update(link).digest("hex"), link };
 }
 
 export async function downloadImage(fetchImage: ImageFetcher, platform: Platform, url: string, clock: Clock): Promise<DownloadResult> {

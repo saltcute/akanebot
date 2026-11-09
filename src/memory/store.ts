@@ -88,10 +88,18 @@ export type SavedImageDraft = {
     embedding: Float32Array | undefined;
     embeddingModel: string | null;
     savedAt: number;
+    /** Set when the picture is only a link, as Discord's GIF picker posts them. `bytes` is then empty. */
+    link?: string | undefined;
 };
 
 /** A saved picture without its bytes, which are only loaded to send it. */
-export type SavedImage = Omit<SavedImageDraft, "bytes" | "sha256"> & { id: number; size: number; lastSentAt: number | null; timesSent: number };
+export type SavedImage = Omit<SavedImageDraft, "bytes" | "sha256" | "link"> & {
+    link: string | null;
+    id: number;
+    size: number;
+    lastSentAt: number | null;
+    timesSent: number;
+};
 
 export type MemoryStats = { active: number; archived: number; replaced: number; unindexed: number; messages: number };
 
@@ -162,7 +170,7 @@ CREATE TABLE IF NOT EXISTS relationships (
 CREATE TABLE IF NOT EXISTS savedImages (
     id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL,
     mime TEXT NOT NULL, bytes BLOB NOT NULL, description TEXT NOT NULL, useFor TEXT NOT NULL, appeal REAL NOT NULL,
-    embedding BLOB, embeddingModel TEXT, savedAt INTEGER NOT NULL, lastSentAt INTEGER, timesSent INTEGER NOT NULL DEFAULT 0
+    embedding BLOB, embeddingModel TEXT, savedAt INTEGER NOT NULL, lastSentAt INTEGER, timesSent INTEGER NOT NULL DEFAULT 0, link TEXT
 );
 CREATE INDEX IF NOT EXISTS savedImagesUser ON savedImages (userKey, savedAt);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -208,6 +216,8 @@ export class MemoryStore {
         // Everything remembered before sharing existed stays in its own group.
         const memoryColumns = this.#all<{ name: string }>("PRAGMA table_info(memories)").map((column) => column.name);
         if (!memoryColumns.includes("reach")) this.#db.exec("ALTER TABLE memories ADD COLUMN reach TEXT NOT NULL DEFAULT 'group'");
+        const imageColumns = this.#all<{ name: string }>("PRAGMA table_info(savedImages)").map((column) => column.name);
+        if (!imageColumns.includes("link")) this.#db.exec("ALTER TABLE savedImages ADD COLUMN link TEXT");
     }
 
     setReactions(channel: string, messageId: string, reactions: readonly MessageReaction[]): void {
@@ -601,8 +611,8 @@ export class MemoryStore {
     /** Undefined if she already has this exact picture. */
     saveImage(draft: SavedImageDraft): number | undefined {
         const result = this.#run(
-            `INSERT OR IGNORE INTO savedImages (sha256, scope, messageId, userKey, mime, bytes, description, useFor, appeal, embedding, embeddingModel, savedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT OR IGNORE INTO savedImages (sha256, scope, messageId, userKey, mime, bytes, description, useFor, appeal, embedding, embeddingModel, savedAt, link)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             draft.sha256,
             draft.scope,
             draft.messageId,
@@ -615,6 +625,7 @@ export class MemoryStore {
             toBlob(draft.embedding),
             draft.embedding ? draft.embeddingModel : null,
             draft.savedAt,
+            draft.link ?? null,
         );
         return result.changes === 0 ? undefined : Number(result.lastInsertRowid);
     }
@@ -622,14 +633,14 @@ export class MemoryStore {
     /** Everything she has saved, with no image data. */
     savedImages(): SavedImage[] {
         return this.#all<SavedImageRow>(
-            `SELECT id, scope, messageId, userKey, mime, length(bytes) AS size, description, useFor, appeal, embedding, embeddingModel, savedAt, lastSentAt, timesSent
+            `SELECT id, scope, messageId, userKey, mime, length(bytes) AS size, description, useFor, appeal, embedding, embeddingModel, savedAt, lastSentAt, timesSent, link
              FROM savedImages ORDER BY id`,
         ).map((row) => ({ ...row, embedding: toEmbedding(row.embedding) }));
     }
 
     /** Undefined if it's been forgotten since she thought of it. */
-    savedImageContent(id: number): { bytes: Uint8Array; mime: string } | undefined {
-        return this.#all<{ bytes: Uint8Array; mime: string }>("SELECT bytes, mime FROM savedImages WHERE id = ?", id)[0];
+    savedImageContent(id: number): { bytes: Uint8Array; mime: string; link: string | null } | undefined {
+        return this.#all<{ bytes: Uint8Array; mime: string; link: string | null }>("SELECT bytes, mime, link FROM savedImages WHERE id = ?", id)[0];
     }
 
     /** How many of these accounts' pictures she has kept since then. */

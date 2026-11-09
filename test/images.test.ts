@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { People } from "../src/control/people.ts";
 import { downloadImage, type ImageFetcher, isImageSource, MAX_IMAGE_BYTES, sniffImageType } from "../src/images/download.ts";
+import { canUseHere } from "../src/images/offer.ts";
 import { ManualClock } from "../src/lib/clock.ts";
+import type { SavedImage } from "../src/memory/store.ts";
 import { MemoryStore, type SavedImageDraft } from "../src/memory/store.ts";
 
 function draft(overrides: Partial<SavedImageDraft> = {}): SavedImageDraft {
@@ -65,6 +67,21 @@ describe("saved images in the store", () => {
         store.noteImageSent(used, 2000);
         expect(store.trimSavedImages(2)).toBe(1);
         expect(store.savedImages().map((image) => image.appeal)).toEqual([0.1, 0.9]);
+    });
+});
+
+describe("where a picture can go", () => {
+    const image = (overrides: Partial<SavedImage>) => ({ scope: "discord:a", link: null, ...overrides }) as SavedImage;
+    const sharing = new Set(["discord:a", "discord:b", "qq:c"]);
+
+    it("sends a saved file to any group sharing memories", () => {
+        expect(canUseHere(image({}), "qq:c", sharing)).toBe(true);
+    });
+
+    it("keeps a GIF link off QQ, where it would be a bare URL", () => {
+        const gif = image({ link: "https://tenor.com/view/a" });
+        expect(canUseHere(gif, "discord:b", sharing)).toBe(true);
+        expect(canUseHere(gif, "qq:c", sharing)).toBe(false);
     });
 });
 

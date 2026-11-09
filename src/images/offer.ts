@@ -7,8 +7,9 @@ const MAX_OFFERED = 5;
 
 export type OfferedImage = SavedImage & { number: number };
 
-/** A wall between groups covers her pictures as it does her memories. */
+/** A wall between groups covers her pictures as it does her memories. QQ doesn't play GIF links, so one saved as a link stays off it. */
 export function canUseHere(image: SavedImage, channel: string, sharing: ReadonlySet<string>): boolean {
+    if (image.link !== null && channel.startsWith("qq:")) return false;
     return image.scope === channel || (sharing.has(image.scope) && sharing.has(channel));
 }
 

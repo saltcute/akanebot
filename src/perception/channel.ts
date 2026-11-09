@@ -76,6 +76,12 @@ export class ChannelPerception {
         for (const entry of this.#window) if (entry.message.messageId === messageId) entry.message = { ...entry.message, text };
     }
 
+    /** For a picture the platform only worked out after delivering the message. */
+    addImages(messageId: string, images: ChatMessage["images"]): void {
+        for (const entry of this.#window)
+            if (entry.message.messageId === messageId) entry.message = { ...entry.message, ...(images ? { images } : {}) };
+    }
+
     purge(shouldRemove: (message: ChatMessage) => boolean): void {
         this.#window = this.#window.filter((entry) => !shouldRemove(entry.message));
     }

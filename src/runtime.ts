@@ -1,4 +1,14 @@
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, QuotedMessage, ReactionEvent } from "./adapters/types.ts";
+import type {
+    Adapter,
+    ChannelRef,
+    ChatImage,
+    ChatMessage,
+    GroupEvent,
+    LateImages,
+    Platform,
+    QuotedMessage,
+    ReactionEvent,
+} from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
 import { type DayState, dayState } from "./body/life.ts";
@@ -20,7 +30,7 @@ import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
 import { allAimedElsewhere, decideToRepeat, decideToSpeak, overruleMisaddress } from "./gate/policy.ts";
 import { findRepeatChain } from "./gate/repeat.ts";
-import { downloadImage, type ImageFetcher } from "./images/download.ts";
+import { type DownloadResult, downloadImage, type ImageFetcher, linkedImage } from "./images/download.ts";
 import { judgeImage } from "./images/keep.ts";
 import { flattenCaption, type ImageLook, imageLookSchema, LOOK_REQUEST, renderVisionInstructions } from "./images/look.ts";
 import { canUseHere, chooseOffers, type OfferedImage } from "./images/offer.ts";
@@ -86,7 +96,7 @@ export type RuntimeOptions = {
     search?: SearchBackend;
     /** Which accounts are the same person. */
     people?: People;
-    /** Without it she can't download pictures, so she doesn't collect any. */
+    /** Without it she can't download pictures, so she only collects ones that are just links. */
     fetchImage?: ImageFetcher;
 };
 
@@ -178,7 +188,7 @@ const KILL_REASON = "kill";
 const ROUTINE_REASON = "routine";
 
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
-type LookedAt = { message: ChatMessage; url: string; look: ImageLook };
+type LookedAt = { message: ChatMessage; image: ChatImage; look: ImageLook };
 
 const GATE_MAX_OUTPUT = 600;
 const REPLY_MAX_OUTPUT = 2000;
@@ -303,6 +313,7 @@ export class Runtime {
                     (message) => this.#onMessage(message),
                     (event) => this.#onReaction(event),
                     (event) => this.#onGroupEvent(event),
+                    (event) => this.#onLateImages(event),
                 ),
             ),
         );
@@ -689,6 +700,11 @@ export class Runtime {
         });
     }
 
+    /** Only ever fills in a message she can already see, so anyone opted out stays out. */
+    #onLateImages(event: LateImages): void {
+        this.#channels.get(channelKey(event))?.perception.addImages(event.messageId, event.images);
+    }
+
     /** Also only context, kept to the live window: it never wakes the agent or becomes a memory. */
     #onGroupEvent(event: GroupEvent): void {
         const key = channelKey(event);
@@ -974,7 +990,9 @@ export class Runtime {
             trace.record("reply.abandoned", { channel: key, detail: { overtakenBy: overtakenBy.length } });
             return;
         }
-        const outcome = await this.guard.sendImage(channel.adapter, channel.ref, content, picked.description, { signal: lease.signal });
+        const outcome = content.link
+            ? await this.guard.send(channel.adapter, channel.ref, content.link, { signal: lease.signal })
+            : await this.guard.sendImage(channel.adapter, channel.ref, content, picked.description, { signal: lease.signal });
         if (outcome.kind === "blocked" && outcome.reason === "shadow") {
             perception.settle(seenSeq);
             this.vitals.spend(1);
@@ -1056,7 +1074,7 @@ export class Runtime {
             this.memory.store.updateText(key, message.messageId, text);
             looked.push({
                 message,
-                url: image.url,
+                image,
                 look: { ...result.data, description: caption, useFor: flattenCaption(result.data.useFor, MAX_USE_FOR_CHARS) },
             });
         }
@@ -1065,17 +1083,22 @@ export class Runtime {
 
     /** Runs once she has really read them, so a picture that was only glanced at before a failure is never kept. */
     #considerKeeping(key: string, looked: readonly LookedAt[]): void {
-        const { fetchImage, trace } = this.#options;
-        if (!fetchImage) return;
-        for (const { message, url, look } of looked) {
+        const { trace } = this.#options;
+        for (const { message, image, look } of looked) {
             const verdict = judgeImage(look, message, this.#persona.savedImages.pickiness);
             trace.record("image.judged", { channel: key, messageId: message.messageId, detail: { verdict, appeal: look.appeal } });
             // In the background, so saving a picture never holds up reading the chat.
-            if (verdict === "keep") this.#inBackground(this.#keepImage(key, message, url, look, fetchImage));
+            if (verdict === "keep") this.#inBackground(this.#keepImage(key, message, image, look));
         }
     }
 
-    async #keepImage(key: string, message: ChatMessage, url: string, look: ImageLook, fetchImage: ImageFetcher): Promise<void> {
+    #fetchToKeep(platform: Platform, image: ChatImage): DownloadResult | Promise<DownloadResult> {
+        if (image.link !== undefined) return linkedImage(image.link);
+        const { fetchImage, clock } = this.#options;
+        return fetchImage ? downloadImage(fetchImage, platform, image.url, clock) : { kind: "failed", reason: "downloads_off" };
+    }
+
+    async #keepImage(key: string, message: ChatMessage, image: ChatImage, look: ImageLook): Promise<void> {
         const { clock, trace, embedder } = this.#options;
         const { store } = this.memory;
         const user = userKey(message);
@@ -1084,7 +1107,7 @@ export class Runtime {
             trace.record("image.skipped", { ...idFields, detail: { reason: "daily_quota" } });
             return;
         }
-        const download = await downloadImage(fetchImage, message.platform, url, clock);
+        const download = await this.#fetchToKeep(message.platform, image);
         if (download.kind === "failed") {
             trace.record("image.skipped", { ...idFields, detail: { reason: download.reason } });
             return;
@@ -1109,6 +1132,7 @@ export class Runtime {
             embedding,
             embeddingModel: embedding ? embedder.modelId : null,
             savedAt: clock.now(),
+            link: download.link,
         });
         const trimmed = store.trimSavedImages(this.#persona.savedImages.maxKept);
         trace.record("image.saved", { ...idFields, detail: { id, mime: download.mime, size: download.bytes.length, trimmed } });

@@ -1530,6 +1530,27 @@ describe("senses", () => {
                 expect(trace.ofKind("image.judged")[0]?.detail).toMatchObject({ verdict });
             });
 
+            it("keeps a GIF that's only a link as that link, without downloading anything", async () => {
+                const gif = "https://tenor.com/view/cat-gif-1";
+                const refuses: ImageFetcher = async () => {
+                    throw new Error("should not download");
+                };
+                const { adapter, memoryStore, settle } = await setup({ vision: liked, fetchImage: refuses });
+                adapter.say("alice", `[gif:${gif}]`);
+                await settle();
+                expect(memoryStore.savedImages()).toMatchObject([{ link: gif, size: 0, useFor: "无语" }]);
+            });
+
+            it("looks at a picture that only turned up after the message did", async () => {
+                const gif = "https://tenor.com/view/cat-gif-1";
+                const { adapter, memoryStore, vision, settle } = await setup({ vision: liked });
+                const id = adapter.say("alice", "[image]");
+                adapter.lateImages(id, [{ url, link: gif }]);
+                await settle();
+                expect(vision.calls[0]?.images).toEqual([{ url, link: gif }]);
+                expect(memoryStore.savedImages()).toMatchObject([{ link: gif }]);
+            });
+
             it("drops a picture if its poster opts out while it's still downloading", async () => {
                 let say: (text: string) => void = () => {};
                 const optingOut: ImageFetcher = async () => {
@@ -1623,6 +1644,25 @@ describe("senses", () => {
                 adapter.say("alice", "?");
                 await settle();
                 expect(reply.calls[1]?.transcript).toContain("[sent a picture: 猫猫瞪眼]");
+            });
+
+            it("posts a saved GIF link as plain text, so the platform plays it", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const link = "https://tenor.com/view/cat-gif-1";
+                memoryStore.saveImage(saved({ bytes: new Uint8Array(), mime: "text/uri-list", link }));
+                const { adapter, reply, settle } = await setup({
+                    memoryStore,
+                    persona: inMind,
+                    reply: () => JSON.stringify({ messages: [], image: 1 }),
+                });
+                adapter.say("alice", "我又挂科了");
+                await settle();
+                expect(adapter.sent.map((s) => s.text)).toEqual([link]);
+                expect(adapter.sentImages).toEqual([]);
+                adapter.say("alice", "?");
+                await settle();
+                expect(reply.calls[1]?.transcript).toContain("[sent a picture: 猫猫瞪眼]");
+                expect(reply.calls[1]?.transcript).not.toContain(link);
             });
 
             it("ignores a number it wasn't offered", async () => {

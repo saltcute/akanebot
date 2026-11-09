@@ -55,12 +55,18 @@ export type QuotedMessage = { messageId: string; by: string; byUser: string; tex
 /** One message inside a forward. `by` and `byUser` are only what the forward claims, because QQ lets people forge them, and Discord doesn't say. */
 export type ForwardedLine = { by?: string | undefined; byUser?: string | undefined; text: string };
 
+/** `url` is what to look at. `link` is set when posting this link again is how to share the picture, because there's no file to keep. */
+export type ChatImage = { url: string; link?: string };
+
+/** A picture the platform only worked out after delivering the message. */
+export type LateImages = ChannelRef & { messageId: string; images: readonly ChatImage[] };
+
 export type ChatMessage = ChannelRef & {
     messageId: string;
     sender: Sender;
     text: string;
     /** Pictures attached to this message. Described only if the agent actually reads it. */
-    images?: readonly { url: string }[];
+    images?: readonly ChatImage[];
     /** Emoji reactions other people have put on this message. */
     reactions?: readonly MessageReaction[];
     sentAt: number;
@@ -99,6 +105,7 @@ export interface Adapter {
         onMessage: (message: ChatMessage) => void,
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
+        onLateImages?: (event: LateImages) => void,
     ): Promise<void>;
     stop(): Promise<void>;
     send(channel: ChannelRef, text: string, options?: SendOptions): Promise<{ messageId: string }>;

@@ -5,6 +5,7 @@ import type {
     ChatMessage,
     ForwardedLine,
     GroupEvent,
+    LateImages,
     OutgoingImage,
     QuotedMessage,
     ReactionEvent,
@@ -30,6 +31,7 @@ export class CliAdapter implements Adapter {
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #onReaction: ((event: ReactionEvent) => void) | undefined;
     #onGroupEvent: ((event: GroupEvent) => void) | undefined;
+    #onLateImages: ((event: LateImages) => void) | undefined;
     #nextId = 1;
 
     constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void; idPrefix?: string }) {
@@ -44,10 +46,12 @@ export class CliAdapter implements Adapter {
         onMessage: (message: ChatMessage) => void,
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
+        onLateImages?: (event: LateImages) => void,
     ): Promise<void> {
         this.#onMessage = onMessage;
         this.#onReaction = onReaction;
         this.#onGroupEvent = onGroupEvent;
+        this.#onLateImages = onLateImages;
     }
 
     async stop(): Promise<void> {
@@ -57,9 +61,12 @@ export class CliAdapter implements Adapter {
     /** Someone in the simulated group says something. Returns the new message's ID. */
     say(speaker: string, rawText: string, channelId = "group", replyTo?: QuotedMessage, forwarded?: readonly ForwardedLine[]): string {
         const messageId = `${this.#idPrefix}m${this.#nextId++}`;
-        // "[img:https://...]" stands in for attaching a picture.
-        const images = [...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : []));
-        const text = rawText.replace(/\[img:\S+?\]/g, "[image]");
+        // "[img:https://...]" stands in for attaching a picture, and "[gif:https://...]" for a GIF that's only a link.
+        const images = [
+            ...[...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : [])),
+            ...[...rawText.matchAll(/\[gif:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1], link: match[1] }] : [])),
+        ];
+        const text = rawText.replace(/\[(?:img|gif):\S+?\]/g, "[image]");
         const mentioned = [...text.matchAll(MENTION_TOKEN)].flatMap((match) => (match[1] ? [match[1]] : []));
         const mentionsSelf = mentioned.some((name) => this.#ownNames.has(name.toLowerCase()));
         const mentions = mentioned.filter((name) => !this.#ownNames.has(name.toLowerCase()));
@@ -80,6 +87,11 @@ export class CliAdapter implements Adapter {
             isBacklog: false,
         });
         return messageId;
+    }
+
+    /** The platform works out a message's picture after delivering it. */
+    lateImages(messageId: string, images: LateImages["images"], channelId = "group"): void {
+        this.#onLateImages?.({ platform: this.platform, channelId, messageId, images });
     }
 
     /** Someone in the simulated group reacts to a message. */

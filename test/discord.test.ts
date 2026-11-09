@@ -11,7 +11,15 @@ import {
     type User,
 } from "discord.js";
 import { describe, expect, it } from "vitest";
-import { createDiscordClient, DiscordAdapter, readAuditEntry, toChatMessage, toReactionEvent, toSystemGroupEvent } from "../src/adapters/discord.ts";
+import {
+    createDiscordClient,
+    DiscordAdapter,
+    readAuditEntry,
+    toChatMessage,
+    toLateImages,
+    toReactionEvent,
+    toSystemGroupEvent,
+} from "../src/adapters/discord.ts";
 
 const SELF = "999";
 
@@ -28,6 +36,7 @@ function discordMessage(overrides: Record<string, unknown> = {}): Message {
         cleanContent: "hello",
         attachments: collection([]),
         stickers: collection([]),
+        embeds: [],
         createdTimestamp: 1234,
         author: { id: "u1", bot: false, displayName: "global name" },
         member: { displayName: "server nick" },
@@ -46,6 +55,49 @@ function forwardOf(snapshot: Record<string, unknown>, overrides: Record<string, 
         ...overrides,
     });
 }
+
+describe("GIFs posted as links", () => {
+    const link = "https://tenor.com/view/cat-stare-gif-12345";
+    // biome-ignore lint/style/useNamingConvention: this is discord.js's name for it
+    const embeds = [{ thumbnail: { url: "https://media.tenor.com/a.png", proxyURL: "https://images-ext-1.discordapp.net/a.png" } }];
+
+    it("reads a bare GIF link as a picture, keeping the link to post again", () => {
+        expect(toChatMessage(discordMessage({ cleanContent: link, embeds }), SELF)).toMatchObject({
+            text: "[image]",
+            images: [{ url: "https://images-ext-1.discordapp.net/a.png", link }],
+        });
+    });
+
+    it("has no picture to look at until Discord adds the preview", () => {
+        const mapped = toChatMessage(discordMessage({ cleanContent: link }), SELF);
+        expect(mapped?.text).toBe("[image]");
+        expect(mapped?.images).toBeUndefined();
+    });
+
+    it("picks up the preview when it arrives as an edit", () => {
+        expect(toLateImages(discordMessage({ cleanContent: link, embeds, partial: false }), SELF)).toEqual({
+            platform: "discord",
+            channelId: "c1",
+            messageId: "m1",
+            images: [{ url: "https://images-ext-1.discordapp.net/a.png", link }],
+        });
+    });
+
+    it("ignores other edits and its own links", () => {
+        expect(toLateImages(discordMessage({ cleanContent: "edited", partial: false }), SELF)).toBeUndefined();
+        const own = { cleanContent: link, embeds, partial: false, author: { id: SELF, bot: true, displayName: "me" } };
+        expect(toLateImages(discordMessage(own), SELF)).toBeUndefined();
+    });
+
+    it.each([`看这个 ${link}`, "https://example.com/view/cat-gif-1", "https://tenor.com.evil.example/view/a"])(
+        "leaves %s as ordinary text",
+        (cleanContent) => {
+            const mapped = toChatMessage(discordMessage({ cleanContent, embeds }), SELF);
+            expect(mapped?.text).toBe(cleanContent);
+            expect(mapped?.images).toBeUndefined();
+        },
+    );
+});
 
 describe("forwarded messages", () => {
     it("reads what was forwarded without treating it as the sender's words", () => {
