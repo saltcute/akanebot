@@ -1,4 +1,4 @@
-import { act, api, BODY_STATES, count, el, formatTime, pill } from "./ui.js";
+import { act, api, BODY_STATES, count, el, formatTime, minutesLeft, pill } from "./ui.js";
 
 const ACTIVITIES = { asleep: "Asleep", busy: "Busy with her day", free: "Free" };
 
@@ -29,7 +29,7 @@ function moodWord(mood) {
 /** In whole minutes, so the page only redraws when this text changes. */
 function phoneCheckWait() {
     if (body?.nextPhoneCheckInMs === undefined) return undefined;
-    const minutes = Math.ceil(body.nextPhoneCheckInMs / 60_000);
+    const minutes = minutesLeft(body.nextPhoneCheckInMs);
     return minutes <= 1 ? "Within a minute" : `In about ${minutes} minutes`;
 }
 

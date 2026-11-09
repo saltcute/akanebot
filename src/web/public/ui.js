@@ -96,6 +96,11 @@ export async function act(work, done) {
     }
 }
 
+/** Rounds up, so a wait is never shown as zero. */
+export function minutesLeft(ms) {
+    return Math.ceil(ms / 60_000);
+}
+
 export function formatTime(at) {
     if (at === null || at === undefined) return "";
     const date = new Date(at);

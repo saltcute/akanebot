@@ -776,6 +776,7 @@ describe("living like a person", () => {
             await settle(minute);
             const before = runtime.bodySnapshot().nextPhoneCheckInMs ?? 0;
             expect(before).toBeGreaterThan(0);
+            expect(runtime.status().nextPhoneCheckInMs).toBe(before);
             adapter.say("alice", "@小茜 在吗");
             await settle(0);
             expect(runtime.bodySnapshot().nextPhoneCheckInMs).toBeLessThan(before);

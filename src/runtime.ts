@@ -164,6 +164,8 @@ export type RuntimeStatus = {
     body: BodyState;
     attending: string | undefined;
     awayReasons: readonly string[];
+    /** Undefined unless she is busy and away with a glance at her phone coming up. */
+    nextPhoneCheckInMs: number | undefined;
     battery: number;
     searchesToday: number;
     cost: ReturnType<CostMeter["summary"]>;
@@ -401,6 +403,7 @@ export class Runtime {
             body: this.body.state,
             attending: this.body.attending,
             awayReasons: this.body.awayReasons,
+            nextPhoneCheckInMs: this.#routine?.nextPhoneCheckInMs,
             battery: this.vitals.battery(),
             searchesToday: this.vitals.searchesToday(),
             cost: this.#options.cost.summary(),

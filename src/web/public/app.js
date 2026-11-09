@@ -15,6 +15,7 @@ import {
     el,
     formatTime,
     hooks,
+    minutesLeft,
     openDialog,
     PAGE_SIZE,
     pill,
@@ -171,14 +172,21 @@ function renderTop() {
     );
 }
 
+/** The countdown only says when she's back if the routine is all that keeps her away. */
+function awayDetail(status) {
+    if (status.nextPhoneCheckInMs !== undefined && status.awayReasons.length === 1) return `${minutesLeft(status.nextPhoneCheckInMs)} min`;
+    return status.awayReasons.join(", ");
+}
+
 function renderVitals() {
     const status = ui.status;
     if (!status) return [];
     const { spentTodayUsd, dailyBudgetUsd } = status.cost;
     const body = BODY_STATES[status.body] ?? status.body;
+    const detail = awayDetail(status);
     const stat = (label, value) => el("span", {}, `${label} `, el("b", {}, value));
     return [
-        stat("Now", status.awayReasons.length > 0 ? `${body} (${status.awayReasons.join(", ")})` : body),
+        stat("Now", detail ? `${body} (${detail})` : body),
         stat("Battery", `${Math.round(status.battery * 100)}%`),
         stat("Today", `$${spentTodayUsd.toFixed(2)} / $${dailyBudgetUsd.toFixed(2)}`),
         sendingMode(status),
