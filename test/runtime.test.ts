@@ -1438,6 +1438,23 @@ describe("group events", () => {
         expect(chatLines(reply.calls.at(-1)?.transcript)).toEqual(["carol: 嗯"]);
     });
 
+    it("won't open a forward holding someone who opted out, or keep one they turn up in later", async () => {
+        const { adapter, reply, settle } = await setup({});
+        adapter.say("bob", "/akanebot opt-out");
+        await settle();
+        adapter.say("alice", "[forwarded messages]", "group", undefined, [{ by: "bob", byUser: "cli:bob", text: "秘密一" }]);
+        await settle();
+        expect(chatLines(reply.calls.at(-1)?.transcript).join()).not.toContain("秘密一");
+        adapter.say("alice", "[forwarded messages]", "group", undefined, [{ by: "dan", byUser: "cli:dan", text: "秘密二" }]);
+        await settle();
+        expect(chatLines(reply.calls.at(-1)?.transcript).join()).toContain("秘密二");
+        adapter.say("dan", "/akanebot opt-out");
+        await settle();
+        adapter.say("carol", "嗯");
+        await settle();
+        expect(chatLines(reply.calls.at(-1)?.transcript).join()).not.toContain("秘密二");
+    });
+
     it("forgets events involving someone who opts out later, including a quote of their message", async () => {
         const { adapter, reply, settle } = await setup({});
         const id = adapter.say("bob", "秘密");

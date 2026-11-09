@@ -33,6 +33,17 @@ function setup(windowSize = 3) {
 }
 
 describe("ChannelPerception", () => {
+    it("drops a forward that holds someone forgotten, and keeps the message", () => {
+        const { perception } = setup();
+        perception.ingest(message(1, { forwarded: [{ by: "bob", byUser: "cli:bob", text: "x" }] }));
+        perception.ingest(message(2, { forwarded: [{ text: "y" }] }));
+        perception.purgeQuotesBy("cli:bob");
+        expect(perception.window().map(({ messageId, forwarded }) => [messageId, forwarded])).toEqual([
+            ["m1", undefined],
+            ["m2", [{ text: "y" }]],
+        ]);
+    });
+
     it("waits for quiet before offering", async () => {
         const { clock, offers, perception } = setup();
         perception.ingest(message(1));

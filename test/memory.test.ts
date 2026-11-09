@@ -15,6 +15,7 @@ import type { Embedder } from "../src/llm/embedder.ts";
 import { FakeBackend, type FakeResponder } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 import { consolidate } from "../src/memory/consolidate.ts";
+import { renderNumberedTranscript } from "../src/memory/extract.ts";
 import { canPromote, judgeCandidate, type Participant } from "../src/memory/poison-guards.ts";
 import { renderMemories, retention, selectMemories, tokens } from "../src/memory/recall.ts";
 import { type Memory, type MemoryDraft, MemoryStore } from "../src/memory/store.ts";
@@ -460,6 +461,22 @@ describe("older databases", () => {
         expect(store.recentAttended(SCOPE, 10)[0]).toMatchObject({ text: "旧消息", reactions: [{ emoji: "👍" }] });
         store.close();
         rmSync(directory, { recursive: true });
+    });
+});
+
+describe("forwarded messages", () => {
+    const forwarded = [{ by: "bob", byUser: "cli:bob", text: "我下周搬家" }];
+
+    it("stay out of what memories are extracted from, so nothing gets pinned on the forwarder", () => {
+        const transcript = renderNumberedTranscript([chat("m1", "alice", "[forwarded messages]", { forwarded })], PERSONA);
+        expect(transcript).toContain("alice: [forwarded messages]");
+        expect(transcript).not.toContain("我下周搬家");
+    });
+
+    it("aren't saved, so a restart brings back only the placeholder", () => {
+        const store = new MemoryStore(":memory:");
+        store.logMessage(chat("m1", "alice", "[forwarded messages]", { forwarded }), "cli:alice", true);
+        expect(store.recentAttended("cli:group", 5)[0]).not.toHaveProperty("forwarded");
     });
 });
 

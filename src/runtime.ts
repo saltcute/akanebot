@@ -20,7 +20,7 @@ import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
 import type { MemoryStore } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
-import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutQuote } from "./perception/channel.ts";
+import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutForwarded, withoutQuote } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
@@ -268,8 +268,14 @@ export class Runtime {
             return;
         }
 
-        // The chat app would show them the quote, but an opt-out means she doesn't get to read this person at all.
-        this.#admit(channel, message.replyTo && this.#state.isOptedOut(message.replyTo.byUser) ? withoutQuote(message) : message);
+        this.#admit(channel, this.#withoutOptedOut(message));
+    }
+
+    /** The chat app would show them the quote or the forward, but an opt-out means she doesn't get to read this person at all. */
+    #withoutOptedOut(message: ChatMessage): ChatMessage {
+        const unquoted = message.replyTo && this.#state.isOptedOut(message.replyTo.byUser) ? withoutQuote(message) : message;
+        const forwardsOptedOut = unquoted.forwarded?.some((line) => line.byUser !== undefined && this.#state.isOptedOut(line.byUser));
+        return forwardsOptedOut ? withoutForwarded(unquoted) : unquoted;
     }
 
     /** Coming back works like checking a phone: everything unread gets a look, most important first. */

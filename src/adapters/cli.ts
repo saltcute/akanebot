@@ -1,5 +1,5 @@
 import type { Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, QuotedMessage, ReactionEvent, SendOptions } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, ForwardedLine, GroupEvent, QuotedMessage, ReactionEvent, SendOptions } from "./types.ts";
 
 const SELF_ID = "akanebot";
 /** Platforms mark a mention as one unit, so whole tokens are read here too and `@akane2` isn't `@akane`. */
@@ -44,7 +44,7 @@ export class CliAdapter implements Adapter {
     }
 
     /** Someone in the simulated group says something. Returns the new message's ID. */
-    say(speaker: string, rawText: string, channelId = "group", replyTo?: QuotedMessage): string {
+    say(speaker: string, rawText: string, channelId = "group", replyTo?: QuotedMessage, forwarded?: readonly ForwardedLine[]): string {
         const messageId = `${this.#idPrefix}m${this.#nextId++}`;
         // "[img:https://...]" stands in for attaching a picture.
         const images = [...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : []));
@@ -64,6 +64,7 @@ export class CliAdapter implements Adapter {
             ...(mentions.length > 0 ? { mentions } : {}),
             repliesToSelf: false,
             ...(replyTo ? { replyTo, replyToMessageId: replyTo.messageId } : {}),
+            ...(forwarded ? { forwarded } : {}),
             isSelf: false,
             isBacklog: false,
         });

@@ -52,6 +52,9 @@ export type GroupEvent = ChannelRef & {
 /** The message a reply points at, as the chat app previews it above the reply. `byUser` is who wrote it, as a user key. */
 export type QuotedMessage = { messageId: string; by: string; byUser: string; text: string; isSelf: boolean };
 
+/** One message inside a forward. `by` and `byUser` are only what the forward claims, because QQ lets people forge them, and Discord doesn't say. */
+export type ForwardedLine = { by?: string | undefined; byUser?: string | undefined; text: string };
+
 export type ChatMessage = ChannelRef & {
     messageId: string;
     sender: Sender;
@@ -68,6 +71,8 @@ export type ChatMessage = ChannelRef & {
     replyToMessageId?: string;
     /** Absent on a reply if the platform couldn't say what it was replying to, or that person has been forgotten. */
     replyTo?: QuotedMessage;
+    /** What a forward carried, in the order it was sent. Absent if it couldn't be opened. Never saved, and not the sender's own words. */
+    forwarded?: readonly ForwardedLine[];
     /** The agent's own account sent this. */
     isSelf: boolean;
     /** Delivered as history (for example after a reconnect) rather than live. */

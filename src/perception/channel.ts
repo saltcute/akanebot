@@ -20,6 +20,10 @@ export function withoutQuote({ replyTo: _replyTo, ...message }: ChatMessage): Ch
     return message;
 }
 
+export function withoutForwarded({ forwarded: _forwarded, ...message }: ChatMessage): ChatMessage {
+    return message;
+}
+
 export function isAddressed(message: ChatMessage): boolean {
     return message.mentionsSelf || message.repliesToSelf;
 }
@@ -100,9 +104,12 @@ export class ChannelPerception {
         }
     }
 
-    /** Someone forgotten can't live on in the preview above another person's reply. */
+    /** Someone forgotten can't live on in the preview above another person's reply, or in a log someone forwarded. */
     purgeQuotesBy(user: string): void {
-        for (const entry of this.#window) if (entry.message.replyTo?.byUser === user) entry.message = withoutQuote(entry.message);
+        for (const entry of this.#window) {
+            if (entry.message.replyTo?.byUser === user) entry.message = withoutQuote(entry.message);
+            if (entry.message.forwarded?.some((line) => line.byUser === user)) entry.message = withoutForwarded(entry.message);
+        }
     }
 
     window(): readonly ChatMessage[] {
