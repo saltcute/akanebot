@@ -53,6 +53,8 @@ export const appConfigSchema = z.strictObject({
         statePath: z.string().min(1).default("data/control.json"),
     }),
     dailyBudgetUsd: z.number().positive(),
+    /** A OneBot 11 server such as NapCat, needed for any `qq` group. Its access token, if any, comes from ONEBOT_TOKEN. */
+    qq: z.strictObject({ url: z.string().min(1) }).optional(),
     /** The operator's web UI. The login token comes from GABRIEL_WEB_TOKEN, or is generated at startup. */
     web: z
         .strictObject({

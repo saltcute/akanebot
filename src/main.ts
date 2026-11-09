@@ -1,4 +1,6 @@
 import { DiscordAdapter } from "./adapters/discord.ts";
+import { OneBotAdapter } from "./adapters/onebot.ts";
+import type { Adapter } from "./adapters/types.ts";
 import { printTraceEvent } from "./cli/print-trace.ts";
 import { loadConfig } from "./config.ts";
 import { JsonFileControlStore } from "./control/state.ts";
@@ -28,13 +30,11 @@ const { config, path: configPath } = loadConfig();
 const timezoneOverride = process.env.GABRIEL_TIMEZONE || undefined;
 const persona = loadPersona(config.persona, timezoneOverride);
 
-const token = process.env.DISCORD_TOKEN;
-if (!token) fail("DISCORD_TOKEN is empty. Add your bot token to .env.");
 if (!process.env.ANTHROPIC_API_KEY) fail("ANTHROPIC_API_KEY is empty. Add it to .env.");
 
 const placeholder = /REPLACE_WITH/;
 const groups = config.control.groups.filter((group) => group.disclosed && !placeholder.test(group.channelId));
-if (groups.length === 0) fail(`No groups to join. Put a real Discord channel ID under control.groups in ${configPath}.`);
+if (groups.length === 0) fail(`No groups to join. Put a real channel or group ID under control.groups in ${configPath}.`);
 const admins = config.control.admins.filter((admin) => !placeholder.test(admin));
 
 const clock = new SystemClock();
@@ -47,10 +47,29 @@ const trace = new DecisionTrace(clock, {
 });
 const cost = new CostMeter({ clock, prices: config.prices, dailyBudgetUsd: config.dailyBudgetUsd });
 const llm = new LlmRegistry({ backends: config.backends, roles: config.roles }, BACKEND_FACTORIES, (usage, _role, model) => cost.add(usage, model));
-const adapter = new DiscordAdapter({
-    token,
-    onStatus: (status, detail) => trace.record("alert", { detail: { reason: `discord_${status}`, ...(detail ? { detail } : {}) } }),
-});
+const reportStatus = (platform: string) => (status: string, detail?: string) =>
+    trace.record("alert", { detail: { reason: `${platform}_${status}`, ...(detail ? { detail } : {}) } });
+
+const adapters: Adapter[] = [];
+let discord: DiscordAdapter | undefined;
+if (groups.some((group) => group.platform === "discord")) {
+    const token = process.env.DISCORD_TOKEN;
+    if (!token) fail("DISCORD_TOKEN is empty. Add your bot token to .env.");
+    discord = new DiscordAdapter({ token, onStatus: reportStatus("discord") });
+    adapters.push(discord);
+}
+if (groups.some((group) => group.platform === "qq")) {
+    if (!config.qq) fail(`A QQ group is listed, but ${configPath} has no qq.url for the OneBot server.`);
+    adapters.push(
+        new OneBotAdapter({
+            url: config.qq.url,
+            token: process.env.ONEBOT_TOKEN || undefined,
+            clock,
+            selfName: persona.name,
+            onStatus: reportStatus("qq"),
+        }),
+    );
+}
 
 const runtime = new Runtime({
     clock,
@@ -59,7 +78,7 @@ const runtime = new Runtime({
     llm,
     cost,
     persona,
-    adapters: [adapter],
+    adapters,
     timing: config.timing,
     limits: config.limits,
     control: { commandPrefix: config.control.commandPrefix, admins, groups, crisisResources: config.control.crisisResources },
@@ -100,7 +119,7 @@ try {
     fail(`Couldn't start: ${message}`);
 }
 
-console.log(`${persona.name} is online as ${adapter.botTag} (config: ${configPath})`);
+console.log(`${persona.name} is online${discord ? ` as ${discord.botTag} on Discord` : ""} (config: ${configPath})`);
 console.log(`Watching ${groups.length} channel(s). Mode: ${config.shadow ? "SHADOW, she decides but sends nothing" : "LIVE, she will post"}.`);
 if (admins.length === 0) console.log(`No admins set, so ${config.control.commandPrefix} kill and mute won't work for anyone.`);
 
