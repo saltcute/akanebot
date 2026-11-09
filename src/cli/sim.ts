@@ -29,7 +29,6 @@ const CANNED_GATE = JSON.stringify({
     domain: "other",
     difficulty: 1,
     highStakes: false,
-    possibleCrisis: false,
     towardMe: "neutral",
     lookUp: "",
     quickReaction: "",
@@ -60,13 +59,12 @@ const adapter = new CliAdapter({
 });
 
 const fakeFactory: BackendFactory = (_config, model) =>
-    new FakeBackend((request) => {
-        if (model === "scripted-crisis") return "(fake crisis response)";
+    new FakeBackend(() => {
         if (model === "scripted-vision") return "(a picture)";
         if (model === "scripted-extract") return JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
         if (model === "scripted-consolidate") return JSON.stringify({ replaced: [] });
         if (model !== "scripted-gate") return JSON.stringify({ messages: [rng.pick(CANNED_REPLIES)] });
-        return request.stable.startsWith("Decide whether") ? JSON.stringify({ isCrisis: true }) : CANNED_GATE;
+        return CANNED_GATE;
     });
 const llm = useFake
     ? new LlmRegistry(
@@ -76,7 +74,6 @@ const llm = useFake
                   gate: { backend: "fake", model: "scripted-gate" },
                   reply: { backend: "fake", model: "scripted" },
                   technical: { backend: "fake", model: "scripted" },
-                  crisis: { backend: "fake", model: "scripted-crisis" },
                   vision: { backend: "fake", model: "scripted-vision" },
                   extract: { backend: "fake", model: "scripted-extract" },
                   consolidate: { backend: "fake", model: "scripted-consolidate" },
@@ -102,7 +99,6 @@ const runtime = new Runtime({
         commandPrefix: config.control.commandPrefix,
         admins: [...config.control.admins, "cli:admin"],
         groups: [...config.control.groups, { platform: "cli", channelId: "group", disclosed: true }],
-        crisisResources: config.control.crisisResources,
     },
     controlStore: new MemoryControlStore(),
     // Off by default so you can test at any hour and without waiting.

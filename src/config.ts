@@ -49,7 +49,6 @@ export const appConfigSchema = z.strictObject({
         groups: z
             .array(z.strictObject({ platform: z.enum(["discord", "qq", "cli"]), channelId: z.string().min(1), disclosed: z.boolean() }))
             .default([]),
-        crisisResources: z.string().min(1),
         statePath: z.string().min(1).default("data/control.json"),
     }),
     dailyBudgetUsd: z.number().positive(),

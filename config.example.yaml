@@ -39,8 +39,6 @@ control:
   # To see Discord timeouts, kicks, bans and unpins, the bot needs View Audit Log in that server.
   #  - { platform: discord, channelId: "123456789", disclosed: true }
   #  - { platform: qq, channelId: "123456789", disclosed: true }
-  # Shown to anyone who may be in crisis. Check these are right for where your members live.
-  crisisResources: "Canada and US: call or text 988. China: call 12356. Elsewhere: your local emergency number."
 
 # NapCat or another OneBot 11 server, needed for any group with platform: qq.
 # qq:
@@ -69,11 +67,6 @@ roles:
     model: claude-opus-5-5
     options: { effort: low, refusalFallback: true }
   technical:
-    backend: anthropic
-    model: claude-opus-5-5
-    options: { effort: medium, refusalFallback: true }
-
-  crisis:
     backend: anthropic
     model: claude-opus-5-5
     options: { effort: medium, refusalFallback: true }

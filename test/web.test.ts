@@ -17,7 +17,7 @@ import { PERSONA } from "./fixtures.ts";
 const TOKEN = "correct-horse-battery-staple";
 const CHANNEL = "cli:group";
 const CHANNEL_PATH = encodeURIComponent(CHANNEL);
-const ROLES = ["gate", "reply", "technical", "crisis", "vision", "extract", "consolidate"];
+const ROLES = ["gate", "reply", "technical", "vision", "extract", "consolidate"];
 const EXTRACTION = JSON.stringify({ summary: "they talked about noodles", importance: 0.8, emotion: 0.2, memories: [] });
 
 const running: WebServer[] = [];
@@ -71,7 +71,6 @@ async function setup() {
             commandPrefix: "/akanebot",
             admins: [],
             groups: [{ platform: "cli", channelId: "group", disclosed: true }],
-            crisisResources: "988",
         },
         controlStore: new MemoryControlStore(),
         memoryStore: store,

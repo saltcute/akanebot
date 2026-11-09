@@ -33,7 +33,6 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         domain: "other",
         difficulty: 1,
         highStakes: false,
-        possibleCrisis: false,
         towardMe: "neutral",
         lookUp: "",
         quickReaction: "",

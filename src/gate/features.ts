@@ -14,7 +14,6 @@ export const gateFeaturesSchema = z.object({
     domain: z.string(),
     difficulty: z.number(),
     highStakes: z.boolean(),
-    possibleCrisis: z.boolean(),
     towardMe: z.enum(["friendly", "neutral", "hostile"]),
     lookUp: z.string(),
     quickReaction: z.string(),
@@ -40,7 +39,6 @@ Fields:
 - domain: one of ${[...Object.keys(persona.skills), "other"].join(", ")}. Use "other" when not technical.
 - difficulty: 1 = intro course, 3 = typical undergraduate coursework, 5 = graduate or specialist. Use 1 when not technical.
 - highStakes: does it involve commands someone may run, security, health, legal or money?
-- possibleCrisis: does someone in the new messages seem to be in real danger (suicide, self-harm, being harmed, a medical emergency)? Hyperbole and jokes don't count.
 - towardMe: how the new messages treat ${persona.name}. Use neutral if they aren't directed at them.
 - lookUp: if this involves something ${persona.name} wouldn't know and would be curious about, a few generic search words for it. No names or personal details of anyone in the chat. Otherwise empty.
 - quickReaction: one reaction from ${reactions || "(none)"}, copied exactly, that would fit as a reaction to the latest message, or empty.

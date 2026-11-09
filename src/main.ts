@@ -81,7 +81,7 @@ const runtime = new Runtime({
     adapters,
     timing: config.timing,
     limits: config.limits,
-    control: { commandPrefix: config.control.commandPrefix, admins, groups, crisisResources: config.control.crisisResources },
+    control: { commandPrefix: config.control.commandPrefix, admins, groups },
     controlStore: new JsonFileControlStore(config.control.statePath),
     memoryStore: new MemoryStore(config.memory.path),
     embedder: createEmbedder(config.embedder, (message) => trace.record("alert", { detail: { reason: "embedder_failed", message } })),

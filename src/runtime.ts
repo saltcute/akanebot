@@ -6,14 +6,6 @@ import { currentRelationship, describeRelationship, updateRelationship } from ".
 import { Routine } from "./body/routine.ts";
 import { Vitals } from "./body/vitals.ts";
 import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
-import {
-    CrisisDesk,
-    crisisFallback,
-    crisisVerdictSchema,
-    mentionsSelfHarm,
-    renderCrisisClassifier,
-    renderCrisisInstructions,
-} from "./control/crisis.ts";
 import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
@@ -48,7 +40,6 @@ export type ControlOptions = {
     /** `platform:userId` of each person allowed to run admin commands. */
     admins: readonly string[];
     groups: readonly (ChannelRef & { disclosed: boolean })[];
-    crisisResources: string;
 };
 
 export type RuntimeOptions = {
@@ -127,8 +118,6 @@ type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerceptio
 const GATE_MAX_OUTPUT = 600;
 const REPLY_MAX_OUTPUT = 2000;
 const TECHNICAL_MAX_OUTPUT = 4000;
-const CRISIS_CLASSIFIER_MAX_OUTPUT = 200;
-const CRISIS_MAX_OUTPUT = 3000;
 const MAX_NEW_MESSAGES_READ = 15;
 const MAX_NOTIFICATIONS = 2;
 const ABANDON_AFTER_NEW_MESSAGES = 6;
@@ -165,7 +154,6 @@ export class Runtime {
     #competenceRng: Rng;
     #persona: Persona;
     #state: ControlState;
-    #crisis: CrisisDesk;
     #allowedChannels: ReadonlySet<string>;
     #background = new Set<Promise<void>>();
     #nextEventId = 1;
@@ -180,7 +168,6 @@ export class Runtime {
         this.body = new BodyActor({ clock: options.clock, trace: options.trace, attend });
         this.#persona = options.persona;
         this.#state = new ControlState({ clock: options.clock, store: options.controlStore });
-        this.#crisis = new CrisisDesk(options.clock);
         this.#allowedChannels = new Set(options.control.groups.filter((group) => group.disclosed).map(channelKey));
         if (this.#state.killed) this.body.goAway(KILL_REASON);
         this.#pacingRng = options.rng.fork("pacing");
@@ -274,15 +261,7 @@ export class Runtime {
             return;
         }
 
-        // Safety runs here, ahead of perception, the body and the dice, so sleep and ignore rolls can't swallow it.
-        if (this.#crisis.inEpisode(key, user)) {
-            channel.perception.recordSeen(message);
-            this.#inBackground(this.#respondToCrisis(channel, user, message.messageId));
-        } else if (mentionsSelfHarm(message.text)) {
-            this.#inBackground(this.#screenForCrisis(channel, message));
-        } else {
-            this.#admit(channel, message);
-        }
+        this.#admit(channel, message);
     }
 
     /** Coming back works like checking a phone: everything unread gets a look, most important first. */
@@ -440,53 +419,6 @@ export class Runtime {
         else await this.guard.send(channel.adapter, channel.ref, text);
     }
 
-    async #screenForCrisis(channel: Channel, message: ChatMessage): Promise<void> {
-        const verdict = await this.#options.llm.generate("gate", {
-            stable: renderCrisisClassifier(),
-            transcript: renderTranscript([message], this.#persona),
-            volatile: "",
-            schema: crisisVerdictSchema,
-            maxOutput: CRISIS_CLASSIFIER_MAX_OUTPUT,
-            signal: new AbortController().signal,
-        });
-        // If the check itself fails, assume the worst: an unneeded kind word costs far less than a missed crisis.
-        if (verdict.kind === "ok" && verdict.data && !verdict.data.isCrisis) {
-            this.#admit(channel, message);
-            return;
-        }
-        channel.perception.recordSeen(message);
-        await this.#respondToCrisis(channel, userKey(message), message.messageId);
-    }
-
-    async #respondToCrisis(channel: Channel, user: string, messageId: string): Promise<void> {
-        const { trace, llm, control } = this.#options;
-        const key = channelKey(channel.ref);
-        if (this.#state.killed) return;
-        if (!this.#crisis.claimReply(key, user)) {
-            this.#alert("crisis_reply_cap", { channel: key, user });
-            return;
-        }
-        trace.record("control.crisis", { channel: key, messageId });
-        this.#alert("crisis_response", { channel: key, user });
-
-        const result = await llm.generate("crisis", {
-            stable: renderCrisisInstructions(control.crisisResources),
-            transcript: renderTranscript(channel.perception.window(), this.#persona),
-            volatile: "",
-            maxOutput: CRISIS_MAX_OUTPUT,
-            signal: new AbortController().signal,
-        });
-        const generated = result.kind === "ok" ? result.text.trim() : "";
-        if (generated === "") this.#alert("crisis_fallback_used", { channel: key, result: result.kind });
-        const text = generated || crisisFallback(control.crisisResources);
-        const outcome = await this.guard.sendUrgent(channel.adapter, channel.ref, text);
-        if (outcome.kind === "sent") {
-            channel.perception.recordOwn(ownMessage(channel.ref, outcome.messageId, text, this.#options.clock.now(), this.#persona.name));
-        } else if (!(outcome.kind === "blocked" && outcome.reason === "shadow")) {
-            this.#alert("crisis_send_failed", { channel: key, outcome });
-        }
-    }
-
     /** Reactions are context for the next time it reads the chat. They never wake it up. */
     #onReaction(event: ReactionEvent): void {
         const key = channelKey(event);
@@ -553,12 +485,6 @@ export class Runtime {
         const channel = this.#channels.get(key);
         if (!channel) return;
         if (this.#state.killed || this.#state.isMuted(key)) return;
-        if (this.#crisis.isHolding(key)) {
-            // No banter next to someone in trouble. These messages stay read rather than being picked up later.
-            channel.perception.settle(channel.perception.seq);
-            trace.record("control.crisis_hold", { channel: key });
-            return;
-        }
         if (cost.overBudget()) {
             trace.record("budget.exceeded", { channel: key, detail: cost.summary() });
             return;
@@ -623,12 +549,6 @@ export class Runtime {
                 decision.addressed && speaker === askerKey,
                 now,
             );
-        }
-        if (features.possibleCrisis) {
-            const author = window.findLast((message) => isSpoken(message) && !message.isSelf);
-            perception.settle(seenSeq);
-            if (author) await this.#respondToCrisis(channel, userKey(author), author.messageId);
-            return;
         }
         if (decision.addressed) this.vitals.spend(ADDRESSED_BATTERY_COST);
         const reaction = reactionChoices(persona, channel.ref.platform).find(({ label }) => label === features.quickReaction);

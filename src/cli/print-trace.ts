@@ -5,8 +5,6 @@ const PLAIN_KINDS = new Set([
     "routine.change",
     "body.skimmed",
     "reply.abandoned",
-    "control.crisis",
-    "control.crisis_hold",
     "control.not_allowed",
     "control.opted_out",
     "gate.silent",

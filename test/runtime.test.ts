@@ -27,9 +27,6 @@ type Setup = {
     gates?: Partial<GateFeatures>[];
     persona?: Partial<Persona>;
     budget?: number;
-    /** The crisis classifier's answer, or a scripted failure. */
-    verdict?: boolean | LlmResult<unknown>;
-    crisis?: FakeResponder;
     control?: Partial<ControlOptions>;
     store?: MemoryControlStore;
     extract?: FakeResponder;
@@ -67,14 +64,7 @@ async function setup(options: Setup) {
     const persona = { ...PERSONA, ignoreDirectAsks: 0, ...options.persona };
     const adapter = new CliAdapter({ clock, selfName: persona.name });
     const gateQueue = [...(options.gates ?? [])];
-    const gate = new FakeBackend((request) => {
-        if (request.stable.startsWith("Decide whether")) {
-            const verdict = options.verdict ?? true;
-            return typeof verdict === "boolean" ? JSON.stringify({ isCrisis: verdict }) : verdict;
-        }
-        return JSON.stringify(features({ addressedToMe: "yes", ...options.gate, ...gateQueue.shift() }));
-    });
-    const crisis = new FakeBackend(options.crisis ?? (() => "are you safe right now?"));
+    const gate = new FakeBackend(() => JSON.stringify(features({ addressedToMe: "yes", ...options.gate, ...gateQueue.shift() })));
     const extract = new FakeBackend(options.extract ?? (() => EMPTY_EXTRACTION));
     const vision = new FakeBackend(options.vision ?? (() => "一只橘猫"));
     const consolidateBackend = new FakeBackend(() => JSON.stringify({ replaced: [] }));
@@ -88,7 +78,6 @@ async function setup(options: Setup) {
                 g: { type: "gate" },
                 r: { type: "reply" },
                 t: { type: "technical" },
-                c: { type: "crisis" },
                 e: { type: "extract" },
                 k: { type: "consolidate" },
                 v: { type: "vision" },
@@ -97,7 +86,6 @@ async function setup(options: Setup) {
                 gate: { backend: "g", model: "m" },
                 reply: { backend: "r", model: "m" },
                 technical: { backend: "t", model: "m" },
-                crisis: { backend: "c", model: "m" },
                 extract: { backend: "e", model: "m" },
                 consolidate: { backend: "k", model: "m" },
                 vision: { backend: "v", model: "m" },
@@ -107,7 +95,6 @@ async function setup(options: Setup) {
             gate: () => gate,
             reply: () => reply,
             technical: () => technical,
-            crisis: () => crisis,
             extract: () => extract,
             consolidate: () => consolidateBackend,
             vision: () => vision,
@@ -128,7 +115,6 @@ async function setup(options: Setup) {
             commandPrefix: "/akanebot",
             admins: ["cli:admin"],
             groups: [{ platform: "cli", channelId: "group", disclosed: true }],
-            crisisResources: "call 988",
             ...options.control,
         },
         controlStore: store,
@@ -145,7 +131,7 @@ async function setup(options: Setup) {
         await clock.advance(ms);
         await runtime.whenIdle();
     };
-    return { clock, trace, adapter, gate, reply, technical, crisis, extract, vision, memoryStore, runtime, settle, store };
+    return { clock, trace, adapter, gate, reply, technical, extract, vision, memoryStore, runtime, settle, store };
 }
 
 describe("Runtime", () => {
@@ -356,7 +342,6 @@ describe("Runtime", () => {
 });
 
 describe("control plane", () => {
-    const CrisisText = "我真的不想活了";
     const sentTexts = (adapter: CliAdapter) => adapter.sent.map((s) => s.text);
 
     describe("group allowlist", () => {
@@ -370,7 +355,7 @@ describe("control plane", () => {
 
         it("ignores groups listed without disclosure", async () => {
             const { adapter, gate, settle } = await setup({ control: { groups: [{ platform: "cli", channelId: "group", disclosed: false }] } });
-            adapter.say("alice", CrisisText);
+            adapter.say("alice", "hi");
             await settle();
             expect(gate.calls).toHaveLength(0);
             expect(adapter.sent).toEqual([]);
@@ -378,15 +363,14 @@ describe("control plane", () => {
     });
 
     describe("kill switch", () => {
-        it("stops everything, including crisis responses, until resumed", async () => {
-            const { adapter, gate, crisis, settle } = await setup({});
+        it("stops everything until resumed", async () => {
+            const { adapter, gate, settle } = await setup({});
             adapter.say("admin", "/akanebot kill");
             await settle();
             adapter.say("alice", "hi");
-            adapter.say("bob", CrisisText);
+            adapter.say("bob", "anyone?");
             await settle();
             expect(gate.calls).toHaveLength(0);
-            expect(crisis.calls).toHaveLength(0);
             adapter.say("admin", "/akanebot resume");
             await settle();
             adapter.say("alice", "back?");
@@ -483,105 +467,6 @@ describe("control plane", () => {
         });
     });
 
-    describe("crisis", () => {
-        it("responds even while away", async () => {
-            const { adapter, runtime, settle } = await setup({});
-            runtime.body.goAway();
-            adapter.say("alice", CrisisText);
-            await settle();
-            expect(sentTexts(adapter)).toEqual(["are you safe right now?"]);
-        });
-
-        it("can't be lost to the ignore roll", async () => {
-            const { adapter, settle } = await setup({ persona: { ignoreDirectAsks: 1 } });
-            adapter.say("alice", CrisisText);
-            await settle();
-            expect(adapter.sent).toHaveLength(1);
-        });
-
-        it("responds while muted and over budget", async () => {
-            const { adapter, settle } = await setup({ budget: 0 });
-            adapter.say("admin", "/akanebot mute 60");
-            await settle();
-            adapter.say("alice", CrisisText);
-            await settle();
-            expect(sentTexts(adapter).at(-1)).toBe("are you safe right now?");
-        });
-
-        it("treats hyperbole as normal chat once the classifier rules it out", async () => {
-            const { adapter, crisis, settle } = await setup({ verdict: false });
-            adapter.say("alice", "这题难得我想死");
-            await settle();
-            expect(crisis.calls).toHaveLength(0);
-            expect(sentTexts(adapter)).toEqual(["哈哈"]);
-        });
-
-        it("assumes the worst if the classifier fails", async () => {
-            const { adapter, crisis, settle } = await setup({ verdict: { kind: "error", retryable: true } });
-            adapter.say("alice", CrisisText);
-            await settle();
-            expect(crisis.calls).toHaveLength(1);
-        });
-
-        it("sends fixed resources and alerts the operator if the response fails", async () => {
-            const { adapter, trace, settle } = await setup({ crisis: () => ({ kind: "error", retryable: true }) });
-            adapter.say("alice", CrisisText);
-            await settle();
-            expect(sentTexts(adapter)[0]).toContain("call 988");
-            expect(trace.ofKind("alert").map((event) => event.detail?.reason)).toContain("crisis_fallback_used");
-        });
-
-        it("gets through the rate limit and share limits", async () => {
-            const { adapter, runtime, settle } = await setup({});
-            const channel = { platform: "cli", channelId: "group" } as const;
-            for (let i = 0; i < 30; i++) await runtime.guard.send(adapter, channel, "spam");
-            adapter.say("alice", CrisisText);
-            await settle();
-            expect(sentTexts(adapter).at(-1)).toBe("are you safe right now?");
-        });
-
-        it("answers follow-ups from that person without re-classifying", async () => {
-            const { adapter, gate, crisis, settle } = await setup({});
-            adapter.say("alice", CrisisText);
-            await settle();
-            adapter.say("alice", "没人在乎");
-            await settle();
-            expect(crisis.calls).toHaveLength(2);
-            expect(gate.calls).toHaveLength(1);
-        });
-
-        it("holds normal banter in that channel, then returns to normal", async () => {
-            const { adapter, reply, settle } = await setup({});
-            adapter.say("alice", CrisisText);
-            await settle();
-            adapter.say("bob", "今天吃啥");
-            await settle();
-            expect(reply.calls).toHaveLength(0);
-            await settle(31 * 60_000);
-            adapter.say("bob", "在吗");
-            await settle();
-            expect(reply.calls).toHaveLength(1);
-        });
-
-        it("caps replies so it can't be made to loop", async () => {
-            const { adapter, crisis, trace, settle } = await setup({});
-            for (let i = 0; i < 10; i++) {
-                adapter.say("alice", `${CrisisText} ${i}`);
-                await settle();
-            }
-            expect(crisis.calls).toHaveLength(6);
-            expect(trace.ofKind("alert").map((event) => event.detail?.reason)).toContain("crisis_reply_cap");
-        });
-
-        it("responds when the gate spots a crisis the keywords missed, bypassing the dice", async () => {
-            const { adapter, crisis, reply, settle } = await setup({ gate: { possibleCrisis: true }, persona: { ignoreDirectAsks: 1 } });
-            adapter.say("alice", "我把药都攒好了 再见了各位");
-            await settle();
-            expect(crisis.calls).toHaveLength(1);
-            expect(reply.calls).toHaveLength(0);
-        });
-    });
-
     it("alerts the operator when a reply fails, without saying anything in chat", async () => {
         const { adapter, trace, settle } = await setup({ reply: () => ({ kind: "error", retryable: false, detail: "500" }) });
         adapter.say("alice", "hi");
@@ -672,16 +557,6 @@ describe("memory in the running agent", () => {
         expect(reply.calls.at(-1)?.transcript).not.toContain("我的秘密");
     });
 
-    it("doesn't remember crisis messages", async () => {
-        const memoryStore = new MemoryStore(":memory:");
-        const { adapter, extract, settle } = await setup({ memoryStore });
-        adapter.say("alice", "我真的不想活了");
-        await settle(1000);
-        await settle(Gap * 2);
-        expect(extract.calls).toHaveLength(0);
-        expect(memoryStore.recentAttended("cli:group", 10).filter((message) => !message.isSelf)).toEqual([]);
-    });
-
     it("runs the nightly job once a day, during scheduled sleep", async () => {
         const memoryStore = new MemoryStore(":memory:");
         const { settle, trace } = await setup({ memoryStore, persona: { timezone: "UTC" } });
@@ -709,13 +584,11 @@ describe("shadow mode", () => {
         expect(chatLines(reply.calls[1]?.transcript)).toEqual(["alice: one", "--- new ---", "alice: two"]);
     });
 
-    it("doesn't post crisis responses or command confirmations either", async () => {
-        const { adapter, trace, settle } = await setup({ shadow: true });
-        adapter.say("alice", "我真的不想活了");
+    it("doesn't post command confirmations either", async () => {
+        const { adapter, settle } = await setup({ shadow: true });
         adapter.say("admin", "/akanebot status");
         await settle();
         expect(adapter.sent).toEqual([]);
-        expect(trace.ofKind("alert").map((event) => event.detail?.reason)).not.toContain("crisis_send_failed");
     });
 });
 
@@ -746,13 +619,6 @@ describe("living like a person", () => {
             }
             expect(gate.calls).toHaveLength(0);
             expect(reply.calls).toHaveLength(0);
-        });
-
-        it("still responds to a crisis while asleep", async () => {
-            const { adapter, settle } = await setup({ routine: true, persona: awakeAllDay, startAt: wednesday + 3 * hour });
-            adapter.say("alice", "我真的不想活了");
-            await settle(minute);
-            expect(adapter.sent).toHaveLength(1);
         });
 
         it("checks its phone during class rather than staying present", async () => {
