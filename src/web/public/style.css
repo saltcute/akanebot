@@ -625,6 +625,10 @@ dialog::backdrop {
     font-size: 13px;
 }
 
+.event-list {
+    padding: 0 14px 14px;
+}
+
 .event pre {
     margin: 4px 0 0;
     padding: 6px 8px;

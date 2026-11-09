@@ -7,6 +7,7 @@ import { MAX_MUTE_MINUTES } from "../control/admin.ts";
 import { isShareable } from "../memory/reach.ts";
 import type { MemoryView } from "../memory/store.ts";
 import type { Runtime } from "../runtime.ts";
+import { presentTraceEvent } from "./trace-view.ts";
 
 const MAX_BODY_BYTES = 64_000;
 const MIN_TOKEN_CHARS = 16;
@@ -15,6 +16,8 @@ const MAX_GIST_CHARS = 4000;
 const MAX_DETAIL_CHARS = 20_000;
 const MAX_PAGE_SIZE = 200;
 const DEFAULT_PAGE_SIZE = 50;
+const MAX_TRACE_EVENTS = 1000;
+const DEFAULT_TRACE_EVENTS = 200;
 
 const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -24,6 +27,7 @@ const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/people.js", { file: "people.js", type: "text/javascript; charset=utf-8" }],
     ["/status.js", { file: "status.js", type: "text/javascript; charset=utf-8" }],
     ["/history.js", { file: "history.js", type: "text/javascript; charset=utf-8" }],
+    ["/activity.js", { file: "activity.js", type: "text/javascript; charset=utf-8" }],
     ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 
@@ -62,6 +66,12 @@ const historyQuerySchema = z.object({
     q: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
     offset: z.coerce.number().int().min(0).default(0),
+});
+
+const traceQuerySchema = z.object({
+    kind: z.string().min(1).optional(),
+    channel: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_TRACE_EVENTS).default(DEFAULT_TRACE_EVENTS),
 });
 
 const standingSchema = z
@@ -355,6 +365,22 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             path: /^\/api\/history\/([^/]+)\/([^/]+)$/,
             handle: (request) => {
                 if (!runtime.deleteMessage(request.params[0] ?? "", request.params[1] ?? "")) throw new HttpError(404, "No such message");
+            },
+        },
+        {
+            method: "GET",
+            path: /^\/api\/trace$/,
+            handle: (request) => {
+                const query = traceQuerySchema.parse(Object.fromEntries(request.query));
+                const events = runtime.recentTrace(query).map((event) => ({
+                    ...presentTraceEvent(event),
+                    channelName: event.channel ? (runtime.channelName(event.channel) ?? event.channel) : undefined,
+                }));
+                return {
+                    events,
+                    kinds: runtime.traceKinds(),
+                    channels: runtime.conversations().map(({ key, name }) => ({ key, name: name ?? key })),
+                };
             },
         },
         { method: "GET", path: /^\/api\/body$/, handle: () => runtime.bodySnapshot() },

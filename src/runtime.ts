@@ -391,6 +391,19 @@ export class Runtime {
         return this.#options.trace.ofKind("alert").slice(-limit);
     }
 
+    /** The most recent decisions since this process started, newest first. The caller chooses how much of each to show. */
+    recentTrace(query: { kind?: string | undefined; channel?: string | undefined; limit: number }): TraceEvent[] {
+        return this.#options.trace
+            .all()
+            .filter((event) => (!query.kind || event.kind === query.kind) && (!query.channel || event.channel === query.channel))
+            .slice(-query.limit)
+            .reverse();
+    }
+
+    traceKinds(): string[] {
+        return [...new Set(this.#options.trace.all().map((event) => event.kind))].sort();
+    }
+
     /** Decisions recorded about a message since this process started. */
     decisionsAbout(messageId: string): TraceEvent[] {
         return this.#options.trace.forMessage(messageId);

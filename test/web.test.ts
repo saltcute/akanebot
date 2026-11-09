@@ -683,3 +683,65 @@ describe("web console history", () => {
         expect(errors).toEqual([]);
     });
 });
+
+describe("web console activity", () => {
+    const Secret = "the-secret-words";
+
+    it("keeps free text out of the bulk list", async () => {
+        const { json, trace } = await setup();
+        trace.record("gate.decision", {
+            channel: CHANNEL,
+            messageId: "m1",
+            detail: {
+                speak: true,
+                probability: 0.5,
+                mode: "casual",
+                features: {
+                    interest: 0.7,
+                    towardMe: "friendly",
+                    topic: Secret,
+                    lookUp: Secret,
+                    privateThought: Secret,
+                    domain: Secret,
+                    quickReaction: Secret,
+                },
+            },
+        });
+        trace.record("memory.recall", { channel: CHANNEL, detail: { recalled: [{ id: 3, gist: Secret, score: 0.9, detailed: false }] } });
+        trace.record("send.sent", { channel: CHANNEL, messageId: "m2", detail: { text: Secret, mention: Secret } });
+        trace.record("search.done", { channel: CHANNEL, detail: { query: Secret, note: Secret } });
+        trace.record("alert", { detail: { reason: "memory_failed", error: Secret, message: Secret, detail: Secret } });
+        const page = await json("/api/trace");
+        expect(JSON.stringify(page)).not.toContain(Secret);
+        const byKind = Object.fromEntries(page.events.map((event: { kind: string; detail: unknown }) => [event.kind, event.detail]));
+        expect(byKind["gate.decision"]).toEqual({ speak: true, probability: 0.5, mode: "casual", interest: 0.7, towardMe: "friendly" });
+        expect(byKind["memory.recall"]).toEqual({ recalled: [{ id: 3, score: 0.9, detailed: false }] });
+        expect(byKind.alert).toEqual({ reason: "memory_failed" });
+        expect(byKind["send.sent"]).toEqual({});
+    });
+
+    it("shows nothing of a kind nobody has listed", async () => {
+        const { json, trace } = await setup();
+        trace.record("brand.new", { detail: { count: 3, text: Secret } });
+        expect((await json("/api/trace")).events[0].detail).toEqual({});
+    });
+
+    it("lists newest first, with filters and a limit", async () => {
+        const { json, trace } = await setup();
+        trace.record("body.away");
+        trace.record("body.back");
+        trace.record("body.expired", { channel: CHANNEL });
+        const kinds = (query: string) => json(`/api/trace?${query}`).then((page) => page.events.map((event: { kind: string }) => event.kind));
+        expect(await kinds("limit=2")).toEqual(["body.expired", "body.back"]);
+        expect(await kinds("kind=body.away")).toEqual(["body.away"]);
+        expect(await kinds(`channel=${CHANNEL_PATH}`)).toEqual(["body.expired"]);
+        expect((await json("/api/trace")).kinds).toEqual(expect.arrayContaining(["body.away", "body.back", "body.expired"]));
+    });
+
+    it("rejects a bad limit", async () => {
+        const { call, errors } = await setup();
+        expect((await call("/api/trace?limit=0")).status).toBe(400);
+        expect((await call("/api/trace?limit=100000")).status).toBe(400);
+        expect(errors).toEqual([]);
+    });
+});

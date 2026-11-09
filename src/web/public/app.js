@@ -1,5 +1,6 @@
 // Everything shown here can come from strangers in a chat, so text only ever enters the page as text nodes.
 
+import { activityTab } from "./activity.js";
 import { showDecisions, showPerson } from "./dialogs.js";
 import { historyTab } from "./history.js";
 import { peopleTab } from "./people.js";
@@ -635,6 +636,7 @@ const TABS = {
     memories: { label: "Memories", load: refreshMemories, render: renderMemories },
     people: peopleTab,
     status: statusTab,
+    activity: activityTab,
 };
 
 function start() {
