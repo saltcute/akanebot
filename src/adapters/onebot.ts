@@ -25,6 +25,9 @@ const LOOKUP_TIMEOUT_MS = 3000;
 const MAX_NAME_LOOKUPS_PER_MESSAGE = 5;
 /** A forward can hold hundreds of messages, and only the start of one gets read. */
 const MAX_FORWARDED_LINES = 30;
+/** Forwards nest as deep as someone cares to make them, so everything inside the first level shares these limits. */
+const MAX_FORWARD_DEPTH = 4;
+const MAX_NESTED_FORWARDED_LINES = 100;
 const FIRST_RETRY_MS = 1000;
 const MAX_RETRY_MS = 60_000;
 const MAX_REMEMBERED_SENDS = 1000;
@@ -188,22 +191,33 @@ function displayName(event: GroupMessage): string {
     return event.sender.card || event.sender.nickname || event.user_id;
 }
 
-/** Reads a forward's contents, from the segment or from `get_forward_msg`. A forward inside it stays a placeholder. Returns nothing if the shape is unfamiliar. */
+/** Reads a forward's contents, from the segment or from `get_forward_msg`. A forward inside it is read too when QQ includes its contents. Returns nothing if the shape is unfamiliar. */
 export function toForwardedLines(data: unknown, selfId: string, lookup: Lookup): ForwardedLine[] {
+    return readForward(data, selfId, lookup, 0, { left: MAX_NESTED_FORWARDED_LINES });
+}
+
+function readForward(data: unknown, selfId: string, lookup: Lookup, depth: number, nested: { left: number }): ForwardedLine[] {
     const parsed = z.array(fetchedMessageSchema).safeParse(data);
     if (!parsed.success) return [];
-    return parsed.data.slice(0, MAX_FORWARDED_LINES).flatMap(({ user_id: topLevelId, message, sender }) => {
+    const entries = parsed.data.slice(0, depth === 0 ? MAX_FORWARDED_LINES : Math.min(MAX_FORWARDED_LINES, nested.left));
+    if (depth > 0) nested.left -= entries.length;
+    return entries.flatMap(({ user_id: topLevelId, message, sender }) => {
         const text = message
             .map((segment) => describeSegment(segment, selfId, lookup))
             .join("")
             .trim();
         if (text === "") return [];
         const author = topLevelId ?? sender.user_id;
+        const inner =
+            depth < MAX_FORWARD_DEPTH
+                ? readForward(message.find(({ type }) => type === "forward")?.data.content, selfId, lookup, depth + 1, nested)
+                : [];
         return [
             {
                 by: sender.card || sender.nickname || (author && lookup.names.get(author)) || author,
                 byUser: author && `qq:${author}`,
                 text,
+                ...(inner.length > 0 ? { forwarded: inner } : {}),
             },
         ];
     });

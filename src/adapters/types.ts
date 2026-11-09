@@ -54,7 +54,13 @@ export type GroupEvent = ChannelRef & {
 export type QuotedMessage = { messageId: string; by: string; byUser: string; text: string; isSelf: boolean };
 
 /** One message inside a forward. `by` and `byUser` are only what the forward claims, because QQ lets people forge them, and Discord doesn't say. */
-export type ForwardedLine = { by?: string | undefined; byUser?: string | undefined; text: string };
+export type ForwardedLine = {
+    by?: string | undefined;
+    byUser?: string | undefined;
+    text: string;
+    /** A forward inside this one. Only the operator sees these: she gets the placeholder in `text`. */
+    forwarded?: readonly ForwardedLine[];
+};
 
 /** `url` is what to look at. `link` is set when posting this link again is how to share the picture, because there's no file to keep. */
 export type ChatImage = { url: string; link?: string };

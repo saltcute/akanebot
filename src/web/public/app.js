@@ -382,6 +382,7 @@ function renderMessage(message) {
         ),
         message.isReply ? renderQuote(message.quoted) : undefined,
         el("p", { className: "message-text" }, message.text),
+        message.forwarded ? renderForward(message.forwarded, message.messageId, true) : undefined,
         message.reactions.length > 0
             ? el(
                   "div",
@@ -390,6 +391,35 @@ function renderMessage(message) {
               )
             : undefined,
     );
+}
+
+/** Polling redraws the transcript, which would otherwise fold these back up while someone is reading. */
+const openForwards = new Set();
+
+function renderForward(lines, path, topLevel = false) {
+    const details = el(
+        "details",
+        {
+            className: "forward",
+            open: openForwards.has(path),
+            ontoggle: () => (details.open ? openForwards.add(path) : openForwards.delete(path)),
+        },
+        el("summary", {}, `Forwarded, ${count(lines.length, "message", "messages")}`),
+        topLevel
+            ? el("p", { className: "meta" }, "Names are only what the forward claims. She skims this, and doesn't open forwards inside it.")
+            : undefined,
+        lines.map((line, index) =>
+            el(
+                "div",
+                { className: "forward-line" },
+                line.by === undefined ? undefined : el("b", {}, line.by),
+                line.by === undefined ? undefined : " ",
+                line.text,
+                line.forwarded ? renderForward(line.forwarded, `${path}/${index}`) : undefined,
+            ),
+        ),
+    );
+    return details;
 }
 
 function renderQuote(quoted) {

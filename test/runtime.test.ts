@@ -1916,6 +1916,32 @@ describe("group events", () => {
         expect(chatLines(reply.calls.at(-1)?.transcript)).toEqual(["carol: 嗯"]);
     });
 
+    it("shows the operator a forward and the forwards inside it, without account IDs", async () => {
+        const { adapter, runtime, settle } = await setup({});
+        adapter.say("alice", "[forwarded messages]", "group", undefined, [
+            { by: "bob", byUser: "cli:bob", text: "[forwarded messages]", forwarded: [{ by: "dan", byUser: "cli:dan", text: "深处" }] },
+        ]);
+        await settle();
+        const key = runtime.conversations()[0]?.key ?? "";
+        expect(runtime.conversation(key)?.messages.find(({ text }) => text === "[forwarded messages]")?.forwarded).toEqual([
+            { by: "bob", text: "[forwarded messages]", forwarded: [{ by: "dan", text: "深处", forwarded: undefined }] },
+        ]);
+    });
+
+    it("won't keep a forward when someone who opted out is only in a forward inside it", async () => {
+        const { adapter, runtime, settle } = await setup({});
+        adapter.say("bob", "/akanebot opt-out");
+        await settle();
+        adapter.say("alice", "[forwarded messages]", "group", undefined, [
+            { by: "carol", byUser: "cli:carol", text: "[forwarded messages]", forwarded: [{ by: "bob", byUser: "cli:bob", text: "秘密" }] },
+        ]);
+        await settle();
+        const key = runtime.conversations()[0]?.key ?? "";
+        const forward = runtime.conversation(key)?.messages.find(({ text }) => text === "[forwarded messages]");
+        expect(forward).toBeDefined();
+        expect(forward?.forwarded).toBeUndefined();
+    });
+
     it("won't open a forward holding someone who opted out, or keep one they turn up in later", async () => {
         const { adapter, reply, settle } = await setup({});
         adapter.say("bob", "/akanebot opt-out");

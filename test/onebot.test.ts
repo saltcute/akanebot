@@ -193,15 +193,38 @@ describe("OneBot forwards", () => {
         expect(mapped?.isSelf).toBe(false);
     });
 
-    it("leaves a nested forward as a placeholder", () => {
-        const inner = {
-            user_id: 5,
-            sender: { nickname: "carol" },
-            message: [{ type: "forward", data: { id: "x", content: [entry(6, "dan", "深处")] } }],
-        };
-        expect(map([{ type: "forward", data: { id: "9", content: [inner] } }])?.forwarded).toEqual([
+    const nesting = (userId: number, content: unknown) => ({
+        user_id: userId,
+        sender: { nickname: "carol" },
+        message: [{ type: "forward", data: { id: "x", ...(content === undefined ? {} : { content }) } }],
+    });
+
+    it("reads a nested forward, keeping the placeholder as the line's own text", () => {
+        expect(map([{ type: "forward", data: { id: "9", content: [nesting(5, [entry(6, "dan", "深处")])] } }])?.forwarded).toEqual([
+            { by: "carol", byUser: "qq:5", text: "[forwarded messages]", forwarded: [{ by: "dan", byUser: "qq:6", text: "深处" }] },
+        ]);
+    });
+
+    it("leaves a nested forward as a placeholder when QQ gives only its ID", () => {
+        expect(map([{ type: "forward", data: { id: "9", content: [nesting(5, undefined)] } }])?.forwarded).toEqual([
             { by: "carol", byUser: "qq:5", text: "[forwarded messages]" },
         ]);
+    });
+
+    it("stops opening forwards nested too deep", () => {
+        let content: unknown = [entry(6, "dan", "深处")];
+        for (let depth = 0; depth < 10; depth++) content = [nesting(5, content)];
+        let levels = 0;
+        for (let lines = map([{ type: "forward", data: { id: "9", content } }])?.forwarded; lines?.length; lines = lines[0]?.forwarded) levels++;
+        expect(levels).toBe(5);
+    });
+
+    it("caps the messages kept across all nested forwards", () => {
+        const inner = Array.from({ length: 30 }, (_, i) => entry(6, "dan", `m${i}`));
+        const content = Array.from({ length: 30 }, () => nesting(5, inner));
+        const forwarded = map([{ type: "forward", data: { id: "9", content } }])?.forwarded ?? [];
+        expect(forwarded).toHaveLength(30);
+        expect(forwarded.reduce((total, line) => total + (line.forwarded?.length ?? 0), 0)).toBe(100);
     });
 
     it("keeps only so many messages of a huge forward", () => {

@@ -3,6 +3,7 @@ import type {
     ChannelRef,
     ChatImage,
     ChatMessage,
+    ForwardedLine,
     GroupEvent,
     LateImages,
     Platform,
@@ -43,7 +44,15 @@ import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
 import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore, SavedImageQuery, SavedImageView } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
-import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutForwarded, withoutQuote } from "./perception/channel.ts";
+import {
+    ADDRESSED_PRIORITY,
+    ChannelPerception,
+    forwardHolds,
+    isAddressed,
+    type PerceptionTiming,
+    withoutForwarded,
+    withoutQuote,
+} from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
 import { explainAliases } from "./reply/aliases.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
@@ -99,6 +108,9 @@ export type RuntimeOptions = {
     fetchImage?: ImageFetcher;
 };
 
+/** One message inside a forward, as the operator sees it. The name is only what the forward claims. */
+export type ForwardedView = { by: string | undefined; text: string; forwarded: ForwardedView[] | undefined };
+
 /** One line of a conversation, as the operator sees it. */
 export type ConversationMessage = {
     messageId: string;
@@ -116,6 +128,8 @@ export type ConversationMessage = {
     isReply: boolean;
     /** What it replies to, when that's known. */
     quoted: { senderName: string; text: string } | undefined;
+    /** What it forwarded, for as long as it stays in the live window. */
+    forwarded: ForwardedView[] | undefined;
 };
 
 export type ConversationSummary = {
@@ -370,8 +384,7 @@ export class Runtime {
     /** The chat app would show them the quote or the forward, but an opt-out means she doesn't get to read this person at all. */
     #withoutOptedOut(message: ChatMessage): ChatMessage {
         const unquoted = message.replyTo && this.#state.isOptedOut(message.replyTo.byUser) ? withoutQuote(message) : message;
-        const forwardsOptedOut = unquoted.forwarded?.some((line) => line.byUser !== undefined && this.#state.isOptedOut(line.byUser));
-        return forwardsOptedOut ? withoutForwarded(unquoted) : unquoted;
+        return forwardHolds(unquoted.forwarded ?? [], (user) => this.#state.isOptedOut(user)) ? withoutForwarded(unquoted) : unquoted;
     }
 
     /** Coming back works like checking a phone: everything unread gets a look, most important first. */
@@ -1230,7 +1243,12 @@ function toConversationMessage(message: ChatMessage): ConversationMessage {
         reactions: (message.reactions ?? []).map(({ emoji, by }) => ({ emoji, by })),
         isReply: message.replyToMessageId !== undefined,
         quoted: message.replyTo ? { senderName: message.replyTo.by, text: message.replyTo.text } : undefined,
+        forwarded: message.forwarded?.map(toForwardedView),
     };
+}
+
+function toForwardedView({ by, text, forwarded }: ForwardedLine): ForwardedView {
+    return { by, text, forwarded: forwarded?.map(toForwardedView) };
 }
 
 function quoteOf(message: ChatMessage): QuotedMessage {

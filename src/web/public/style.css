@@ -421,6 +421,24 @@ dialog p {
     font-size: 12px;
 }
 
+.forward {
+    margin-top: 4px;
+    padding-left: 8px;
+    border-left: 2px solid var(--line);
+    font-size: 13px;
+}
+
+.forward summary {
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.forward-line {
+    margin-top: 4px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .message-quote {
     margin-top: 4px;
     padding-left: 8px;

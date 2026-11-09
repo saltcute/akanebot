@@ -44,6 +44,13 @@ describe("ChannelPerception", () => {
         ]);
     });
 
+    it("drops a forward when someone forgotten is only in a forward inside it", () => {
+        const { perception } = setup();
+        perception.ingest(message(1, { forwarded: [{ text: "x", forwarded: [{ by: "bob", byUser: "cli:bob", text: "y" }] }] }));
+        perception.purgeQuotesBy("cli:bob");
+        expect(perception.window()[0]?.forwarded).toBeUndefined();
+    });
+
     it("waits for quiet before offering", async () => {
         const { clock, offers, perception } = setup();
         perception.ingest(message(1));

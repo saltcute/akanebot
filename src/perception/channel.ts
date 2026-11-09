@@ -1,4 +1,4 @@
-import type { ChatMessage, MessageReaction } from "../adapters/types.ts";
+import type { ChatMessage, ForwardedLine, MessageReaction } from "../adapters/types.ts";
 import type { Candidate } from "../body/actor.ts";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
 
@@ -18,6 +18,11 @@ export const ADDRESSED_PRIORITY = 10;
 
 export function withoutQuote({ replyTo: _replyTo, ...message }: ChatMessage): ChatMessage {
     return message;
+}
+
+/** Looks inside nested forwards too, because the operator's page shows those. */
+export function forwardHolds(lines: readonly ForwardedLine[], isMatch: (user: string) => boolean): boolean {
+    return lines.some((line) => (line.byUser !== undefined && isMatch(line.byUser)) || forwardHolds(line.forwarded ?? [], isMatch));
 }
 
 export function withoutForwarded({ forwarded: _forwarded, ...message }: ChatMessage): ChatMessage {
@@ -114,7 +119,7 @@ export class ChannelPerception {
     purgeQuotesBy(user: string): void {
         for (const entry of this.#window) {
             if (entry.message.replyTo?.byUser === user) entry.message = withoutQuote(entry.message);
-            if (entry.message.forwarded?.some((line) => line.byUser === user)) entry.message = withoutForwarded(entry.message);
+            if (forwardHolds(entry.message.forwarded ?? [], (byUser) => byUser === user)) entry.message = withoutForwarded(entry.message);
         }
     }
 
