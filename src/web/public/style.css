@@ -685,3 +685,33 @@ dialog::backdrop {
         transition: none;
     }
 }
+
+.image-cards {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.image-card {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.image-frame {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 180px;
+    background: var(--sunken);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.image-frame img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.image-card .actions {
+    flex-wrap: wrap;
+    align-items: center;
+}

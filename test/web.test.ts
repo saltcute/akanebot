@@ -15,7 +15,7 @@ import { DecisionTrace } from "../src/lib/trace.ts";
 import { NullEmbedder } from "../src/llm/embedder.ts";
 import { FakeBackend } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
-import { type MemoryDraft, MemoryStore, type RelationshipRow } from "../src/memory/store.ts";
+import { type MemoryDraft, MemoryStore, type RelationshipRow, type SavedImageDraft } from "../src/memory/store.ts";
 import { Runtime } from "../src/runtime.ts";
 import { createConfigView } from "../src/web/config-view.ts";
 import { isLoopback, resolveWebToken, WebServer } from "../src/web/server.ts";
@@ -816,5 +816,96 @@ describe("web console settings", () => {
         expect(createConfigView(config, path, ["timing"])()).toMatchObject({ overrides: ["timing"] });
         const { call } = await setup();
         expect((await call("/api/config")).status).toBe(404);
+    });
+});
+
+describe("saved pictures", () => {
+    const picture = (overrides: Partial<SavedImageDraft> = {}): SavedImageDraft => ({
+        sha256: "a",
+        scope: CHANNEL,
+        messageId: "m1",
+        userKey: "cli:alice",
+        mime: "image/gif",
+        bytes: Uint8Array.of(0x47, 0x49, 0x46, 0x38),
+        description: "猫猫瞪眼",
+        useFor: "无语",
+        appeal: 0.9,
+        embedding: undefined,
+        embeddingModel: null,
+        savedAt: 1000,
+        ...overrides,
+    });
+    const link = "https://tenor.com/view/cat-gif-1";
+
+    it("lists them newest first, without their bytes, and can narrow the list", async () => {
+        const { store, json } = await setup();
+        store.saveImage(picture());
+        store.saveImage(picture({ sha256: "b", userKey: "cli:bob", description: "狗狗", useFor: "开心", savedAt: 2000 }));
+        const page = await json("/api/images");
+        expect(page.total).toBe(2);
+        expect(page.images.map((image: { description: string }) => image.description)).toEqual(["狗狗", "猫猫瞪眼"]);
+        expect(page.images[0]).not.toHaveProperty("bytes");
+        expect(page.images[0]).not.toHaveProperty("embedding");
+        expect(page.scopes).toEqual([{ key: CHANNEL, name: CHANNEL }]);
+        expect((await json("/api/images?q=无语")).total).toBe(1);
+        expect((await json("/api/images?user=cli:bob")).images[0].useFor).toBe("开心");
+        expect((await json("/api/images?scope=cli:elsewhere")).total).toBe(0);
+    });
+
+    it("needs the token for the picture itself too", async () => {
+        const { store, call } = await setup();
+        const id = store.saveImage(picture());
+        expect((await call(`/api/images/${id}/content`, {}, null)).status).toBe(401);
+    });
+
+    it("serves a picture's bytes as its checked type, under the same locked-down headers", async () => {
+        const { store, call } = await setup();
+        const id = store.saveImage(picture());
+        const response = await call(`/api/images/${id}/content`);
+        expect(response.headers.get("content-type")).toBe("image/gif");
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+        expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x47, 0x49, 0x46, 0x38]);
+    });
+
+    it("has no file to serve for a GIF kept as a link", async () => {
+        const { store, call, json } = await setup();
+        const id = store.saveImage(picture({ bytes: new Uint8Array(), mime: "text/uri-list", link }));
+        expect((await call(`/api/images/${id}/content`)).status).toBe(404);
+        expect((await json("/api/images")).images[0].link).toBe(link);
+    });
+
+    it("lets the page show pictures from blobs and from nowhere else", async () => {
+        const { base } = await setup();
+        const policy = (await fetch(`${base}/`)).headers.get("content-security-policy") ?? "";
+        expect(policy).toContain("img-src blob:;");
+    });
+
+    it("edits what she thinks of one, flattening it, and audits with the ID only", async () => {
+        const { store, call, trace } = await setup();
+        const id = store.saveImage(picture()) ?? 0;
+        const response = await call(`/api/images/${id}`, { method: "PATCH", body: JSON.stringify({ description: "新的\n[描述]", useFor: "吐槽" }) });
+        expect(response.status).toBe(200);
+        expect(store.savedImage(id)).toMatchObject({ description: "新的 描述", useFor: "吐槽" });
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "edit_image", image: id });
+    });
+
+    it("refuses an empty edit", async () => {
+        const { store, call } = await setup();
+        const id = store.saveImage(picture());
+        expect((await call(`/api/images/${id}`, { method: "PATCH", body: JSON.stringify({ description: " ", useFor: "x" }) })).status).toBe(400);
+    });
+
+    it("deletes one and audits it", async () => {
+        const { store, json, call, trace } = await setup();
+        const id = store.saveImage(picture()) ?? 0;
+        await json(`/api/images/${id}`, { method: "DELETE" });
+        expect(store.savedImages()).toEqual([]);
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "delete_image", image: id });
+        expect((await call(`/api/images/${id}`, { method: "DELETE" })).status).toBe(404);
+    });
+
+    it("rejects a bad page size", async () => {
+        const { call } = await setup();
+        expect((await call("/api/images?limit=0")).status).toBe(400);
     });
 });

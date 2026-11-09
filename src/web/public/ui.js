@@ -56,7 +56,7 @@ export function toast(message) {
     toastTimer = setTimeout(() => toastBox.classList.remove("visible"), TOAST_MS);
 }
 
-export async function api(path, options = {}) {
+async function request(path, options) {
     const response = await fetch(`/api${path}`, {
         method: options.method ?? "GET",
         headers: {
@@ -69,6 +69,18 @@ export async function api(path, options = {}) {
         hooks.onUnauthorized();
         throw new Error("Signed out");
     }
+    return response;
+}
+
+/** For binary responses. An <img src> can't send the auth header, so pictures come through here. */
+export async function apiBlob(path) {
+    const response = await request(path, {});
+    if (!response.ok) throw new Error("That didn't work");
+    return response.blob();
+}
+
+export async function api(path, options = {}) {
+    const response = await request(path, options);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "That didn't work");
     return data;

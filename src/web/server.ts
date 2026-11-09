@@ -18,6 +18,8 @@ const MAX_PAGE_SIZE = 200;
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_TRACE_EVENTS = 1000;
 const DEFAULT_TRACE_EVENTS = 200;
+const MAX_IMAGE_DESCRIPTION_CHARS = 200;
+const MAX_IMAGE_USE_FOR_CHARS = 40;
 
 const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -27,6 +29,7 @@ const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/people.js", { file: "people.js", type: "text/javascript; charset=utf-8" }],
     ["/status.js", { file: "status.js", type: "text/javascript; charset=utf-8" }],
     ["/history.js", { file: "history.js", type: "text/javascript; charset=utf-8" }],
+    ["/images.js", { file: "images.js", type: "text/javascript; charset=utf-8" }],
     ["/activity.js", { file: "activity.js", type: "text/javascript; charset=utf-8" }],
     ["/settings.js", { file: "settings.js", type: "text/javascript; charset=utf-8" }],
     ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
@@ -35,7 +38,7 @@ const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
 /** Chat text is written by strangers, so the page may only ever run its own script and talk to its own server. */
 const SECURITY_HEADERS = {
     "Content-Security-Policy":
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
@@ -69,6 +72,19 @@ const historyQuerySchema = z.object({
     offset: z.coerce.number().int().min(0).default(0),
 });
 
+const imageQuerySchema = z.object({
+    scope: z.string().min(1).optional(),
+    user: z.string().min(1).optional(),
+    q: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+    offset: z.coerce.number().int().min(0).default(0),
+});
+
+const imageEditSchema = z.strictObject({
+    description: z.string().trim().min(1).max(MAX_IMAGE_DESCRIPTION_CHARS),
+    useFor: z.string().trim().min(1).max(MAX_IMAGE_USE_FOR_CHARS),
+});
+
 const traceQuerySchema = z.object({
     kind: z.string().min(1).optional(),
     channel: z.string().min(1).optional(),
@@ -87,6 +103,17 @@ class HttpError extends Error {
     constructor(status: number, message: string) {
         super(message);
         this.status = status;
+    }
+}
+
+/** A route's answer when it's a file and not JSON. */
+class FileResponse {
+    readonly bytes: Uint8Array;
+    readonly type: string;
+
+    constructor(bytes: Uint8Array, type: string) {
+        this.bytes = bytes;
+        this.type = type;
     }
 }
 
@@ -184,7 +211,12 @@ export class WebServer {
         if (!found) throw new HttpError(405, "Method not allowed");
         const body = await readJsonBody(request);
         const result = await found.route.handle({ params: found.match.slice(1).map(decodeParam), query: url.searchParams, body });
-        sendJson(response, 200, result ?? { ok: true });
+        if (result instanceof FileResponse) {
+            response.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": result.type });
+            response.end(result.bytes);
+        } else {
+            sendJson(response, 200, result ?? { ok: true });
+        }
     }
 
     /** A bearer token rather than a cookie, so another site can't make the browser act on the operator's behalf. */
@@ -224,6 +256,11 @@ function buildRoutes(runtime: Runtime, configView: (() => unknown) | undefined):
         return key;
     };
     const audit = (action: string, memory: number) => runtime.noteOperatorAction(action, { memory });
+    const imageId = (request: ApiRequest): number => {
+        const id = Number(request.params[0]);
+        if (!store.savedImage(id)) throw new HttpError(404, "No such picture");
+        return id;
+    };
     const describeKey = (key: string | null): string | null => (key ? (store.displayNameOf(key) ?? key.replace(/^name:/, "")) : null);
     const present = (memory: MemoryView) => ({
         ...memory,
@@ -352,6 +389,39 @@ function buildRoutes(runtime: Runtime, configView: (() => unknown) | undefined):
                 const id = memoryId(request);
                 store.forget(id);
                 audit("delete_memory", id);
+            },
+        },
+
+        {
+            method: "GET",
+            path: /^\/api\/images$/,
+            handle: (request) => {
+                const { q, ...filters } = imageQuerySchema.parse(Object.fromEntries(request.query));
+                return runtime.savedImagesPage({ ...filters, ...(q ? { text: q } : {}) });
+            },
+        },
+        {
+            method: "GET",
+            path: /^\/api\/images\/(\d+)\/content$/,
+            handle: (request) => {
+                const content = store.savedImageContent(imageId(request));
+                // A saved link has no file, and only types checked against the file itself are ever stored as images.
+                if (!content || content.link !== null) throw new HttpError(404, "This picture has no file");
+                return new FileResponse(content.bytes, content.mime);
+            },
+        },
+        {
+            method: "PATCH",
+            path: /^\/api\/images\/(\d+)$/,
+            handle: async (request) => {
+                await runtime.editSavedImage(imageId(request), imageEditSchema.parse(request.body));
+            },
+        },
+        {
+            method: "DELETE",
+            path: /^\/api\/images\/(\d+)$/,
+            handle: (request) => {
+                runtime.deleteSavedImage(imageId(request));
             },
         },
 

@@ -41,7 +41,7 @@ import type { DecisionTrace, TraceEvent } from "./lib/trace.ts";
 import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
-import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore } from "./memory/store.ts";
+import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore, SavedImageQuery, SavedImageView } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutForwarded, withoutQuote } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
@@ -524,6 +524,41 @@ export class Runtime {
             total,
             channels: store.logChannels().map((key) => ({ key, name: this.channelName(key) ?? key })),
         };
+    }
+
+    /** Her saved pictures for the operator, one page at a time. A person's filter covers all their accounts. */
+    savedImagesPage(query: Omit<SavedImageQuery, "users"> & { user?: string | undefined }): {
+        images: (SavedImageView & { scopeName: string; posterName: string })[];
+        total: number;
+        scopes: { key: string; name: string }[];
+    } {
+        const { user, ...rest } = query;
+        const { store } = this.memory;
+        const { images, total } = store.browseSavedImages({ ...rest, ...(user ? { users: this.#people.accountsOf(user) } : {}) });
+        return {
+            images: images.map((image) => ({
+                ...image,
+                scopeName: this.channelName(image.scope) ?? image.scope,
+                posterName: this.#people.nameOf(image.userKey) ?? store.displayNameOf(image.userKey) ?? image.userKey,
+            })),
+            total,
+            scopes: store.savedImageScopes().map((key) => ({ key, name: this.channelName(key) ?? key })),
+        };
+    }
+
+    /** What's written here reaches her prompts, so it's flattened the same way a model's description is. */
+    async editSavedImage(id: number, fields: { description: string; useFor: string }): Promise<void> {
+        const { embedder, trace } = this.#options;
+        const description = flattenCaption(fields.description, MAX_CAPTION_CHARS);
+        const useFor = flattenCaption(fields.useFor, MAX_USE_FOR_CHARS);
+        const embedding = await embedder.embed(`${useFor} ${description}`, "passage");
+        this.memory.store.editSavedImage(id, { description, useFor, embedding, embeddingModel: embedding ? embedder.modelId : null });
+        trace.record("control.web", { detail: { action: "edit_image", image: id } });
+    }
+
+    deleteSavedImage(id: number): void {
+        this.memory.store.deleteSavedImage(id);
+        this.#options.trace.record("control.web", { detail: { action: "delete_image", image: id } });
     }
 
     channelName(key: string): string | undefined {

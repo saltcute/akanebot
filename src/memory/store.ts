@@ -101,6 +101,11 @@ export type SavedImage = Omit<SavedImageDraft, "bytes" | "sha256" | "link"> & {
     timesSent: number;
 };
 
+/** A saved picture as tools see it, without its embedding. */
+export type SavedImageView = Omit<SavedImage, "embedding" | "embeddingModel">;
+
+export type SavedImageQuery = { scope?: string | undefined; users?: readonly string[]; text?: string | undefined; limit: number; offset: number };
+
 export type MemoryStats = { active: number; archived: number; replaced: number; unindexed: number; messages: number };
 
 export type LoggedSpeaker = { userKey: string; displayName: string; messages: number; lastSeen: number };
@@ -140,6 +145,9 @@ const MEMORY_STATE_CLAUSES: Record<MemoryState, string> = {
 };
 const MEMORY_VIEW_COLUMNS =
     "id, scope, reach, kind, subject, attributedTo, gist, detail, importance, salience, confidence, strength, createdAt, lastRecalledAt, recallCount, status, supersededBy, embedding IS NOT NULL AS indexed";
+
+const SAVED_IMAGE_VIEW_COLUMNS =
+    "id, scope, messageId, userKey, mime, length(bytes) AS size, description, useFor, appeal, savedAt, lastSentAt, timesSent, link";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rawLog (
@@ -636,6 +644,57 @@ export class MemoryStore {
             `SELECT id, scope, messageId, userKey, mime, length(bytes) AS size, description, useFor, appeal, embedding, embeddingModel, savedAt, lastSentAt, timesSent, link
              FROM savedImages ORDER BY id`,
         ).map((row) => ({ ...row, embedding: toEmbedding(row.embedding) }));
+    }
+
+    savedImage(id: number): SavedImageView | undefined {
+        return this.#all<SavedImageView>(`SELECT ${SAVED_IMAGE_VIEW_COLUMNS} FROM savedImages WHERE id = ?`, id)[0];
+    }
+
+    /** One page, newest first. Operator tooling only. */
+    browseSavedImages(query: SavedImageQuery): { images: SavedImageView[]; total: number } {
+        const clauses: string[] = [];
+        const parameters: SQLInputValue[] = [];
+        if (query.scope) {
+            clauses.push("scope = ?");
+            parameters.push(query.scope);
+        }
+        if (query.users) {
+            clauses.push(`userKey IN (${query.users.map(() => "?").join(", ")})`);
+            parameters.push(...query.users);
+        }
+        if (query.text) {
+            const pattern = `%${query.text.replace(/[\\%_]/g, "\\$&")}%`;
+            clauses.push("(description LIKE ? ESCAPE '\\' OR useFor LIKE ? ESCAPE '\\')");
+            parameters.push(pattern, pattern);
+        }
+        const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+        const [count] = this.#all<{ total: number }>(`SELECT COUNT(*) AS total FROM savedImages ${where}`, ...parameters);
+        const images = this.#all<SavedImageView>(
+            `SELECT ${SAVED_IMAGE_VIEW_COLUMNS} FROM savedImages ${where} ORDER BY savedAt DESC, id DESC LIMIT ? OFFSET ?`,
+            ...parameters,
+            query.limit,
+            query.offset,
+        );
+        return { images, total: count?.total ?? 0 };
+    }
+
+    savedImageScopes(): string[] {
+        return this.#all<{ scope: string }>("SELECT DISTINCT scope FROM savedImages ORDER BY scope").map((row) => row.scope);
+    }
+
+    /** New words replace the embedding too, or she'd keep finding it by what it used to say. */
+    editSavedImage(
+        id: number,
+        fields: { description: string; useFor: string; embedding: Float32Array | undefined; embeddingModel: string | null },
+    ): void {
+        this.#run(
+            "UPDATE savedImages SET description = ?, useFor = ?, embedding = ?, embeddingModel = ? WHERE id = ?",
+            fields.description,
+            fields.useFor,
+            toBlob(fields.embedding),
+            fields.embedding ? fields.embeddingModel : null,
+            id,
+        );
     }
 
     /** Undefined if it's been forgotten since she thought of it. */

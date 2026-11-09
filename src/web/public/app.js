@@ -3,6 +3,7 @@
 import { activityTab } from "./activity.js";
 import { showDecisions, showPerson } from "./dialogs.js";
 import { historyTab } from "./history.js";
+import { imagesTab } from "./images.js";
 import { peopleTab } from "./people.js";
 import { settingsTab } from "./settings.js";
 import { statusTab } from "./status.js";
@@ -635,6 +636,7 @@ const TABS = {
     },
     history: historyTab,
     memories: { label: "Memories", load: refreshMemories, render: renderMemories },
+    images: imagesTab,
     people: peopleTab,
     status: statusTab,
     activity: activityTab,

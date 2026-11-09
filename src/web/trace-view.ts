@@ -25,7 +25,7 @@ const SHOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
     "body.preempt": ["by"],
     "body.skimmed": ["skipped"],
     "budget.exceeded": ["spentTodayUsd", "spentTotalUsd", "dailyBudgetUsd"],
-    "control.web": ["action", "minutes", "memory", "user", "level", "familiarity", "affinity"],
+    "control.web": ["action", "minutes", "memory", "image", "user", "level", "familiarity", "affinity"],
     "gate.repeat": ["repeat", "probability"],
     "image.judged": ["verdict", "appeal"],
     "image.offered": ["ids"],
