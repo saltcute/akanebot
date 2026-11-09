@@ -45,6 +45,32 @@ function setup(limits: Partial<GuardLimits> = {}) {
     return { clock, trace, adapter, guard: new SendGuard({ clock, trace, limits: { ...LIMITS, ...limits } }) };
 }
 
+describe("SendGuard shadow channels", () => {
+    const live = { platform: "cli", channelId: "live" } as const;
+
+    function shadowSetup() {
+        const clock = new ManualClock();
+        const trace = new DecisionTrace(clock);
+        const adapter = fakeAdapter(async () => ({ messageId: "out" }));
+        return { trace, adapter, guard: new SendGuard({ clock, trace, limits: LIMITS, shadowChannels: new Set(["cli:group"]) }) };
+    }
+
+    it("holds back a shadow channel and delivers to any other", async () => {
+        const { trace, adapter, guard } = shadowSetup();
+        expect(await guard.send(adapter, channel, "hi")).toEqual({ kind: "blocked", reason: "shadow" });
+        expect(adapter.sends).toBe(0);
+        expect((await guard.send(adapter, live, "hi")).kind).toBe("sent");
+        expect(adapter.sends).toBe(1);
+        expect(trace.ofKind("send.shadow").map((event) => event.channel)).toEqual(["cli:group"]);
+    });
+
+    it("doesn't let a shadow channel use up a live channel's rate limit", async () => {
+        const { adapter, guard } = shadowSetup();
+        for (let i = 0; i < LIMITS.bucketCapacity + 1; i++) await guard.send(adapter, channel, "hi");
+        expect((await guard.send(adapter, live, "hi")).kind).toBe("sent");
+    });
+});
+
 describe("SendGuard.observe", () => {
     it("accepts a new message once and rejects redelivery", () => {
         const { guard } = setup();

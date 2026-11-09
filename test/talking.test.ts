@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 import type { ChatMessage } from "../src/adapters/types.ts";
-import { appConfigSchema } from "../src/config.ts";
+import { appConfigSchema, resolveGroups } from "../src/config.ts";
 import { assessCompetence } from "../src/gate/competence.ts";
 import { allAimedElsewhere, decideToSpeak, NEUTRAL_CONTEXT, overruleMisaddress } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
@@ -207,6 +207,24 @@ describe("example config", () => {
             expect(config.backends[role.backend]).toBeDefined();
             expect(config.prices[role.model]).toBeDefined();
         }
+    });
+
+    it("keeps a group in shadow unless the config says otherwise", () => {
+        const example = parse(readFileSync("config.example.yaml", "utf8"));
+        const group = (channelId: string, shadow?: boolean) => ({
+            platform: "qq",
+            channelId,
+            disclosed: true,
+            ...(shadow === undefined ? {} : { shadow }),
+        });
+        const modes = (top: Record<string, boolean>) => {
+            const { shadow: _example, ...rest } = example;
+            const groups = [group("inherits"), group("live", false), group("held", true)];
+            const config = appConfigSchema.parse({ ...rest, ...top, control: { ...example.control, groups } });
+            return resolveGroups(config).map((resolved) => resolved.shadow);
+        };
+        expect(modes({})).toEqual([true, false, true]);
+        expect(modes({ shadow: false })).toEqual([false, false, true]);
     });
 });
 

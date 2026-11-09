@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { CliAdapter } from "../adapters/cli.ts";
-import { loadConfig } from "../config.ts";
+import { loadConfig, resolveGroups } from "../config.ts";
 import { People } from "../control/people.ts";
 import { MemoryControlStore } from "../control/state.ts";
 import { fetchOverHttp } from "../images/download.ts";
@@ -103,7 +103,7 @@ const runtime = new Runtime({
     control: {
         commandPrefix: config.control.commandPrefix,
         admins: [...config.control.admins, "cli:admin"],
-        groups: [...config.control.groups, { platform: "cli", channelId: "group", disclosed: true }],
+        groups: [...resolveGroups(config), { platform: "cli", channelId: "group", disclosed: true }],
     },
     controlStore: new MemoryControlStore(),
     // Off by default so you can test at any hour and without waiting.

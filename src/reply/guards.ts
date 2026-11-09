@@ -41,15 +41,15 @@ export class SendGuard {
     #recent = new Map<string, Speaker[]>();
     #tokens: number;
     #lastRefill: number;
-    #shadow: boolean;
+    #shadowChannels: ReadonlySet<string>;
 
-    constructor(options: { clock: Clock; trace: DecisionTrace; limits: GuardLimits; shadow?: boolean }) {
+    constructor(options: { clock: Clock; trace: DecisionTrace; limits: GuardLimits; shadowChannels?: ReadonlySet<string> }) {
         this.#clock = options.clock;
         this.#trace = options.trace;
         this.#limits = options.limits;
         this.#tokens = options.limits.bucketCapacity;
         this.#lastRefill = options.clock.now();
-        this.#shadow = options.shadow ?? false;
+        this.#shadowChannels = options.shadowChannels ?? new Set();
     }
 
     /** For the operator. Reading it refills nothing. */
@@ -101,14 +101,15 @@ export class SendGuard {
         if (options.signal?.aborted) return this.#blocked(key, "aborted");
         if (this.#shareExceeded(key)) return this.#blocked(key, "share_breaker");
         if (this.#inBotLoop(key)) return this.#blocked(key, "bot_loop");
-        if (!this.#takeToken()) return this.#blocked(key, "rate_limited");
+        // The bucket is shared, and words nobody will see mustn't use up what a live group has left.
+        if (!this.#shadowChannels.has(key) && !this.#takeToken()) return this.#blocked(key, "rate_limited");
         return this.#deliver(channel, text, options, post);
     }
 
     /** A reaction counts against the rate limit but not as talking. */
     async react(adapter: Adapter, channel: ChannelRef, messageId: string, reaction: ReactionChoice): Promise<"reacted" | "shadow" | "failed"> {
         const key = channelKey(channel);
-        if (this.#shadow) {
+        if (this.#shadowChannels.has(key)) {
             this.#trace.record("send.shadow", { channel: key, messageId, detail: { text: `(reacts ${reaction.label})` } });
             return "shadow";
         }
@@ -125,7 +126,7 @@ export class SendGuard {
 
     /** Cosmetic, so a failure here is ignored. */
     async typing(adapter: Adapter, channel: ChannelRef): Promise<void> {
-        if (this.#shadow) return;
+        if (this.#shadowChannels.has(channelKey(channel))) return;
         await adapter.sendTyping(channel).catch(() => {});
     }
 
@@ -137,7 +138,7 @@ export class SendGuard {
     async #deliver(channel: ChannelRef, text: string, options: SendOptions, post: () => Post): Promise<SendOutcome> {
         const key = channelKey(channel);
         const mention = options.mention ? { mention: text.slice(options.mention.start + 1, options.mention.end) } : {};
-        if (this.#shadow) {
+        if (this.#shadowChannels.has(key)) {
             const replyTo = options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {};
             this.#trace.record("send.shadow", { channel: key, detail: { text, ...replyTo, ...mention } });
             return { kind: "blocked", reason: "shadow" };

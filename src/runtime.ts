@@ -69,7 +69,8 @@ export type ControlOptions = {
     commandPrefix: string;
     /** `platform:userId` of each person allowed to run admin commands. */
     admins: readonly string[];
-    groups: readonly (ChannelRef & { disclosed: boolean; shareMemory?: boolean })[];
+    /** A group with `shadow` reads and decides, but never posts anything. */
+    groups: readonly (ChannelRef & { disclosed: boolean; shareMemory?: boolean; shadow?: boolean })[];
 };
 
 export type RuntimeOptions = {
@@ -87,8 +88,6 @@ export type RuntimeOptions = {
     memoryStore: MemoryStore;
     embedder: Embedder;
     memorySettings: MemorySettings;
-    /** Reads and decides, but never posts anything. */
-    shadow?: boolean;
     /** Human reading and typing delays. Without it, replies go out as soon as they're written. */
     pacing?: Pacing;
     /** Follow the persona's sleep and busy hours. */
@@ -123,6 +122,8 @@ export type ConversationSummary = {
     key: string;
     name: string | undefined;
     mutedUntil: number | undefined;
+    /** She decides here, but nothing gets posted. */
+    shadow: boolean;
     attending: boolean;
     /** Messages it hasn't answered or let go of yet. */
     unread: number;
@@ -156,7 +157,9 @@ export type PersonSummary = {
 
 export type RuntimeStatus = {
     personaName: string;
-    shadow: boolean;
+    /** How many of the allowed channels are in shadow mode, out of `channels`. */
+    shadowChannels: number;
+    channels: number;
     killed: boolean;
     body: BodyState;
     attending: string | undefined;
@@ -238,6 +241,7 @@ export class Runtime {
     #state: ControlState;
     #people: People;
     #allowedChannels: ReadonlySet<string>;
+    #shadowChannels: ReadonlySet<string>;
     #background = new Set<Promise<void>>();
     #nextEventId = 1;
 
@@ -246,7 +250,8 @@ export class Runtime {
         this.#adapters = new Map(options.adapters.map((adapter) => [adapter.platform, adapter]));
         this.#gateRng = options.rng.fork("gate");
         this.#competenceRng = options.rng.fork("competence");
-        this.guard = new SendGuard({ clock: options.clock, trace: options.trace, limits: options.limits, shadow: options.shadow ?? false });
+        this.#shadowChannels = new Set(options.control.groups.filter((group) => group.disclosed && group.shadow === true).map(channelKey));
+        this.guard = new SendGuard({ clock: options.clock, trace: options.trace, limits: options.limits, shadowChannels: this.#shadowChannels });
         const attend: Attend = (lease) => this.#attend(lease);
         this.body = new BodyActor({ clock: options.clock, trace: options.trace, attend });
         this.#persona = options.persona;
@@ -388,7 +393,8 @@ export class Runtime {
     status(): RuntimeStatus {
         return {
             personaName: this.#persona.name,
-            shadow: this.#options.shadow ?? false,
+            shadowChannels: this.#shadowChannels.size,
+            channels: this.#allowedChannels.size,
             killed: this.#state.killed,
             body: this.body.state,
             attending: this.body.attending,
@@ -686,6 +692,7 @@ export class Runtime {
             key,
             name: this.channelName(key),
             mutedUntil: this.#state.mutedUntil(key),
+            shadow: this.#shadowChannels.has(key),
             attending: this.body.attending === key,
             unread: this.#channels.get(key)?.perception.unreadCount() ?? 0,
             undigested: this.memory.store.openSegment(key).length,

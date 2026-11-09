@@ -132,14 +132,13 @@ async function setup(options: Setup) {
         control: {
             commandPrefix: "/akanebot",
             admins: ["cli:admin"],
-            groups: [{ platform: "cli", channelId: "group", disclosed: true }],
+            groups: [{ platform: "cli", channelId: "group", disclosed: true, ...(options.shadow ? { shadow: true } : {}) }],
             ...options.control,
         },
         controlStore: store,
         memoryStore,
         embedder: new NullEmbedder(),
         memorySettings: { segmentGapMs: 20 * 60_000, maxSegmentMessages: 60, rawRetentionMs: 30 * 86_400_000, dailyWritesPerUser: 30 },
-        ...(options.shadow ? { shadow: true } : {}),
         ...(options.pacing ? { pacing: options.pacing } : {}),
         ...(options.routine ? { routine: true } : {}),
         ...(options.search ? { search: options.search } : {}),
@@ -677,6 +676,30 @@ describe("shadow mode", () => {
         adapter.say("admin", "/akanebot status");
         await settle();
         expect(adapter.sent).toEqual([]);
+    });
+
+    describe("set per group", () => {
+        const groups = [
+            { platform: "cli", channelId: "group", disclosed: true, shadow: true },
+            { platform: "cli", channelId: "live", disclosed: true, shadow: false },
+        ] as const;
+
+        it("holds back only the shadow group's words", async () => {
+            const { adapter, trace, settle } = await setup({ control: { groups } });
+            adapter.say("alice", "hi");
+            await settle();
+            adapter.say("alice", "hi", "live");
+            await settle();
+            expect(adapter.sent.map((sent) => sent.channelId)).toEqual(["live"]);
+            expect(trace.ofKind("send.shadow").map((event) => event.channel)).toEqual(["cli:group"]);
+        });
+
+        it("tells the operator which groups are held back", async () => {
+            const { runtime } = await setup({ control: { groups } });
+            expect(runtime.status()).toMatchObject({ shadowChannels: 1, channels: 2 });
+            expect(runtime.conversation("cli:group")?.shadow).toBe(true);
+            expect(runtime.conversation("cli:live")?.shadow).toBe(false);
+        });
     });
 });
 

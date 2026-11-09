@@ -1,8 +1,8 @@
 import { DiscordAdapter } from "./adapters/discord.ts";
 import { OneBotAdapter } from "./adapters/onebot.ts";
-import type { Adapter } from "./adapters/types.ts";
+import { type Adapter, channelKey } from "./adapters/types.ts";
 import { printTraceEvent } from "./cli/print-trace.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, resolveGroups } from "./config.ts";
 import { People } from "./control/people.ts";
 import { JsonFileControlStore } from "./control/state.ts";
 import { fetchOverHttp } from "./images/download.ts";
@@ -36,7 +36,7 @@ const persona = loadPersona(config.persona, timezoneOverride);
 if (!process.env.ANTHROPIC_API_KEY) fail("ANTHROPIC_API_KEY is empty. Add it to .env.");
 
 const placeholder = /REPLACE_WITH/;
-const groups = config.control.groups.filter((group) => group.disclosed && !placeholder.test(group.channelId));
+const groups = resolveGroups(config).filter((group) => group.disclosed && !placeholder.test(group.channelId));
 if (groups.length === 0) fail(`No groups to join. Put a real channel or group ID under control.groups in ${configPath}.`);
 const admins = config.control.admins.filter((admin) => !placeholder.test(admin));
 
@@ -96,7 +96,6 @@ const runtime = new Runtime({
         rawRetentionMs: config.memory.rawRetentionDays * DAY_MS,
         dailyWritesPerUser: config.memory.dailyWritesPerUser,
     },
-    shadow: config.shadow,
     pacing: config.pacing,
     routine: true,
     search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
@@ -126,7 +125,8 @@ try {
 }
 
 console.log(`${persona.name} is online${discord ? ` as ${discord.botTag} on Discord` : ""} (config: ${configPath})`);
-console.log(`Watching ${groups.length} channel(s). Mode: ${config.shadow ? "SHADOW, she decides but sends nothing" : "LIVE, she will post"}.`);
+console.log(`Watching ${groups.length} channel(s):`);
+for (const group of groups) console.log(`  ${channelKey(group)}: ${group.shadow ? "SHADOW, she decides but sends nothing" : "LIVE, she will post"}`);
 if (admins.length === 0) console.log(`No admins set, so ${config.control.commandPrefix} kill and mute won't work for anyone.`);
 
 const webConsole = await startWebConsole(

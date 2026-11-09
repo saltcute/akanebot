@@ -4,7 +4,7 @@
 persona: personas/akane.md
 
 # true: she reads and decides but posts nothing, and "[would say]" lines show what she'd have sent.
-# Set to false only when you're ready for her to talk.
+# Set to false only when you're ready for her to talk. A group can override this with its own shadow setting.
 shadow: true
 
 # The bot goes silent for the rest of the UTC day once it has spent this much.
@@ -41,6 +41,8 @@ control:
   #  - { platform: qq, channelId: "123456789", disclosed: true }
   # Memories marked general can come up in other listed groups. shareMemory: false walls a group off in both directions.
   #  - { platform: qq, channelId: "987654321", disclosed: true, shareMemory: false }
+  # shadow on a group overrides the top-level setting, so she can talk in one group while only watching another.
+  #  - { platform: discord, channelId: "555555555", disclosed: true, shadow: false }
 
 # Links one person's accounts, and says how she knows them. Keep real IDs in your own config.yaml, which git ignores.
 # The same account in two groups is already one person, so list someone only to link platforms or add a note.

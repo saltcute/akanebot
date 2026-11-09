@@ -181,7 +181,7 @@ function renderVitals() {
         stat("Now", status.awayReasons.length > 0 ? `${body} (${status.awayReasons.join(", ")})` : body),
         stat("Battery", `${Math.round(status.battery * 100)}%`),
         stat("Today", `$${spentTodayUsd.toFixed(2)} / $${dailyBudgetUsd.toFixed(2)}`),
-        status.shadow ? pill("Shadow, sends nothing", "warn") : pill("Live", "ok"),
+        sendingMode(status),
         status.alerts.length > 0 ? el("button", { onclick: showAlerts }, `Alerts (${status.alerts.length})`) : undefined,
         status.killed
             ? el("button", { className: "primary", onclick: () => control("resume", "Running again") }, "Resume")
@@ -282,8 +282,15 @@ function renderConversationList() {
     );
 }
 
+function sendingMode({ shadowChannels, channels }) {
+    if (shadowChannels === 0) return pill("Live", "ok");
+    if (shadowChannels === channels) return pill("Shadow, sends nothing", "warn");
+    return pill(`Shadow in ${shadowChannels} of ${channels} groups`, "warn");
+}
+
 function conversationBadges(conversation) {
     return [
+        conversation.shadow ? pill("Shadow, sends nothing", "warn") : undefined,
         conversation.attending ? pill("Reading now", "accent") : undefined,
         conversation.unread > 0 ? pill(`${conversation.unread} unread`, "accent") : undefined,
         conversation.mutedUntil ? pill(`Muted until ${formatTime(conversation.mutedUntil)}`, "warn") : undefined,

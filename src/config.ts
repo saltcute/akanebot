@@ -12,7 +12,7 @@ export const appConfigSchema = z.strictObject({
     ...llmConfigSchema.shape,
     prices: pricesSchema,
     persona: z.string().min(1),
-    /** Reads and decides, but never posts anything. */
+    /** Reads and decides, but never posts anything. Applies to any group that doesn't set its own `shadow`. */
     shadow: z.boolean().default(true),
     timing: z
         .strictObject({
@@ -55,6 +55,8 @@ export const appConfigSchema = z.strictObject({
                     disclosed: z.boolean(),
                     /** False walls the group off, so it neither adds to the memories groups share nor recalls them. */
                     shareMemory: z.boolean().default(true),
+                    /** Overrides the top-level `shadow` for this group. */
+                    shadow: z.boolean().optional(),
                 }),
             )
             .default([]),
@@ -76,6 +78,11 @@ export const appConfigSchema = z.strictObject({
 });
 
 export type AppConfig = z.infer<typeof appConfigSchema>;
+
+/** A group that doesn't say follows the top-level `shadow`, so a group only goes live when the config says so. */
+export function resolveGroups(config: Pick<AppConfig, "shadow" | "control">) {
+    return config.control.groups.map((group) => ({ ...group, shadow: group.shadow ?? config.shadow }));
+}
 
 /** `config.yaml` is the maintainer's own copy. Without one, the tracked example applies. */
 export function loadConfig(path?: string): { config: AppConfig; path: string } {
