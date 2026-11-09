@@ -178,7 +178,7 @@ export function renderReplyState(options: {
     const { now, persona, features, competence, addressed, situation = [] } = options;
     const time = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(now);
     const state = [
-        `It is ${time}.`,
+        `It is ${time} where you are (${persona.timezone}).`,
         addressed
             ? "Someone is talking to you."
             : "Nobody asked you. You're just joining in. If you can't follow what they're talking about, return an empty list rather than saying so.",

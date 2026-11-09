@@ -14,6 +14,10 @@ function localTime(now: number): string {
 }
 
 describe("time zones", () => {
+    it("says which zone its own clock is in, so a person's zone can be compared with it", () => {
+        expect(localTime(Date.UTC(2026, 6, 1, 16, 0))).toContain("where you are (America/Toronto)");
+    });
+
     it("uses Eastern Daylight Time in summer", () => {
         expect(localTime(Date.UTC(2026, 6, 1, 16, 0))).toContain("12:00");
     });
