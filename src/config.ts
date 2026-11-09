@@ -53,6 +53,14 @@ export const appConfigSchema = z.strictObject({
         statePath: z.string().min(1).default("data/control.json"),
     }),
     dailyBudgetUsd: z.number().positive(),
+    /** The operator's web UI. The login token comes from GABRIEL_WEB_TOKEN, or is generated at startup. */
+    web: z
+        .strictObject({
+            enabled: z.boolean().default(true),
+            host: z.string().min(1).default("127.0.0.1"),
+            port: z.number().int().min(0).max(65_535).default(8787),
+        })
+        .prefault({}),
 });
 
 export type AppConfig = z.infer<typeof appConfigSchema>;

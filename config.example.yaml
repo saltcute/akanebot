@@ -40,6 +40,14 @@ control:
   # Shown to anyone who may be in crisis. Check these are right for where your members live.
   crisisResources: "Canada and US: call or text 988. China: call 12356. Elsewhere: your local emergency number."
 
+# The operator's web UI, for managing memories and live conversations. It shows private chat, so it needs a token:
+# set GABRIEL_WEB_TOKEN in .env, or the bot makes one up at startup and prints a sign-in link.
+# It has no TLS. Keep it on 127.0.0.1 and use an SSH tunnel to reach it from another machine.
+web:
+  enabled: true
+  host: 127.0.0.1
+  port: 8787
+
 backends:
   anthropic: { type: anthropic }
 

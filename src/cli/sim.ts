@@ -14,6 +14,7 @@ import { MemoryStore } from "../memory/store.ts";
 import { loadPersona } from "../persona/loader.ts";
 import { watchPersona } from "../persona/watch.ts";
 import { Runtime } from "../runtime.ts";
+import { startWebConsole } from "../web/start.ts";
 import { printTraceEvent } from "./print-trace.ts";
 
 const SIM_DATABASE = "data/sim-memory.db";
@@ -146,6 +147,10 @@ console.log(
     `Commands: /react <name> <emoji> reacts to her last message, /close ends the conversation so it gets remembered, /sleep runs the nightly job, /memories, /why [id], /cost, /trace, /verbose, /away, /back, /quit. Control, typed as "admin: ...": ${config.control.commandPrefix} mute|unmute|kill|resume|status\n`,
 );
 
+const webConsole = process.argv.includes("--web")
+    ? await startWebConsole({ ...config.web, enabled: true }, runtime, process.env.GABRIEL_WEB_TOKEN, (message) => console.log(`  [web] ${message}`))
+    : undefined;
+
 const input = createInterface({ input: process.stdin });
 for await (const raw of input) {
     const line = raw.trim();
@@ -187,6 +192,7 @@ input.close();
 await runtime.whenIdle();
 await runtime.memory.closeSegment("cli:group");
 stopWatching();
+await webConsole?.stop();
 await runtime.stop();
 console.log(cost.summary());
 process.exit(0);

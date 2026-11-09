@@ -15,6 +15,7 @@ import { MemoryStore } from "./memory/store.ts";
 import { loadPersona } from "./persona/loader.ts";
 import { watchPersona } from "./persona/watch.ts";
 import { Runtime } from "./runtime.ts";
+import { startWebConsole } from "./web/start.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -103,12 +104,17 @@ console.log(`${persona.name} is online as ${adapter.botTag} (config: ${configPat
 console.log(`Watching ${groups.length} channel(s). Mode: ${config.shadow ? "SHADOW, she decides but sends nothing" : "LIVE, she will post"}.`);
 if (admins.length === 0) console.log(`No admins set, so ${config.control.commandPrefix} kill and mute won't work for anyone.`);
 
+const webConsole = await startWebConsole(config.web, runtime, process.env.GABRIEL_WEB_TOKEN, (message) =>
+    trace.record("alert", { detail: { reason: "web_failed", message } }),
+);
+
 let stopping = false;
 async function shutdown(): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log("\nShutting down...");
     stopWatching();
+    await webConsole?.stop();
     await runtime.stop();
     console.log(cost.summary());
     process.exit(0);

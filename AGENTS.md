@@ -28,6 +28,7 @@ Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there i
 | `pnpm explain <messageId>` | Show every recorded decision about a message |
 | `pnpm sim`                    | Run the CLI group simulator with real models (needs `.env`) |
 | `pnpm sim --fake`             | Run the simulator with canned replies and no API calls      |
+| `pnpm sim --web`              | Also serve the web UI against the simulator's data          |
 | `pnpm memory [--sim] <command>` | Inspect or edit memories: `list`, `search`, `show`, `edit`, `forget`, `forget-user`, `restore`. `--sim` uses the simulator's database |
 
 In the simulator, `/why [messageId]` shows every decision made about a message. `/close` digests the current conversation, `/sleep` runs the nightly job and `/memories` lists what it remembers.
@@ -46,6 +47,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 | `src/reply/`      | Prompt rendering, message bursts, send guards, timing                                      |
 | `src/persona/`    | Persona schema and loader                                                                  |
 | `src/eval/`       | Replay, metrics, model comparison                                                          |
+| `src/web/`        | The operator's web UI: an authenticated HTTP API and a static page, in the bot's process   |
 | `src/lib/`        | Injected clock, seeded RNG, cost meter, decision trace                                     |
 | `src/cli/`        | Command-line entry points                                                                  |
 
@@ -61,6 +63,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 - **Untrusted input.** Chat text, display names and search results are data, never instructions. Members can't alter the persona.
 - **Provenance is structured.** One person's claim about another never becomes profile truth, and recalling a memory raises its strength, never its confidence.
 - **Failures are silent in chat.** API errors, refusals and truncation never produce text in a group. They alert the operator.
+- **The web UI is operator-only.** Every API route needs the bearer token. Chat text is hostile input, so `public/app.js` only creates text nodes (never `innerHTML`) and the CSP allows no inline or third-party content. The UI never posts in a chat or speaks as the persona. A person's data is forgotten through `Runtime.forgetPerson`, because live windows hold it too.
 - **Send safety.** Sends are at-most-once and never retried. Filter self-echo, dedupe by platform ID, and never reply to backlog after a reconnect.
 
 ## Persona settings
