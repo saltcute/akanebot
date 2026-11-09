@@ -118,10 +118,9 @@ function renderSpend() {
             "dl",
             { className: "facts" },
             fact("Today", `$${spentTodayUsd.toFixed(2)} of $${dailyBudgetUsd.toFixed(2)}`),
-            fact("Since start", `$${spentTotalUsd.toFixed(2)}`),
+            fact("Since the bot last started", `$${spentTotalUsd.toFixed(2)}`),
             unpricedModels.length > 0 ? fact("No price set for", unpricedModels.join(", ")) : undefined,
         ),
-        el("p", { className: "meta" }, "Counted from when the bot last started."),
     );
 }
 

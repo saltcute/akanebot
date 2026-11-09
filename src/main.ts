@@ -47,7 +47,8 @@ const trace = new DecisionTrace(clock, {
         printTraceEvent(event);
     },
 });
-const cost = new CostMeter({ clock, prices: config.prices, dailyBudgetUsd: config.dailyBudgetUsd });
+const memoryStore = new MemoryStore(config.memory.path);
+const cost = new CostMeter({ clock, prices: config.prices, dailyBudgetUsd: config.dailyBudgetUsd, store: memoryStore });
 const llm = new LlmRegistry({ backends: config.backends, roles: config.roles }, BACKEND_FACTORIES, (usage, _role, model) => cost.add(usage, model));
 const reportStatus = (platform: string) => (status: string, detail?: string) =>
     trace.record("alert", { detail: { reason: `${platform}_${status}`, ...(detail ? { detail } : {}) } });
@@ -85,7 +86,7 @@ const runtime = new Runtime({
     limits: config.limits,
     control: { commandPrefix: config.control.commandPrefix, admins, groups },
     controlStore: new JsonFileControlStore(config.control.statePath),
-    memoryStore: new MemoryStore(config.memory.path),
+    memoryStore,
     embedder: createEmbedder(config.embedder, (message) => trace.record("alert", { detail: { reason: "embedder_failed", message } })),
     people: new People(config.people),
     memorySettings: {

@@ -10,9 +10,12 @@ export const pricesSchema = z.record(
 export type Prices = z.infer<typeof pricesSchema>;
 
 const DAY_MS = 86_400_000;
+const SPEND_KEY = "dailySpend";
 const PER_TOKEN = 1 / 1_000_000;
 
-/** Tracks spend per UTC day. An approximation, for capping and comparing, not for accounting. */
+type SpendStore = { getMeta(key: string): string | undefined; setMeta(key: string, value: string): void };
+
+/** Tracks spend per UTC day. An approximation, for capping and comparing, not for accounting. With a store, today's spend survives restarts, so restarting can't get around the cap. */
 export class CostMeter {
     #clock: Clock;
     #prices: Prices;
@@ -21,11 +24,20 @@ export class CostMeter {
     #spentToday = 0;
     #spentTotal = 0;
     #unpriced = new Set<string>();
+    #store: SpendStore | undefined;
 
-    constructor(options: { clock: Clock; prices: Prices; dailyBudgetUsd: number }) {
+    constructor(options: { clock: Clock; prices: Prices; dailyBudgetUsd: number; store?: SpendStore }) {
         this.#clock = options.clock;
         this.#prices = options.prices;
         this.#dailyBudgetUsd = options.dailyBudgetUsd;
+        this.#store = options.store;
+        const saved = this.#store?.getMeta(SPEND_KEY);
+        if (saved) {
+            // An earlier day's total is dropped by the first roll, the same as at midnight.
+            const { day, spentUsd } = JSON.parse(saved) as { day: number; spentUsd: number };
+            this.#day = day;
+            this.#spentToday = spentUsd;
+        }
     }
 
     add(usage: Usage, model: string): void {
@@ -40,6 +52,7 @@ export class CostMeter {
         const cost = tokens + (usage.webSearches ?? 0) * (price.webSearch ?? 0);
         this.#spentToday += cost;
         this.#spentTotal += cost;
+        this.#store?.setMeta(SPEND_KEY, JSON.stringify({ day: this.#day, spentUsd: this.#spentToday }));
     }
 
     overBudget(): boolean {

@@ -13,6 +13,7 @@ import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
 import { AnthropicBackend, AnthropicSearch } from "../src/llm/anthropic.ts";
 import type { Usage } from "../src/llm/backend.ts";
+import { MemoryStore } from "../src/memory/store.ts";
 import { loadPersona, parsePersona } from "../src/persona/loader.ts";
 import { exceedsCodeLimit, toBursts } from "../src/reply/bursts.ts";
 import { renderReplyInstructions, renderTranscript } from "../src/reply/prompt.ts";
@@ -370,6 +371,46 @@ describe("CostMeter", () => {
         await clock.advance(86_400_000);
         expect(meter.overBudget()).toBe(false);
         expect(meter.summary().spentTotalUsd).toBeCloseTo(2);
+    });
+
+    describe("across restarts", () => {
+        const BUDGET = 1;
+        const USAGE = { inputTokens: 2_000_000, cachedInputTokens: 0, outputTokens: 0 };
+        const meter = (clock: ManualClock, store: MemoryStore) => new CostMeter({ clock, prices, dailyBudgetUsd: BUDGET, store });
+
+        it("still counts today's spend after a restart, so restarting can't get around the cap", () => {
+            const clock = new ManualClock(0);
+            const store = new MemoryStore(":memory:");
+            meter(clock, store).add(USAGE, "m");
+            const restarted = meter(clock, store);
+            expect(restarted.overBudget()).toBe(true);
+            expect(restarted.summary().spentTodayUsd).toBeCloseTo(2);
+        });
+
+        it("keeps adding to what was saved", () => {
+            const clock = new ManualClock(0);
+            const store = new MemoryStore(":memory:");
+            meter(clock, store).add(USAGE, "m");
+            meter(clock, store).add(USAGE, "m");
+            expect(meter(clock, store).summary().spentTodayUsd).toBeCloseTo(4);
+        });
+
+        it("starts fresh when it restarts on a later day", async () => {
+            const clock = new ManualClock(0);
+            const store = new MemoryStore(":memory:");
+            meter(clock, store).add(USAGE, "m");
+            await clock.advance(86_400_000);
+            const restarted = meter(clock, store);
+            expect(restarted.overBudget()).toBe(false);
+            expect(restarted.summary().spentTodayUsd).toBe(0);
+        });
+
+        it("counts the total only from this start", () => {
+            const clock = new ManualClock(0);
+            const store = new MemoryStore(":memory:");
+            meter(clock, store).add(USAGE, "m");
+            expect(meter(clock, store).summary().spentTotalUsd).toBe(0);
+        });
     });
 
     it("flags models with no price rather than treating them as free silently", () => {
