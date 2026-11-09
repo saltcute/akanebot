@@ -8,11 +8,12 @@ import type { DecisionTrace } from "../lib/trace.ts";
 import type { Embedder } from "../llm/embedder.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import type { Persona } from "../persona/schema.ts";
-import { type ConsolidationReport, consolidate } from "./consolidate.ts";
+import { type ConsolidationReport, consolidate, isDuplicate } from "./consolidate.ts";
 import { clampUnit, type Extraction, extractionSchema, renderExtractionInstructions, renderNumberedTranscript } from "./extract.ts";
 import { judgeCandidate, type Participant } from "./poison-guards.ts";
+import { canCrossGroups, decideReach } from "./reach.ts";
 import { MAX_STRENGTH, type Recalled, renderMemories, STRENGTH_GAIN, selectMemories } from "./recall.ts";
-import type { MemoryStore } from "./store.ts";
+import type { Memory, MemoryStore } from "./store.ts";
 
 export type MemorySettings = {
     /** A conversation counts as over after this long without anything attended. */
@@ -42,6 +43,7 @@ export class MemorySystem {
     #settings: MemorySettings;
     #alert: (reason: string, detail: Record<string, unknown>) => void;
     #people: People;
+    #sharesMemory: (channel: string) => boolean;
     #segmentTimers = new Map<string, CancelTimer>();
     #closing = new Set<string>();
     #cancelNightly: CancelTimer | undefined;
@@ -58,6 +60,8 @@ export class MemorySystem {
         settings: MemorySettings;
         alert: (reason: string, detail: Record<string, unknown>) => void;
         people?: People;
+        /** Whether a group takes part in shared memory. Without this, nothing leaves its group. */
+        sharesMemory?: (channel: string) => boolean;
     }) {
         this.store = options.store;
         this.#embedder = options.embedder;
@@ -69,6 +73,7 @@ export class MemorySystem {
         this.#settings = options.settings;
         this.#alert = options.alert;
         this.#people = options.people ?? NO_LINKS;
+        this.#sharesMemory = options.sharesMemory ?? (() => false);
     }
 
     /** Digests conversations left open by a restart, and starts the nightly check. */
@@ -117,19 +122,43 @@ export class MemorySystem {
         const now = this.#clock.now();
         const vector = await this.#embedder.embed(text, "query");
         const recalled = selectMemories({
-            memories: this.store.activeIn(channel),
+            memories: this.#recallableIn(channel, speakers),
             query: { text, speakers, vector },
             embedder: this.#embedder,
             now,
             forgetfulness: persona.forgetfulness,
             rng: this.#rng,
+            isRepeat: (a, b) => a.scope !== b.scope && isDuplicate(a, b, this.#people),
         });
         for (const { memory } of recalled) this.store.noteRecalled(memory.id, now, STRENGTH_GAIN, MAX_STRENGTH);
+        const messageId = newMessages.at(-1)?.messageId;
         this.#trace.record("memory.recall", {
             channel,
-            detail: { recalled: recalled.map(({ memory, score, detailed }) => ({ id: memory.id, gist: memory.gist, score, detailed })) },
+            ...(messageId ? { messageId } : {}),
+            detail: {
+                recalled: recalled.map(({ memory, score, detailed }) => ({
+                    id: memory.id,
+                    gist: memory.gist,
+                    score,
+                    detailed,
+                    ...(memory.scope === channel ? {} : { fromGroup: memory.scope }),
+                })),
+            },
         });
-        return { block: renderMemories(recalled, (key) => this.#people.nameOf(key) ?? this.store.displayNameOf(key) ?? "someone"), recalled };
+        return {
+            block: renderMemories(recalled, (key) => this.#people.nameOf(key) ?? this.store.displayNameOf(key) ?? "someone", channel),
+            recalled,
+        };
+    }
+
+    /** Checked on every recall as well as when written, so walling off a group or delisting it takes effect at once. */
+    #recallableIn(channel: string, speakers: readonly string[]): Memory[] {
+        const local = this.store.activeIn(channel);
+        if (!this.#sharesMemory(channel)) return local;
+        const fromElsewhere = this.store
+            .activeShared()
+            .filter((memory) => memory.scope !== channel && this.#sharesMemory(memory.scope) && canCrossGroups(memory, speakers));
+        return [...local, ...fromElsewhere];
     }
 
     /** Digests a finished conversation. If the model fails, it stays open and is retried later. */
@@ -205,6 +234,7 @@ export class MemorySystem {
         }
 
         const startOfDay = now - DAY_MS;
+        const conversation = live.map((message) => message.text).join("\n");
         for (const candidate of extraction.memories) {
             if (clampUnit(candidate.importance) < MIN_KEPT_IMPORTANCE || candidate.gist.trim() === "") continue;
             const sourced = candidate.lines.flatMap((line) => {
@@ -224,6 +254,10 @@ export class MemorySystem {
             await this.#add({
                 scope: channel,
                 ...judgment,
+                reach: decideReach(judgment, candidate.reach, {
+                    groupShares: this.#sharesMemory(channel),
+                    conversation: `${candidate.gist}\n${candidate.detail}\n${conversation}`,
+                }),
                 gist: candidate.gist.trim(),
                 detail: candidate.detail.trim(),
                 importance: clampUnit(candidate.importance),
@@ -279,6 +313,7 @@ export class MemorySystem {
             rawRetentionMs: this.#settings.rawRetentionMs,
             signal: new AbortController().signal,
             people: this.#people,
+            sharesMemory: this.#sharesMemory,
         });
         this.#trace.record("memory.consolidated", { detail: report });
         return report;

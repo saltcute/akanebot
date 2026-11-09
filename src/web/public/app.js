@@ -16,6 +16,7 @@ const MUTE_CHOICES = [
 const BODY_STATES = { idle: "Idle", reading: "Reading", composing: "Writing", sending: "Typing", away: "Away" };
 const MEMORY_STATES = { active: "Active", archived: "Archived", replaced: "Replaced" };
 const MEMORY_KINDS = { episode: "Episode", fact: "Fact", claim: "Claim", event: "Event" };
+const MEMORY_REACHES = { group: "This group only", shared: "Shared" };
 
 const root = document.getElementById("root");
 const dialog = document.getElementById("dialog");
@@ -29,7 +30,7 @@ const ui = {
     conversationKey: undefined,
     conversation: undefined,
     memories: { memories: [], total: 0, scopes: [] },
-    memoryFilters: { q: "", scope: "", kind: "", state: "active" },
+    memoryFilters: { q: "", scope: "", kind: "", reach: "", state: "active" },
     memoryOffset: 0,
     memory: undefined,
 };
@@ -475,6 +476,7 @@ function renderMemoryFilters() {
         }),
         filterSelect("state", "State", [...Object.entries(MEMORY_STATES), ["", "Any state"]]),
         filterSelect("kind", "Kind", [["", "Any kind"], ...Object.entries(MEMORY_KINDS)]),
+        filterSelect("reach", "Reach", [["", "Any reach"], ...Object.entries(MEMORY_REACHES)]),
         filterSelect("scope", "Conversation", [["", "All conversations"], ...ui.memories.scopes.map((scope) => [scope.key, scope.name])]),
     );
 }
@@ -505,6 +507,7 @@ function renderMemoryRows() {
                         "div",
                         { className: "meta" },
                         pill(MEMORY_KINDS[memory.kind] ?? memory.kind, "accent"),
+                        memory.reach === "shared" ? pill(MEMORY_REACHES.shared, "ok") : undefined,
                         memoryState(memory) === "active" ? undefined : pill(MEMORY_STATES[memoryState(memory)], "warn"),
                         el("span", {}, memory.scopeName),
                         el("span", {}, formatTime(memory.createdAt)),
@@ -567,6 +570,11 @@ function renderMemoryDetail() {
             await api(`${path}/${action}`, { method: "POST" });
             await reloadMemoriesAfterChange(memory.id);
         }, done);
+    const setReach = (reach) => () =>
+        act(async () => {
+            await api(`${path}/reach`, { method: "POST", body: { reach } });
+            await reloadMemoriesAfterChange(memory.id);
+        }, MEMORY_REACHES[reach]);
     const remove = () => {
         if (!confirm("Delete this memory for good? Archive is the option you can undo.")) return;
         act(async () => {
@@ -588,6 +596,7 @@ function renderMemoryDetail() {
             { className: "meta" },
             pill(MEMORY_KINDS[memory.kind] ?? memory.kind, "accent"),
             pill(MEMORY_STATES[state], state === "active" ? "ok" : "warn"),
+            pill(MEMORY_REACHES[memory.reach] ?? memory.reach, memory.reach === "shared" ? "ok" : ""),
             el("span", {}, `#${memory.id} in ${memory.scopeName}`),
         ),
         el("label", { className: "field" }, "What she remembers", gist),
@@ -601,6 +610,13 @@ function renderMemoryDetail() {
             "div",
             { className: "actions" },
             el("button", { className: "primary", onclick: save }, "Save"),
+            memory.shareable || memory.reach === "shared"
+                ? el(
+                      "button",
+                      { onclick: setReach(memory.reach === "shared" ? "group" : "shared") },
+                      memory.reach === "shared" ? "Keep in this group" : "Share with other groups",
+                  )
+                : undefined,
             state === "active"
                 ? el("button", { onclick: () => change("archive", "Archived") }, "Archive")
                 : el("button", { onclick: () => change("restore", "Restored") }, "Restore"),

@@ -48,7 +48,15 @@ export const appConfigSchema = z.strictObject({
         admins: z.array(z.string().min(1)).default([]),
         /** The agent acts only in groups listed here with `disclosed: true`. */
         groups: z
-            .array(z.strictObject({ platform: z.enum(["discord", "qq", "cli"]), channelId: z.string().min(1), disclosed: z.boolean() }))
+            .array(
+                z.strictObject({
+                    platform: z.enum(["discord", "qq", "cli"]),
+                    channelId: z.string().min(1),
+                    disclosed: z.boolean(),
+                    /** False walls the group off, so it neither adds to the memories groups share nor recalls them. */
+                    shareMemory: z.boolean().default(true),
+                }),
+            )
             .default([]),
         statePath: z.string().min(1).default("data/control.json"),
     }),

@@ -39,6 +39,8 @@ control:
   # To see Discord timeouts, kicks, bans and unpins, the bot needs View Audit Log in that server.
   #  - { platform: discord, channelId: "123456789", disclosed: true }
   #  - { platform: qq, channelId: "123456789", disclosed: true }
+  # Memories marked general can come up in other listed groups. shareMemory: false walls a group off in both directions.
+  #  - { platform: qq, channelId: "987654321", disclosed: true, shareMemory: false }
 
 # Links one person's accounts, and says how she knows them. Keep real IDs in your own config.yaml, which git ignores.
 # The same account in two groups is already one person, so list someone only to link platforms or add a note.

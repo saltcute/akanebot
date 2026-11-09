@@ -526,7 +526,7 @@ describe("memory in the running agent", () => {
             summary: "",
             importance: 0,
             emotion: 0,
-            memories: [{ about, gist, detail: "", importance, emotion: 0.2, lines: [line], isInstruction: false }],
+            memories: [{ about, gist, detail: "", importance, emotion: 0.2, lines: [line], isInstruction: false, reach: "group" }],
         });
     const Gap = 20 * 60_000;
 
@@ -1318,7 +1318,18 @@ describe("senses", () => {
                     summary: "",
                     importance: 0,
                     emotion: 0,
-                    memories: [{ about: "alice", gist: "alice 考过了", detail: "", importance: 0.8, emotion: 0, lines: [1], isInstruction: false }],
+                    memories: [
+                        {
+                            about: "alice",
+                            gist: "alice 考过了",
+                            detail: "",
+                            importance: 0.8,
+                            emotion: 0,
+                            lines: [1],
+                            isInstruction: false,
+                            reach: "group",
+                        },
+                    ],
                 };
                 const { adapter, settle } = await setup({ memoryStore, extract: () => JSON.stringify(extraction) });
                 const id = adapter.say("alice", "我考过了");

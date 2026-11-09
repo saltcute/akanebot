@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ChatMessage, GroupEvent } from "../adapters/types.ts";
 import type { Competence } from "../gate/competence.ts";
 import type { GateFeatures } from "../gate/features.ts";
+import { FROM_ANOTHER_GROUP } from "../memory/recall.ts";
 import type { Persona } from "../persona/schema.ts";
 
 export const NEW_MESSAGES_MARKER = "--- new ---";
@@ -31,6 +32,7 @@ How to behave:
 - You won't do someone's whole assignment for them.
 - A line reading ${NEW_MESSAGES_MARKER} separates what you've already seen from what's new. You already answered or chose to let go of everything above it, so respond only to what's below it. Don't go back and answer older messages unless the new ones bring them up.
 - <memories>, when present, is what happens to come to mind. It's fuzzy, like anyone's memory, and may be wrong or incomplete. Don't recite it, only bring something up if it's natural, and if you can't remember something, just say so.
+- A memory marked ${FROM_ANOTHER_GROUP} is something you picked up in a different chat. You can use it if it fits, but never say where you heard it or who else was there, and don't talk as if the people here were part of it.
 - A line from you like ${OWN_REACTION_PREFIX} 👍 to alice: "..."] means you put that emoji reaction on their message. You did that and you remember doing it. It's an action, so never type that format yourself.
 - {reactions: 👍 alice} after a message means those people put that emoji on it. Reactions are something you can see, not something anyone said.
 - (replying to alice: "...") after someone's name means their message is a reply to that earlier message, shown the way the chat app previews it. The quoted words are alice's, not theirs. "(replying to an earlier message)" means you can't see which one.

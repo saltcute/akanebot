@@ -7,6 +7,9 @@ import { NO_LINKS, type People } from "../control/people.ts";
 
 export type MemoryKind = "episode" | "fact" | "claim" | "event";
 
+/** "group" stays where it was learned, and "shared" may come to mind in other groups. `scope` is always the group it came from. */
+export type MemoryReach = "group" | "shared";
+
 export type MemoryDraft = {
     scope: string;
     kind: MemoryKind;
@@ -22,10 +25,13 @@ export type MemoryDraft = {
     embeddingModel: string | null;
     sources: readonly { messageId: string; speaker: string }[];
     createdAt: number;
+    /** Stays in its group unless something decided otherwise. */
+    reach?: MemoryReach;
 };
 
-export type Memory = Omit<MemoryDraft, "sources"> & {
+export type Memory = Omit<MemoryDraft, "sources" | "reach"> & {
     id: number;
+    reach: MemoryReach;
     strength: number;
     lastRecalledAt: number | null;
     recallCount: number;
@@ -41,6 +47,7 @@ export type MemoryView = Omit<Memory, "embedding" | "embeddingModel"> & { indexe
 export type MemoryQuery = {
     scope?: string | undefined;
     kind?: MemoryKind | undefined;
+    reach?: MemoryReach | undefined;
     state?: MemoryState | undefined;
     text?: string | undefined;
     limit: number;
@@ -81,7 +88,7 @@ const MEMORY_STATE_CLAUSES: Record<MemoryState, string> = {
     replaced: "supersededBy IS NOT NULL",
 };
 const MEMORY_VIEW_COLUMNS =
-    "id, scope, kind, subject, attributedTo, gist, detail, importance, salience, confidence, strength, createdAt, lastRecalledAt, recallCount, status, supersededBy, embedding IS NOT NULL AS indexed";
+    "id, scope, reach, kind, subject, attributedTo, gist, detail, importance, salience, confidence, strength, createdAt, lastRecalledAt, recallCount, status, supersededBy, embedding IS NOT NULL AS indexed";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rawLog (
@@ -95,7 +102,8 @@ CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY, scope TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT, attributedTo TEXT,
     gist TEXT NOT NULL, detail TEXT NOT NULL, importance REAL NOT NULL, salience REAL NOT NULL, confidence REAL NOT NULL,
     strength REAL NOT NULL DEFAULT 1, createdAt INTEGER NOT NULL, lastRecalledAt INTEGER, recallCount INTEGER NOT NULL DEFAULT 0,
-    embedding BLOB, embeddingModel TEXT, status TEXT NOT NULL DEFAULT 'active', supersededBy INTEGER
+    embedding BLOB, embeddingModel TEXT, status TEXT NOT NULL DEFAULT 'active', supersededBy INTEGER,
+    reach TEXT NOT NULL DEFAULT 'group'
 );
 CREATE INDEX IF NOT EXISTS memoriesScope ON memories (scope, status);
 CREATE TABLE IF NOT EXISTS memorySources (
@@ -148,6 +156,9 @@ export class MemoryStore {
         const columns = this.#all<{ name: string }>("PRAGMA table_info(rawLog)").map((column) => column.name);
         if (!columns.includes("reactions")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN reactions TEXT");
         if (!columns.includes("replyTo")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN replyTo TEXT");
+        // Everything remembered before sharing existed stays in its own group.
+        const memoryColumns = this.#all<{ name: string }>("PRAGMA table_info(memories)").map((column) => column.name);
+        if (!memoryColumns.includes("reach")) this.#db.exec("ALTER TABLE memories ADD COLUMN reach TEXT NOT NULL DEFAULT 'group'");
     }
 
     setReactions(channel: string, messageId: string, reactions: readonly MessageReaction[]): void {
@@ -197,9 +208,10 @@ export class MemoryStore {
 
     addMemory(draft: MemoryDraft): number {
         const result = this.#run(
-            `INSERT INTO memories (scope, kind, subject, attributedTo, gist, detail, importance, salience, confidence, createdAt, embedding, embeddingModel)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO memories (scope, reach, kind, subject, attributedTo, gist, detail, importance, salience, confidence, createdAt, embedding, embeddingModel)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             draft.scope,
+            draft.reach ?? "group",
             draft.kind,
             draft.subject,
             draft.attributedTo,
@@ -235,6 +247,11 @@ export class MemoryStore {
         return this.#all<MemoryRow>("SELECT * FROM memories WHERE scope = ? AND status = 'active' AND supersededBy IS NULL", scope).map(toMemory);
     }
 
+    /** Memories allowed out of their group, from every group. */
+    activeShared(): Memory[] {
+        return this.#all<MemoryRow>("SELECT * FROM memories WHERE reach = 'shared' AND status = 'active' AND supersededBy IS NULL").map(toMemory);
+    }
+
     all(): Memory[] {
         return this.#all<MemoryRow>("SELECT * FROM memories ORDER BY id").map(toMemory);
     }
@@ -250,6 +267,10 @@ export class MemoryStore {
         if (query.kind) {
             clauses.push("kind = ?");
             parameters.push(query.kind);
+        }
+        if (query.reach) {
+            clauses.push("reach = ?");
+            parameters.push(query.reach);
         }
         if (query.state) clauses.push(MEMORY_STATE_CLAUSES[query.state]);
         if (query.text) {
@@ -308,6 +329,10 @@ export class MemoryStore {
 
     setStatus(id: number, status: "active" | "archived"): void {
         this.#run("UPDATE memories SET status = ? WHERE id = ?", status, id);
+    }
+
+    setReach(id: number, reach: MemoryReach): void {
+        this.#run("UPDATE memories SET reach = ? WHERE id = ?", reach, id);
     }
 
     setEmbedding(id: number, embedding: Float32Array, model: string): void {

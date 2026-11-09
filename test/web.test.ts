@@ -360,6 +360,18 @@ describe("web console memories", () => {
         expect((await call(`/api/memories/${id}`)).status).toBe(404);
     });
 
+    it("changes a memory's reach, but can't release one that must stay in its group", async () => {
+        const { store, post, call, json } = await setup();
+        const fact = store.addMemory(draft());
+        const episode = store.addMemory(draft({ kind: "episode", subject: null }));
+        await post(`/api/memories/${fact}/reach`, { reach: "shared" });
+        expect(store.get(fact)?.reach).toBe("shared");
+        expect((await json("/api/memories?reach=shared")).total).toBe(1);
+        const refused = await call(`/api/memories/${episode}/reach`, { method: "POST", body: JSON.stringify({ reach: "shared" }) });
+        expect(refused.status).toBe(400);
+        expect(store.get(episode)?.reach).toBe("group");
+    });
+
     it("leaves an audit record of changes, without the memory's text", async () => {
         const { store, json, post, trace } = await setup();
         const id = store.addMemory(draft());

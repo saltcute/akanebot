@@ -42,7 +42,7 @@ export type ControlOptions = {
     commandPrefix: string;
     /** `platform:userId` of each person allowed to run admin commands. */
     admins: readonly string[];
-    groups: readonly (ChannelRef & { disclosed: boolean })[];
+    groups: readonly (ChannelRef & { disclosed: boolean; shareMemory?: boolean })[];
 };
 
 export type RuntimeOptions = {
@@ -181,6 +181,7 @@ export class Runtime {
         this.#people = options.people ?? NO_LINKS;
         this.#state = new ControlState({ clock: options.clock, store: options.controlStore, people: this.#people });
         this.#allowedChannels = new Set(options.control.groups.filter((group) => group.disclosed).map(channelKey));
+        const sharing = new Set(options.control.groups.filter((group) => group.disclosed && group.shareMemory !== false).map(channelKey));
         if (this.#state.killed) this.body.goAway(KILL_REASON);
         this.#pacingRng = options.rng.fork("pacing");
         this.#reactionRng = options.rng.fork("reaction");
@@ -210,6 +211,7 @@ export class Runtime {
             settings: options.memorySettings,
             alert: (reason, detail) => this.#alert(reason, detail),
             people: this.#people,
+            sharesMemory: (channel) => sharing.has(channel),
         });
     }
 

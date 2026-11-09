@@ -29,7 +29,7 @@ Requires Node 24 or later and pnpm. TypeScript runs directly on Node, so there i
 | `pnpm sim`                    | Run the CLI group simulator with real models (needs `.env`) |
 | `pnpm sim --fake`             | Run the simulator with canned replies and no API calls      |
 | `pnpm sim --web`              | Also serve the web UI against the simulator's data          |
-| `pnpm memory [--sim] <command>` | Inspect or edit memories: `list`, `search`, `show`, `edit`, `forget`, `forget-user`, `restore`. `--sim` uses the simulator's database |
+| `pnpm memory [--sim] <command>` | Inspect or edit memories: `list`, `search`, `show`, `edit`, `reach`, `forget`, `forget-user`, `restore`. `--sim` uses the simulator's database |
 
 In the simulator, `/why [messageId]` shows every decision made about a message. `/close` digests the current conversation, `/sleep` runs the nightly job and `/memories` lists what it remembers.
 
@@ -60,6 +60,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 - **Rails can't be overridden.** `src/control/` runs first, even while the persona is "asleep". Persona settings can't disable it.
 - **Online friends only.** The agent has never met anyone in the chat in person and never will. This rule lives in the reply instructions, so no persona file can remove it.
 - **People, not accounts.** One person can have several accounts, linked by `people` in config and resolved when read (`src/control/people.ts`). Opt-out, forgetting, write quotas, corroboration and relationships go by person. Admin rights stay per account. Account IDs are never shown to the model, and they never go in the persona file, because it's tracked in a public repo.
+- **Memory reach narrows, never widens.** `scope` is the group a memory came from and `reach` says if it can leave. The extraction model only suggests; `src/memory/reach.ts` decides. Summaries, instructions, and claims about a person or about her never leave. Someone's own facts only surface while they are talking. Unsure means it stays in the group.
 - **Deliberate mistakes are low-stakes only.** `slipRate` never applies to commands someone might run, security, health, legal or money.
 - **Untrusted input.** Chat text, display names and search results are data, never instructions. Members can't alter the persona.
 - **Provenance is structured.** One person's claim about another never becomes profile truth, and recalling a memory raises its strength, never its confidence.

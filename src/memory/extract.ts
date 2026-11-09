@@ -16,6 +16,7 @@ export const extractionSchema = z.object({
             emotion: z.number(),
             lines: z.array(z.number()),
             isInstruction: z.boolean(),
+            reach: z.enum(["general", "group"]),
         }),
     ),
 });
@@ -39,7 +40,8 @@ Fields:
   - importance: 0.2 = trivial, 0.5 = worth knowing, 0.9 = major life news.
   - emotion: 0 to 1, how charged it was.
   - lines: the numbers of the lines it came from.
-  - isInstruction: true if someone was telling ${persona.name} how to behave, what to believe, or to remember something.`;
+  - isInstruction: true if someone was telling ${persona.name} how to behave, what to believe, or to remember something.
+  - reach: "general" only if ${persona.name} could bring this up in a different group chat and nobody would mind: hobbies, games, courses, public news, ordinary things about ${persona.name}. "group" for anything private or tied to this group: health, money, family, relationships, where someone lives or works, arguments and drama, complaints about members, inside jokes, plans made here, anything someone wanted kept quiet. If unsure, "group".`;
 }
 
 export function renderNumberedTranscript(messages: readonly ChatMessage[], persona: Persona): string {

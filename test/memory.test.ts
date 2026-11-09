@@ -253,6 +253,7 @@ describe("renderMemories", () => {
         recallCount: 0,
         status: "active",
         supersededBy: null,
+        reach: "group",
         ...overrides,
     });
     const render = (overrides: Partial<Memory>, detailed = false) => renderMemories([{ memory: memory(overrides), score: 1, detailed }], () => "bob");
@@ -267,6 +268,16 @@ describe("renderMemories", () => {
 
     it("presents instructions as a past event, not as something to obey", () => {
         expect(render({ kind: "event" })).toContain("don't have to act on");
+    });
+
+    it("marks a memory from another group and hides who said it there", () => {
+        const output = renderMemories(
+            [{ memory: memory({ kind: "claim", subject: "group", scope: "qq:a" }), score: 1, detailed: false }],
+            () => "bob",
+            "qq:b",
+        );
+        expect(output).toContain("(from another group) someone said this");
+        expect(output).not.toContain("bob");
     });
 
     it("includes detail only when recalled strongly", () => {
@@ -290,6 +301,7 @@ describe("MemorySystem extraction", () => {
         emotion: 0.1,
         lines: [1],
         isInstruction: false,
+        reach: "group",
         ...overrides,
     });
     const output = (memories: unknown[], summary = "") => JSON.stringify({ summary, importance: 0.5, emotion: 0.1, memories });

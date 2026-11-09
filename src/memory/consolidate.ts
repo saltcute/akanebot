@@ -31,8 +31,10 @@ export async function consolidate(options: {
     rawRetentionMs: number;
     signal: AbortSignal;
     people?: People;
+    /** Whether a group takes part in shared memory. */
+    sharesMemory?: (scope: string) => boolean;
 }): Promise<ConsolidationReport> {
-    const { store, embedder, llm, now, rawRetentionMs, signal, people = NO_LINKS } = options;
+    const { store, embedder, llm, now, rawRetentionMs, signal, people = NO_LINKS, sharesMemory = () => false } = options;
     const report: ConsolidationReport = { embedded: 0, merged: 0, promoted: 0, superseded: 0, archived: 0 };
 
     for (const scope of store.scopes()) {
@@ -44,7 +46,7 @@ export async function consolidate(options: {
             report.embedded++;
         }
         mergeDuplicates(store, scope, report, people);
-        await resolveContradictions(store, scope, llm, signal, report);
+        await resolveContradictions(store, factsBySubject(store.activeIn(scope), (subject) => subject).values(), llm, signal, report);
         for (const memory of store.activeIn(scope)) {
             store.setStrength(memory.id, memory.strength * NIGHTLY_STRENGTH_DECAY);
             if (memory.importance < PROTECTED_IMPORTANCE && retention(memory, now) < ARCHIVE_BELOW_RETENTION) {
@@ -53,12 +55,13 @@ export async function consolidate(options: {
             }
         }
     }
+    await resolveContradictions(store, sharedFactsAcrossGroups(store, people, sharesMemory), llm, signal, report);
     store.purgeRawBefore(now - rawRetentionMs);
     return report;
 }
 
-function isDuplicate(a: Memory, b: Memory): boolean {
-    if (a.kind !== b.kind || a.subject !== b.subject) return false;
+export function isDuplicate(a: Memory, b: Memory, people: People = NO_LINKS): boolean {
+    if (a.kind !== b.kind || people.personOf(a.subject ?? "") !== people.personOf(b.subject ?? "")) return false;
     if (a.gist === b.gist) return true;
     return Boolean(a.embedding && b.embedding && a.embeddingModel === b.embeddingModel && cosine(a.embedding, b.embedding) >= DUPLICATE_COSINE);
 }
@@ -70,8 +73,10 @@ function mergeDuplicates(store: MemoryStore, scope: string, report: Consolidatio
         if (merged.has(keeper.id)) continue;
         let absorbed = false;
         for (const other of memories) {
-            if (other.id === keeper.id || merged.has(other.id) || !isDuplicate(keeper, other)) continue;
+            if (other.id === keeper.id || merged.has(other.id) || !isDuplicate(keeper, other, people)) continue;
             store.adoptSources(other.id, keeper.id);
+            // If either copy had to stay in its group, the one that's left does too.
+            if (other.reach === "group") store.setReach(keeper.id, "group");
             store.supersede(other.id, keeper.id);
             merged.add(other.id);
             report.merged++;
@@ -86,19 +91,31 @@ function mergeDuplicates(store: MemoryStore, scope: string, report: Consolidatio
     }
 }
 
+function factsBySubject(memories: readonly Memory[], keyOf: (subject: string) => string): Map<string, Memory[]> {
+    const bySubject = new Map<string, Memory[]>();
+    for (const memory of memories) {
+        if (memory.kind !== "fact" || !memory.subject) continue;
+        const key = keyOf(memory.subject);
+        bySubject.set(key, [...(bySubject.get(key) ?? []), memory]);
+    }
+    return bySubject;
+}
+
+/** A shared fact can go out of date because of something said in another group. Only shared facts are compared, so nothing private moves. */
+function sharedFactsAcrossGroups(store: MemoryStore, people: People, sharesMemory: (scope: string) => boolean): Memory[][] {
+    const shared = store.activeShared().filter((memory) => sharesMemory(memory.scope) && memory.subject !== "group");
+    const bySubject = factsBySubject(shared, (subject) => people.personOf(subject));
+    return [...bySubject.values()].filter((facts) => new Set(facts.map((fact) => fact.scope)).size > 1);
+}
+
 async function resolveContradictions(
     store: MemoryStore,
-    scope: string,
+    groups: Iterable<Memory[]>,
     llm: LlmRegistry,
     signal: AbortSignal,
     report: ConsolidationReport,
 ): Promise<void> {
-    const bySubject = new Map<string, Memory[]>();
-    for (const memory of store.activeIn(scope)) {
-        if (memory.kind !== "fact" || !memory.subject) continue;
-        bySubject.set(memory.subject, [...(bySubject.get(memory.subject) ?? []), memory]);
-    }
-    for (const facts of bySubject.values()) {
+    for (const facts of groups) {
         if (facts.length < 2) continue;
         const result = await llm.generate("consolidate", {
             stable: CONTRADICTION_INSTRUCTIONS,

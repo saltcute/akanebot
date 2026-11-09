@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { z } from "zod";
 import { MAX_MUTE_MINUTES } from "../control/admin.ts";
+import { isShareable } from "../memory/reach.ts";
 import type { MemoryView } from "../memory/store.ts";
 import type { Runtime } from "../runtime.ts";
 
@@ -33,6 +34,7 @@ const SECURITY_HEADERS = {
 const memoryQuerySchema = z.object({
     scope: z.string().min(1).optional(),
     kind: z.enum(["episode", "fact", "claim", "event"]).optional(),
+    reach: z.enum(["group", "shared"]).optional(),
     state: z.enum(["active", "archived", "replaced"]).optional(),
     q: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
@@ -44,6 +46,8 @@ const memoryEditSchema = z.strictObject({
     detail: z.string().trim().max(MAX_DETAIL_CHARS),
     importance: z.number().min(0).max(1),
 });
+
+const reachSchema = z.strictObject({ reach: z.enum(["group", "shared"]) });
 
 const muteSchema = z.strictObject({ minutes: z.number().positive().max(MAX_MUTE_MINUTES) });
 
@@ -192,6 +196,7 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
     const present = (memory: MemoryView) => ({
         ...memory,
         scopeName: runtime.channelName(memory.scope) ?? memory.scope,
+        shareable: isShareable(memory),
         subjectName: describeKey(memory.subject),
         attributedToName: describeKey(memory.attributedTo),
     });
@@ -275,6 +280,18 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
                 const id = memoryId(request);
                 runtime.memory.edit(id, memoryEditSchema.parse(request.body));
                 audit("edit_memory", id);
+            },
+        },
+        {
+            method: "POST",
+            path: /^\/api\/memories\/(\d+)\/reach$/,
+            handle: (request) => {
+                const id = memoryId(request);
+                const { reach } = reachSchema.parse(request.body);
+                const memory = store.view(id);
+                if (reach === "shared" && memory && !isShareable(memory)) throw new HttpError(400, "This kind of memory can't leave its group");
+                store.setReach(id, reach);
+                audit("set_memory_reach", id);
             },
         },
         {
