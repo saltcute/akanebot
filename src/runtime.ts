@@ -47,7 +47,9 @@ import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import {
     ADDRESSED_PRIORITY,
     ChannelPerception,
+    forwardedImages,
     forwardHolds,
+    IMAGE_PLACEHOLDER,
     isAddressed,
     type PerceptionTiming,
     withoutForwarded,
@@ -226,7 +228,6 @@ const REACTION_BATTERY_COST = 0.25;
 const REACTION_PAUSE_MS = 800;
 const GROUP_EVENT_SENDER = "(group event)";
 const LEFT_ON_READ_REACTION = 0.5;
-const IMAGE_PLACEHOLDER = "[image]";
 const MAX_IMAGES_PER_ATTEND = 2;
 const VISION_MAX_OUTPUT = 400;
 const MAX_CAPTION_CHARS = 200;
@@ -1110,36 +1111,49 @@ export class Runtime {
         const firstNew = perception.firstNewIndex();
         if (firstNew === undefined) return [];
         const looked: LookedAt[] = [];
-        const withImages = perception
+        const unread = perception
             .window()
             .slice(firstNew)
-            .filter((message) => !message.isSelf && message.images?.length && message.text.includes(IMAGE_PLACEHOLDER))
+            .filter((message) => !message.isSelf);
+        const withImages = unread
+            .filter((message) => message.images?.length && message.text.includes(IMAGE_PLACEHOLDER))
             .slice(-MAX_IMAGES_PER_ATTEND);
         for (const message of withImages) {
             const [image] = message.images ?? [];
             if (!image) continue;
-            const result = await this.#options.llm.generate("vision", {
-                stable: renderVisionInstructions(persona),
-                transcript: LOOK_REQUEST,
-                volatile: "",
-                images: [image],
-                schema: imageLookSchema,
-                maxOutput: VISION_MAX_OUTPUT,
-                signal,
-            });
-            if (result.kind !== "ok" || !result.data) continue;
-            const caption = flattenCaption(result.data.description, MAX_CAPTION_CHARS);
-            if (caption === "") continue;
-            const text = message.text.replace(IMAGE_PLACEHOLDER, `[image: ${caption}]`);
+            const look = await this.#lookAt(image, persona, signal);
+            if (!look) continue;
+            const text = message.text.replace(IMAGE_PLACEHOLDER, `[image: ${look.description}]`);
             perception.annotate(message.messageId, text);
             this.memory.store.updateText(key, message.messageId, text);
-            looked.push({
-                message,
-                image,
-                look: { ...result.data, description: caption, useFor: flattenCaption(result.data.useFor, MAX_USE_FOR_CHARS) },
-            });
+            looked.push({ message, image, look });
+        }
+        // Pictures someone posted come first, and the newest forward gets what's left. Never saved and never kept, like the rest of a forward.
+        const inForwards = unread
+            .toReversed()
+            .flatMap(({ messageId, forwarded }) => forwardedImages(forwarded ?? []).map((image) => ({ messageId, image })))
+            .slice(0, MAX_IMAGES_PER_ATTEND - withImages.length);
+        for (const { messageId, image } of inForwards) {
+            const look = await this.#lookAt(image, persona, signal);
+            if (look) perception.describeForwardedImage(messageId, image, `[image: ${look.description}]`);
         }
         return looked;
+    }
+
+    async #lookAt(image: ChatImage, persona: Persona, signal: AbortSignal): Promise<ImageLook | undefined> {
+        const result = await this.#options.llm.generate("vision", {
+            stable: renderVisionInstructions(persona),
+            transcript: LOOK_REQUEST,
+            volatile: "",
+            images: [image],
+            schema: imageLookSchema,
+            maxOutput: VISION_MAX_OUTPUT,
+            signal,
+        });
+        if (result.kind !== "ok" || !result.data) return undefined;
+        const description = flattenCaption(result.data.description, MAX_CAPTION_CHARS);
+        if (description === "") return undefined;
+        return { ...result.data, description, useFor: flattenCaption(result.data.useFor, MAX_USE_FOR_CHARS) };
     }
 
     /** Runs once she has really read them, so a picture that was only glanced at before a failure is never kept. */

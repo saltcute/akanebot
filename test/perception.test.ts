@@ -44,6 +44,15 @@ describe("ChannelPerception", () => {
         ]);
     });
 
+    it("doesn't bring back a forward dropped while one of its pictures was being looked at", () => {
+        const image = { url: "https://x/y.png" };
+        const { perception } = setup();
+        perception.ingest(message(1, { forwarded: [{ by: "bob", byUser: "cli:bob", text: "[image]", images: [image] }] }));
+        perception.purgeQuotesBy("cli:bob");
+        perception.describeForwardedImage("m1", image, "[image: 猫]");
+        expect(perception.window()[0]?.forwarded).toBeUndefined();
+    });
+
     it("drops a forward when someone forgotten is only in a forward inside it", () => {
         const { perception } = setup();
         perception.ingest(message(1, { forwarded: [{ text: "x", forwarded: [{ by: "bob", byUser: "cli:bob", text: "y" }] }] }));

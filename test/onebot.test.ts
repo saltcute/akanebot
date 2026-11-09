@@ -205,6 +205,17 @@ describe("OneBot forwards", () => {
         ]);
     });
 
+    it("keeps each picture on the forwarded message that carried it, at any depth", () => {
+        const image = (url: string, size = "1000") => ({ type: "image", data: { url, file_size: size } });
+        const picture = (userId: number, nickname: string, ...segments: object[]) => ({ user_id: userId, sender: { nickname }, message: segments });
+        const inner = picture(6, "dan", image("https://qq/deep"));
+        const content = [picture(5, "carol", text("看"), image("https://qq/a"), image("https://qq/huge", "99000000")), nesting(7, [inner])];
+        const mapped = map([{ type: "forward", data: { id: "9", content } }]);
+        expect(mapped?.images).toBeUndefined();
+        expect(mapped?.forwarded?.[0]).toMatchObject({ text: "看[image][image]", images: [{ url: "https://qq/a" }] });
+        expect(mapped?.forwarded?.[1]?.forwarded?.[0]).toMatchObject({ text: "[image]", images: [{ url: "https://qq/deep" }] });
+    });
+
     it("leaves a nested forward as a placeholder when QQ gives only its ID", () => {
         expect(map([{ type: "forward", data: { id: "9", content: [nesting(5, undefined)] } }])?.forwarded).toEqual([
             { by: "carol", byUser: "qq:5", text: "[forwarded messages]" },

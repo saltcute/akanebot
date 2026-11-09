@@ -58,6 +58,8 @@ export type ForwardedLine = {
     by?: string | undefined;
     byUser?: string | undefined;
     text: string;
+    /** Pictures still to be looked at, each with an `[image]` waiting in `text`. They stay here rather than on the message, so they go when the forward does. */
+    images?: readonly ChatImage[];
     /** A forward inside this one. `text` holds its placeholder. */
     forwarded?: readonly ForwardedLine[];
 };

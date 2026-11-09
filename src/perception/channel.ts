@@ -1,4 +1,4 @@
-import type { ChatMessage, ForwardedLine, MessageReaction } from "../adapters/types.ts";
+import type { ChatImage, ChatMessage, ForwardedLine, MessageReaction } from "../adapters/types.ts";
 import type { Candidate } from "../body/actor.ts";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
 
@@ -15,6 +15,7 @@ export type PerceptionTiming = {
 const NORMAL_PRIORITY = 1;
 const MAX_EVENTS_IN_WINDOW = 5;
 export const ADDRESSED_PRIORITY = 10;
+export const IMAGE_PLACEHOLDER = "[image]";
 
 export function withoutQuote({ replyTo: _replyTo, ...message }: ChatMessage): ChatMessage {
     return message;
@@ -27,6 +28,20 @@ export function forwardHolds(lines: readonly ForwardedLine[], isMatch: (user: st
 
 export function withoutForwarded({ forwarded: _forwarded, ...message }: ChatMessage): ChatMessage {
     return message;
+}
+
+/** Pictures in a forward nobody has looked at yet, in reading order. */
+export function forwardedImages(lines: readonly ForwardedLine[]): ChatImage[] {
+    return lines.flatMap((line) => [...(line.images ?? []), ...forwardedImages(line.forwarded ?? [])]);
+}
+
+function withImageDescribed(lines: readonly ForwardedLine[], image: ChatImage, description: string): ForwardedLine[] {
+    return lines.map((line) => {
+        if (line.images?.includes(image)) {
+            return { ...line, text: line.text.replace(IMAGE_PLACEHOLDER, () => description), images: line.images.filter((item) => item !== image) };
+        }
+        return line.forwarded ? { ...line, forwarded: withImageDescribed(line.forwarded, image, description) } : line;
+    });
 }
 
 export function isAddressed(message: ChatMessage): boolean {
@@ -79,6 +94,15 @@ export class ChannelPerception {
     /** Swaps a message's text for a richer version, such as once a picture has been looked at. */
     annotate(messageId: string, text: string): void {
         for (const entry of this.#window) if (entry.message.messageId === messageId) entry.message = { ...entry.message, text };
+    }
+
+    /** Writes into the forward as it is now, so one dropped while the picture was being looked at stays dropped. */
+    describeForwardedImage(messageId: string, image: ChatImage, description: string): void {
+        for (const entry of this.#window) {
+            if (entry.message.messageId === messageId && entry.message.forwarded) {
+                entry.message = { ...entry.message, forwarded: withImageDescribed(entry.message.forwarded, image, description) };
+            }
+        }
     }
 
     /** For a picture the platform only worked out after delivering the message. */

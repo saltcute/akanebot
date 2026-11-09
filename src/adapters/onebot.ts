@@ -208,6 +208,7 @@ function readForward(data: unknown, selfId: string, lookup: Lookup, depth: numbe
             .trim();
         if (text === "") return [];
         const author = topLevelId ?? sender.user_id;
+        const images = message.filter(isDescribableImage).map(({ data }) => ({ url: asText(data.url) }));
         const inner =
             depth < MAX_FORWARD_DEPTH
                 ? readForward(message.find(({ type }) => type === "forward")?.data.content, selfId, lookup, depth + 1, nested)
@@ -217,6 +218,7 @@ function readForward(data: unknown, selfId: string, lookup: Lookup, depth: numbe
                 by: sender.card || sender.nickname || (author && lookup.names.get(author)) || author,
                 byUser: author && `qq:${author}`,
                 text,
+                ...(images.length > 0 ? { images } : {}),
                 ...(inner.length > 0 ? { forwarded: inner } : {}),
             },
         ];

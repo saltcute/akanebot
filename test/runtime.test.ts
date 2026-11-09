@@ -1540,6 +1540,46 @@ describe("senses", () => {
             expect(gate.calls[0]?.transcript).toContain("[image]");
         });
 
+        describe("inside a forward", () => {
+            const picture = (name: string, pictureUrl = url) => ({ by: name, byUser: `cli:${name}`, text: "[image]", images: [{ url: pictureUrl }] });
+
+            it("describes a picture where it sits in the forward, without saving it or keeping it", async () => {
+                const { adapter, gate, memoryStore, vision, trace, settle } = await setup({});
+                adapter.say("alice", "[forwarded messages]", "group", undefined, [{ by: "bob", byUser: "cli:bob", text: "聊天" }, picture("carol")]);
+                await settle();
+                expect(vision.calls[0]?.images).toEqual([{ url }]);
+                expect(gate.calls[0]?.transcript).toContain('(forwarded: "bob: 聊天 / carol: [image: 一只橘猫]")');
+                expect(memoryStore.openSegment("cli:group")[0]?.text).toBe("[forwarded messages]");
+                expect(trace.ofKind("image.judged")).toEqual([]);
+            });
+
+            it("looks inside a forward nested in the forward", async () => {
+                const { adapter, gate, settle } = await setup({});
+                adapter.say("alice", "[forwarded messages]", "group", undefined, [
+                    { by: "bob", byUser: "cli:bob", text: "[forwarded messages]", forwarded: [picture("carol")] },
+                ]);
+                await settle();
+                expect(gate.calls[0]?.transcript).toContain("carol: [image: 一只橘猫]");
+            });
+
+            it("shares the limit per reading, with pictures posted directly going first", async () => {
+                const { adapter, vision, settle } = await setup({});
+                adapter.say("alice", `[img:${url}]`);
+                adapter.say("bob", "[forwarded messages]", "group", undefined, [picture("c", "https://x/1.png"), picture("d", "https://x/2.png")]);
+                await settle();
+                expect(vision.calls.map((call) => call.images?.[0]?.url)).toEqual([url, "https://x/1.png"]);
+            });
+
+            it("doesn't look at the same picture twice", async () => {
+                const { adapter, vision, settle } = await setup({ gates: [{ addressedToMe: "no", interest: 0 }], persona: { talkativeness: 0 } });
+                adapter.say("alice", "[forwarded messages]", "group", undefined, [picture("carol")]);
+                await settle();
+                adapter.say("alice", "还有呢");
+                await settle();
+                expect(vision.calls).toHaveLength(1);
+            });
+        });
+
         describe("keeping them", () => {
             const gifBytes = Uint8Array.of(0x47, 0x49, 0x46, 0x38, 1, 2);
             const fetchImage: ImageFetcher = async () => gifBytes;
