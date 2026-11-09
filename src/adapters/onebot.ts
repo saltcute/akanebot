@@ -1,7 +1,7 @@
 // biome-ignore-all lint/style/useNamingConvention: these names are OneBot's wire format
 import { z } from "zod";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, ReactionEvent, SendOptions } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, ReactionEvent, Sender, SendOptions } from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
@@ -13,6 +13,22 @@ const MAX_REMEMBERED_SENDS = 1000;
 const MAX_LIVE_AGE_MS = 120_000;
 /** QQ's own faces have small IDs. Anything above this is a Unicode code point, the lowest QQ uses being ☀ at 9728. */
 const LAST_QQ_FACE_ID = 9727;
+/** Stands in for a person: the target of a whole-group mute, or an operator the server couldn't identify. */
+const NOBODY = "0";
+const NOTICE_KINDS: Readonly<Record<string, GroupEventKind>> = {
+    "group_ban/ban": "muted",
+    "group_ban/lift_ban": "unmuted",
+    "group_decrease/leave": "left",
+    "group_decrease/kick": "kicked",
+    "group_decrease/kick_me": "kicked",
+    "group_increase/approve": "joined",
+    "group_increase/invite": "joined",
+    "group_admin/set": "admin_added",
+    "group_admin/unset": "admin_removed",
+    "essence/add": "pinned",
+    "essence/delete": "unpinned",
+};
+const GROUP_NOTICE_TYPES = new Set(Object.keys(NOTICE_KINDS).map((key) => key.split("/")[0]));
 
 const idSchema = z.union([z.number(), z.string()]).transform(String);
 const segmentSchema = z.object({ type: z.string(), data: z.record(z.string(), z.unknown()).default({}) });
@@ -36,6 +52,19 @@ const reactionNoticeSchema = z.object({
     is_add: z.boolean().default(true),
 });
 
+const groupNoticeSchema = z.object({
+    self_id: idSchema,
+    group_id: idSchema,
+    time: z.number(),
+    notice_type: z.string(),
+    sub_type: z.string().default(""),
+    user_id: idSchema.optional(),
+    operator_id: idSchema.optional(),
+    message_id: idSchema.optional(),
+    duration: z.number().default(0),
+});
+
+type GroupNotice = z.infer<typeof groupNoticeSchema>;
 type GroupMessage = z.infer<typeof groupMessageSchema>;
 type ReactionNotice = z.infer<typeof reactionNoticeSchema>;
 type Segment = z.infer<typeof segmentSchema>;
@@ -146,6 +175,29 @@ export function toReactionEvents(event: ReactionNotice, names: ReadonlyMap<strin
     }));
 }
 
+/** Returns undefined for notices it has no use for, and for stale ones replayed after being offline. */
+export function toGroupEvent(notice: GroupNotice, now: number, names: ReadonlyMap<string, string>): GroupEvent | undefined {
+    const at = notice.time * 1000;
+    const individual = NOTICE_KINDS[`${notice.notice_type}/${notice.sub_type}`];
+    if (!individual || now - at > MAX_LIVE_AGE_MS) return undefined;
+    const person = (id: string | undefined): Sender | undefined =>
+        id && id !== NOBODY ? { id, displayName: names.get(id) ?? id, isBot: false } : undefined;
+    const wholeGroup = notice.notice_type === "group_ban" && notice.user_id === NOBODY;
+    const kind = wholeGroup ? (individual === "muted" ? "muted_all" : "unmuted_all") : individual;
+    return {
+        platform: "qq",
+        channelId: notice.group_id,
+        kind,
+        // On a join or a departure this is whoever approved it, or the person themselves, which nobody in the chat sees.
+        actor: kind === "left" || kind === "joined" ? undefined : person(notice.operator_id),
+        target: person(notice.user_id),
+        targetIsSelf: notice.user_id === notice.self_id,
+        durationMs: kind === "muted" ? notice.duration * 1000 : undefined,
+        messageId: notice.message_id,
+        at,
+    };
+}
+
 /** QQ through a OneBot 11 server such as NapCat, over its forward WebSocket. */
 export class OneBotAdapter implements Adapter {
     readonly platform = "qq" as const;
@@ -157,6 +209,7 @@ export class OneBotAdapter implements Adapter {
     #socket: OneBotSocket | undefined;
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #onReaction: ((event: ReactionEvent) => void) | undefined;
+    #onGroupEvent: ((event: GroupEvent) => void) | undefined;
     #pending = new Map<string, Pending>();
     #nextEcho = 1;
     #retryMs = FIRST_RETRY_MS;
@@ -182,10 +235,15 @@ export class OneBotAdapter implements Adapter {
     }
 
     /** Resolves after the first attempt either way, so a QQ outage can't stop other platforms from starting. It keeps retrying. */
-    async start(onMessage: (message: ChatMessage) => void, onReaction?: (event: ReactionEvent) => void): Promise<void> {
+    async start(
+        onMessage: (message: ChatMessage) => void,
+        onReaction?: (event: ReactionEvent) => void,
+        onGroupEvent?: (event: GroupEvent) => void,
+    ): Promise<void> {
         this.#stopped = false;
         this.#onMessage = onMessage;
         this.#onReaction = onReaction;
+        this.#onGroupEvent = onGroupEvent;
         await new Promise<void>((resolve) => this.#connect(resolve));
     }
 
@@ -279,6 +337,8 @@ export class OneBotAdapter implements Adapter {
             else if (payload.post_type === "message" && payload.message_type === "group") this.#onGroupMessage(groupMessageSchema.parse(payload));
             else if (payload.post_type === "notice" && payload.notice_type === "group_msg_emoji_like") {
                 for (const event of toReactionEvents(reactionNoticeSchema.parse(payload), this.#names)) this.#onReaction?.(event);
+            } else if (payload.post_type === "notice" && GROUP_NOTICE_TYPES.has(String(payload.notice_type))) {
+                void this.#onGroupNotice(groupNoticeSchema.parse(payload)).catch((error) => this.#onStatus("message_failed", String(error)));
             }
         } catch (error) {
             this.#onStatus("message_failed", String(error));
@@ -293,6 +353,27 @@ export class OneBotAdapter implements Adapter {
         pending.cancelTimeout();
         if (payload.status === "ok" || payload.retcode === 0) pending.resolve(payload.data);
         else pending.reject(new Error(`OneBot call failed: ${asText(payload.wording) || asText(payload.message) || asText(payload.retcode)}`));
+    }
+
+    async #onGroupNotice(notice: GroupNotice): Promise<void> {
+        await Promise.all([notice.user_id, notice.operator_id].map((id) => this.#learnName(notice.group_id, id)));
+        const event = toGroupEvent(notice, this.#clock.now(), this.#names);
+        if (event) this.#onGroupEvent?.(event);
+    }
+
+    /** Admins and people being removed often haven't spoken lately, and a bare QQ number would mean nothing in the chat. */
+    async #learnName(groupId: string, userId: string | undefined): Promise<void> {
+        if (!userId || userId === NOBODY || this.#names.has(userId)) return;
+        try {
+            const member = (await this.#call("get_group_member_info", { group_id: Number(groupId), user_id: Number(userId) })) as {
+                card?: string;
+                nickname?: string;
+            };
+            const name = member.card || member.nickname;
+            if (name) this.#names.set(userId, name);
+        } catch {
+            // Someone who has just left can't be looked up, and the event still matters without a name.
+        }
     }
 
     #onGroupMessage(event: GroupMessage): void {

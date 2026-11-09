@@ -13,6 +13,7 @@ export type PerceptionTiming = {
 };
 
 const NORMAL_PRIORITY = 1;
+const MAX_EVENTS_IN_WINDOW = 5;
 export const ADDRESSED_PRIORITY = 10;
 
 export function isAddressed(message: ChatMessage): boolean {
@@ -79,6 +80,13 @@ export class ChannelPerception {
         const reactions = removed ? others : [...others, reaction];
         entry.message = { ...entry.message, reactions };
         return reactions;
+    }
+
+    /** Context only, like {@link recordSeen}. Capped, or a wave of bans would push the actual chat out of the window. */
+    noteEvent(message: ChatMessage): void {
+        const events = this.#window.filter((entry) => entry.message.groupEvent);
+        if (events.length >= MAX_EVENTS_IN_WINDOW) this.#window = this.#window.filter((entry) => entry !== events[0]);
+        this.recordSeen(message);
     }
 
     purgeReactionsBy(user: string): void {

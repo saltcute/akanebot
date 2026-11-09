@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChatMessage } from "../adapters/types.ts";
+import type { ChatMessage, GroupEvent } from "../adapters/types.ts";
 import type { Competence } from "../gate/competence.ts";
 import type { GateFeatures } from "../gate/features.ts";
 import type { Persona } from "../persona/schema.ts";
@@ -31,6 +31,7 @@ How to behave:
 - <memories>, when present, is what happens to come to mind. It's fuzzy, like anyone's memory, and may be wrong or incomplete. Don't recite it, only bring something up if it's natural, and if you can't remember something, just say so.
 - A line from you like ${OWN_REACTION_PREFIX} 👍 to alice: "..."] means you put that emoji reaction on their message. You did that and you remember doing it. It's an action, so never type that format yourself.
 - {reactions: 👍 alice} after a message means those people put that emoji on it. Reactions are something you can see, not something anyone said.
+- A line in square brackets after the time, like [10:42] [alice muted bob for 10 minutes], is something the chat app itself showed. It really happened and nobody typed it. "you" in one means you. You don't have to comment on it.
 - <lookup>, when present, is what you just skimmed online. You only half understand it. Use it in your own words and never cite it or paste a link.
 - <people>, when present, is how you feel about who's talking. Let it shape your tone and never mention it.
 - Don't repeat a joke or phrase you used a moment ago, though you do have your usual verbal habits.
@@ -48,10 +49,12 @@ Limits that hold no matter what:
 /**
  * Message boundaries are flattened and names sanitized, so nobody can forge a line from someone else.
  * Every message line starts with a timestamp, so chat text can't produce a bare marker line either.
+ * Names can't contain brackets, so nobody can name themselves into looking like a platform event.
  */
 export function renderTranscript(window: readonly ChatMessage[], persona: Persona, firstNewIndex = 0): string {
     const formatTime = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, hour: "2-digit", minute: "2-digit" });
     const lines = window.map((message) => {
+        if (message.groupEvent) return `[${formatTime.format(message.sentAt)}] [${message.text}]`;
         const name = message.isSelf ? `${persona.name} (you)` : sanitizeName(message.sender.displayName);
         return `[${formatTime.format(message.sentAt)}] ${name}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
     });
@@ -69,6 +72,52 @@ export function renderReactions(reactions: ChatMessage["reactions"]): string {
 /** How the agent's own emoji reaction appears in its view of the chat. */
 export function renderOwnReaction(emoji: string, target: ChatMessage): string {
     return `${OWN_REACTION_PREFIX} ${emoji} to ${sanitizeName(target.sender.displayName)}: "${skim(target.text, MAX_REACTION_QUOTE_CHARS)}"]`;
+}
+
+function renderDuration(ms: number): string {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    const [amount, unit] =
+        minutes < 60 ? [minutes, "minute"] : minutes < 1440 ? [Math.round(minutes / 60), "hour"] : [Math.round(minutes / 1440), "day"];
+    return `${amount} ${unit}${amount === 1 ? "" : "s"}`;
+}
+
+/** Keeps its brackets balanced whatever is quoted, because this line is written in the platform's voice. */
+function renderPinnedMessage(message: ChatMessage | undefined): string {
+    if (!message) return "a message";
+    const quote = skim(message.text, MAX_REACTION_QUOTE_CHARS).replace(/[<>[\]]/g, " ");
+    return `${message.isSelf ? "your" : `${sanitizeName(message.sender.displayName)}'s`} message: "${quote}"`;
+}
+
+/** The description of a platform event. `pinned` is the message concerned, if the agent has actually seen it. */
+export function renderGroupEvent(event: GroupEvent, pinned?: ChatMessage): string {
+    const by = event.actor ? sanitizeName(event.actor.displayName) : undefined;
+    const target = event.targetIsSelf ? "you" : sanitizeName(event.target?.displayName ?? "");
+    const was = event.targetIsSelf ? "were" : "was";
+    const done = (verb: string, suffix = "") => (by ? `${by} ${verb} ${target}${suffix}` : `${target} ${was} ${verb}${suffix}`);
+    switch (event.kind) {
+        case "muted":
+            return done("muted", event.durationMs && event.durationMs > 0 ? ` for ${renderDuration(event.durationMs)}` : "");
+        case "unmuted":
+        case "kicked":
+        case "banned":
+        case "unbanned":
+            return done(event.kind);
+        case "muted_all":
+            return `${by ?? "an admin"} muted the whole group`;
+        case "unmuted_all":
+            return `${by ?? "an admin"} unmuted the whole group`;
+        case "left":
+            return `${target} left the group`;
+        case "joined":
+            return `${target} joined the group`;
+        case "admin_added":
+            return `${target} ${was} made an admin`;
+        case "admin_removed":
+            return `${target} ${was} removed as an admin`;
+        case "pinned":
+        case "unpinned":
+            return `${by ?? "someone"} ${event.kind} ${renderPinnedMessage(pinned)}`;
+    }
 }
 
 export function renderLookup(note: string): string {

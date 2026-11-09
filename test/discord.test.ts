@@ -1,6 +1,6 @@
-import { type Client, GatewayIntentBits, type Message, type MessageReaction, Partials, type User } from "discord.js";
+import { AuditLogEvent, type Client, GatewayIntentBits, type Message, type MessageReaction, MessageType, Partials, type User } from "discord.js";
 import { describe, expect, it } from "vitest";
-import { createDiscordClient, DiscordAdapter, toChatMessage, toReactionEvent } from "../src/adapters/discord.ts";
+import { createDiscordClient, DiscordAdapter, readAuditEntry, toChatMessage, toReactionEvent, toSystemGroupEvent } from "../src/adapters/discord.ts";
 
 const SELF = "999";
 
@@ -183,5 +183,67 @@ describe("DiscordAdapter.send", () => {
     it("reports a channel it can't post in", async () => {
         const { adapter } = setup(false);
         await expect(adapter.send(channel, "hi")).rejects.toThrow(/can't be sent to/);
+    });
+});
+
+describe("toSystemGroupEvent", () => {
+    it("maps a pin notice to the message it pinned", () => {
+        const message = discordMessage({ system: true, type: MessageType.ChannelPinnedMessage, reference: { messageId: "old" } });
+        expect(toSystemGroupEvent(message, SELF)).toMatchObject({
+            platform: "discord",
+            channelId: "c1",
+            kind: "pinned",
+            actor: { id: "u1", displayName: "server nick" },
+            messageId: "old",
+            at: 1234,
+        });
+    });
+
+    it("maps someone joining", () => {
+        expect(toSystemGroupEvent(discordMessage({ system: true, type: MessageType.UserJoin }), SELF)).toMatchObject({
+            kind: "joined",
+            target: { id: "u1" },
+            targetIsSelf: false,
+        });
+    });
+
+    it("ignores ordinary messages and other system messages", () => {
+        expect(toSystemGroupEvent(discordMessage(), SELF)).toBeUndefined();
+        expect(toSystemGroupEvent(discordMessage({ system: true, type: MessageType.GuildBoost }), SELF)).toBeUndefined();
+    });
+});
+
+describe("readAuditEntry", () => {
+    const entry = (action: AuditLogEvent, overrides: Record<string, unknown> = {}) =>
+        ({ action, changes: [], extra: null, createdTimestamp: Date.parse("2026-01-01T00:00:00Z"), ...overrides }) as never;
+
+    it("reads a timeout and how long it lasts", () => {
+        const changes = [{ key: "communication_disabled_until", new: "2026-01-01T00:10:00Z" }];
+        expect(readAuditEntry(entry(AuditLogEvent.MemberUpdate, { changes }))).toEqual({ kind: "muted", durationMs: 600_000 });
+    });
+
+    it("reads a timeout being lifted", () => {
+        const changes = [{ key: "communication_disabled_until", old: "2026-01-01T00:10:00Z" }];
+        expect(readAuditEntry(entry(AuditLogEvent.MemberUpdate, { changes }))).toEqual({ kind: "unmuted" });
+    });
+
+    it("ignores other member updates, such as a nickname change", () => {
+        expect(readAuditEntry(entry(AuditLogEvent.MemberUpdate, { changes: [{ key: "nick", new: "x" }] }))).toBeUndefined();
+    });
+
+    it("reads kicks, bans and unpins", () => {
+        expect(readAuditEntry(entry(AuditLogEvent.MemberKick))).toEqual({ kind: "kicked" });
+        expect(readAuditEntry(entry(AuditLogEvent.MemberBanAdd))).toEqual({ kind: "banned" });
+        expect(readAuditEntry(entry(AuditLogEvent.MemberBanRemove))).toEqual({ kind: "unbanned" });
+        const extra = { channel: { id: "c1" }, messageId: "m1" };
+        expect(readAuditEntry(entry(AuditLogEvent.MessageUnpin, { extra }))).toEqual({ kind: "unpinned", channelId: "c1", messageId: "m1" });
+    });
+
+    it("ignores the rest of the audit log", () => {
+        expect(readAuditEntry(entry(AuditLogEvent.ChannelCreate))).toBeUndefined();
+    });
+
+    it("subscribes to audit log entries", () => {
+        expect(createDiscordClient().options.intents.has(GatewayIntentBits.GuildModeration)).toBe(true);
     });
 });

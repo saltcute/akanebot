@@ -1,4 +1,4 @@
-import type { Adapter, ChannelRef, ChatMessage, Platform, ReactionEvent } from "./adapters/types.ts";
+import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, ReactionEvent } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
 import { dayState } from "./body/life.ts";
@@ -32,6 +32,7 @@ import { type Persona, reactionChoices } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
 import {
+    renderGroupEvent,
     renderLookup,
     renderOwnReaction,
     renderPeople,
@@ -80,6 +81,8 @@ export type ConversationMessage = {
     senderName: string;
     senderKey: string;
     isSelf: boolean;
+    /** A platform event such as a mute, rather than something someone said. */
+    isEvent: boolean;
     addressed: boolean;
     text: string;
     sentAt: number;
@@ -136,6 +139,7 @@ const TYPING_REFRESH_MS = 8000;
 const LATE_REPLY_MS = 30 * 60_000;
 const REACTION_BATTERY_COST = 0.25;
 const REACTION_PAUSE_MS = 800;
+const GROUP_EVENT_SENDER = "(group event)";
 const LEFT_ON_READ_REACTION = 0.5;
 const IMAGE_PLACEHOLDER = "[image]";
 const MAX_IMAGES_PER_ATTEND = 2;
@@ -164,6 +168,7 @@ export class Runtime {
     #crisis: CrisisDesk;
     #allowedChannels: ReadonlySet<string>;
     #background = new Set<Promise<void>>();
+    #nextEventId = 1;
 
     constructor(options: RuntimeOptions) {
         this.#options = options;
@@ -227,6 +232,7 @@ export class Runtime {
                 adapter.start(
                     (message) => this.#onMessage(message),
                     (event) => this.#onReaction(event),
+                    (event) => this.#onGroupEvent(event),
                 ),
             ),
         );
@@ -290,7 +296,7 @@ export class Runtime {
     #forgetUser(user: string): number {
         const removed = this.memory.forgetUser(user);
         for (const channel of this.#channels.values()) {
-            channel.perception.purge((message) => userKey(message) === user);
+            channel.perception.purge((message) => userKey(message) === user || Boolean(message.groupEvent?.involves.includes(user)));
             channel.perception.purgeReactionsBy(user);
         }
         return removed;
@@ -497,6 +503,31 @@ export class Runtime {
         });
     }
 
+    /** Also only context, kept to the live window: it never wakes the agent or becomes a memory. */
+    #onGroupEvent(event: GroupEvent): void {
+        const key = channelKey(event);
+        if (this.#state.killed || !this.#allowedChannels.has(key)) return;
+        const people = [event.actor, event.target].flatMap((person) => (person ? [`${event.platform}:${person.id}`] : []));
+        if (people.some((user) => this.#state.isOptedOut(user))) return;
+        const { perception } = this.#channel(event);
+        const pinned = perception.window().find((message) => message.messageId === event.messageId && !message.groupEvent);
+        const messageId = `event:${this.#nextEventId++}`;
+        perception.noteEvent({
+            platform: event.platform,
+            channelId: event.channelId,
+            messageId,
+            sender: { id: "event", displayName: GROUP_EVENT_SENDER, isBot: false },
+            text: renderGroupEvent(event, pinned),
+            sentAt: event.at,
+            mentionsSelf: false,
+            repliesToSelf: false,
+            isSelf: false,
+            isBacklog: false,
+            groupEvent: { involves: [...people, ...(pinned ? [userKey(pinned)] : [])] },
+        });
+        this.#options.trace.record("group_event.seen", { channel: key, messageId, detail: { kind: event.kind } });
+    }
+
     #channel(ref: ChannelRef): Channel {
         const key = channelKey(ref);
         const existing = this.#channels.get(key);
@@ -544,7 +575,7 @@ export class Runtime {
         if (firstNewIndex === undefined) return;
         const seenSeq = perception.seq;
         const window = perception.window();
-        const messageId = window.at(-1)?.messageId;
+        const messageId = window.findLast(isSpoken)?.messageId;
         const idField = messageId ? { messageId } : {};
         const transcript = renderTranscript(window, persona, firstNewIndex);
         const gate = await llm.generate("gate", {
@@ -561,7 +592,7 @@ export class Runtime {
             return;
         }
 
-        const newMessages = window.slice(firstNewIndex).filter((message) => !message.isSelf);
+        const newMessages = window.slice(firstNewIndex).filter((message) => isSpoken(message) && !message.isSelf);
         this.memory.markAttended(key, newMessages);
         const features: GateFeatures = gate.data;
         const now = clock.now();
@@ -593,7 +624,7 @@ export class Runtime {
             );
         }
         if (features.possibleCrisis) {
-            const author = window.findLast((message) => !message.isSelf);
+            const author = window.findLast((message) => isSpoken(message) && !message.isSelf);
             perception.settle(seenSeq);
             if (author) await this.#respondToCrisis(channel, userKey(author), author.messageId);
             return;
@@ -783,11 +814,16 @@ function toConversationMessage(message: ChatMessage): ConversationMessage {
         senderName: message.sender.displayName,
         senderKey: userKey(message),
         isSelf: message.isSelf,
+        isEvent: message.groupEvent !== undefined,
         addressed: isAddressed(message),
         text: message.text,
         sentAt: message.sentAt,
         reactions: (message.reactions ?? []).map(({ emoji, by }) => ({ emoji, by })),
     };
+}
+
+function isSpoken(message: ChatMessage): boolean {
+    return message.groupEvent === undefined;
 }
 
 function lateReplyNote(ageMs: number): string[] {

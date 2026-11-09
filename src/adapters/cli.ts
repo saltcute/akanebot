@@ -1,5 +1,5 @@
 import type { Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, ReactionEvent, SendOptions } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, GroupEvent, ReactionEvent, SendOptions } from "./types.ts";
 
 const SELF_ID = "akanebot";
 
@@ -16,6 +16,7 @@ export class CliAdapter implements Adapter {
     readonly #print: (line: string) => void;
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #onReaction: ((event: ReactionEvent) => void) | undefined;
+    #onGroupEvent: ((event: GroupEvent) => void) | undefined;
     #nextId = 1;
 
     constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void; idPrefix?: string }) {
@@ -26,9 +27,14 @@ export class CliAdapter implements Adapter {
         this.#print = options.print ?? (() => {});
     }
 
-    async start(onMessage: (message: ChatMessage) => void, onReaction?: (event: ReactionEvent) => void): Promise<void> {
+    async start(
+        onMessage: (message: ChatMessage) => void,
+        onReaction?: (event: ReactionEvent) => void,
+        onGroupEvent?: (event: GroupEvent) => void,
+    ): Promise<void> {
         this.#onMessage = onMessage;
         this.#onReaction = onReaction;
+        this.#onGroupEvent = onGroupEvent;
     }
 
     async stop(): Promise<void> {
@@ -70,6 +76,11 @@ export class CliAdapter implements Adapter {
             isSelf: false,
             removed,
         });
+    }
+
+    /** Something happens in the simulated group, such as someone being muted. */
+    groupEvent(event: Omit<GroupEvent, "platform" | "channelId" | "at" | "targetIsSelf"> & { targetIsSelf?: boolean }, channelId = "group"): void {
+        this.#onGroupEvent?.({ targetIsSelf: false, ...event, platform: this.platform, channelId, at: this.#clock.now() });
     }
 
     async send(channel: ChannelRef, text: string, options: SendOptions = {}): Promise<{ messageId: string }> {

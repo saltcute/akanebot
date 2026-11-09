@@ -21,6 +21,34 @@ export type ReactionEvent = ChannelRef & {
     removed: boolean;
 };
 
+export type GroupEventKind =
+    | "muted"
+    | "unmuted"
+    | "muted_all"
+    | "unmuted_all"
+    | "kicked"
+    | "banned"
+    | "unbanned"
+    | "left"
+    | "joined"
+    | "admin_added"
+    | "admin_removed"
+    | "pinned"
+    | "unpinned";
+
+/** Something the platform itself reports happening in a group, as opposed to anything someone said. */
+export type GroupEvent = ChannelRef & {
+    kind: GroupEventKind;
+    actor?: Sender | undefined;
+    target?: Sender | undefined;
+    /** The target is the agent's own account. */
+    targetIsSelf: boolean;
+    durationMs?: number | undefined;
+    /** The message that was pinned or unpinned. */
+    messageId?: string | undefined;
+    at: number;
+};
+
 export type ChatMessage = ChannelRef & {
     messageId: string;
     sender: Sender;
@@ -37,6 +65,8 @@ export type ChatMessage = ChannelRef & {
     isSelf: boolean;
     /** Delivered as history (for example after a reconnect) rather than live. */
     isBacklog: boolean;
+    /** This line is a platform event rather than something someone said. `involves` is who it's about, as user keys. */
+    groupEvent?: { involves: readonly string[] };
 };
 
 export type SendOptions = {
@@ -46,7 +76,11 @@ export type SendOptions = {
 
 export interface Adapter {
     readonly platform: Platform;
-    start(onMessage: (message: ChatMessage) => void, onReaction?: (event: ReactionEvent) => void): Promise<void>;
+    start(
+        onMessage: (message: ChatMessage) => void,
+        onReaction?: (event: ReactionEvent) => void,
+        onGroupEvent?: (event: GroupEvent) => void,
+    ): Promise<void>;
     stop(): Promise<void>;
     send(channel: ChannelRef, text: string, options?: SendOptions): Promise<{ messageId: string }>;
     sendTyping(channel: ChannelRef): Promise<void>;

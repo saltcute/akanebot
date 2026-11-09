@@ -402,7 +402,7 @@ function renderMessage(message) {
         el(
             "div",
             { className: "message-head" },
-            message.isSelf
+            message.isSelf || message.isEvent
                 ? el("b", {}, message.senderName)
                 : el("button", { className: "link", onclick: () => showPerson(message.senderKey) }, message.senderName),
             el("time", { dateTime: new Date(message.sentAt).toISOString() }, formatTime(message.sentAt)),

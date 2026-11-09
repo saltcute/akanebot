@@ -1,7 +1,7 @@
 // biome-ignore-all lint/style/useNamingConvention: these names are OneBot's wire format
-import { describe, expect, it } from "vitest";
-import { emojiFromId, OneBotAdapter, type OneBotSocket, toChatMessage, toReactionEvents } from "../src/adapters/onebot.ts";
-import type { ChatMessage, ReactionEvent } from "../src/adapters/types.ts";
+import { describe, expect, it, vi } from "vitest";
+import { emojiFromId, OneBotAdapter, type OneBotSocket, toChatMessage, toGroupEvent, toReactionEvents } from "../src/adapters/onebot.ts";
+import type { ChatMessage, GroupEvent, ReactionEvent } from "../src/adapters/types.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 
 const NOW = 1_800_000_000_000;
@@ -63,6 +63,7 @@ async function connected() {
     const statuses: string[] = [];
     const messages: ChatMessage[] = [];
     const reactions: ReactionEvent[] = [];
+    const groupEvents: GroupEvent[] = [];
     const adapter = new OneBotAdapter({
         url: "ws://napcat",
         clock,
@@ -78,6 +79,7 @@ async function connected() {
     const started = adapter.start(
         (message) => messages.push(message),
         (reaction) => reactions.push(reaction),
+        (groupEvent) => groupEvents.push(groupEvent),
     );
     const socket = sockets[0] as FakeSocket;
     socket.emit("open");
@@ -86,7 +88,7 @@ async function connected() {
     await Promise.resolve();
     socket.reply([{ group_id: 181, group_name: "测试群" }]);
     await started;
-    return { adapter, clock, sockets, socket, urls, statuses, messages, reactions };
+    return { adapter, clock, sockets, socket, urls, statuses, messages, reactions, groupEvents };
 }
 
 describe("OneBot message mapping", () => {
@@ -301,5 +303,83 @@ describe("OneBotAdapter", () => {
         socket.emit("close");
         await started;
         expect(urls).toEqual(["ws://napcat?access_token=a%20b"]);
+    });
+});
+
+describe("OneBot group notices", () => {
+    const names = new Map([
+        ["7", "bob"],
+        ["8", "admin"],
+    ]);
+    const notice = (overrides: Record<string, unknown>) =>
+        ({ post_type: "notice", self_id: "999", group_id: "181", time: NOW / 1000, sub_type: "", duration: 0, ...overrides }) as never;
+    const ban = { notice_type: "group_ban", sub_type: "ban", user_id: "7", operator_id: "8", duration: 600 };
+
+    it("maps a mute with its length and who did it", () => {
+        expect(toGroupEvent(notice(ban), NOW, names)).toMatchObject({
+            platform: "qq",
+            channelId: "181",
+            kind: "muted",
+            actor: { id: "8", displayName: "admin" },
+            target: { id: "7", displayName: "bob" },
+            targetIsSelf: false,
+            durationMs: 600_000,
+            at: NOW,
+        });
+    });
+
+    it("maps lifting a mute", () => {
+        expect(toGroupEvent(notice({ ...ban, sub_type: "lift_ban", duration: 0 }), NOW, names)).toMatchObject({
+            kind: "unmuted",
+            durationMs: undefined,
+        });
+    });
+
+    it("recognizes a whole-group mute, which has no individual target", () => {
+        const event = toGroupEvent(notice({ ...ban, user_id: "0", duration: -1 }), NOW, names);
+        expect(event).toMatchObject({ kind: "muted_all", actor: { id: "8" }, target: undefined });
+        expect(toGroupEvent(notice({ ...ban, user_id: "0", sub_type: "lift_ban" }), NOW, names)?.kind).toBe("unmuted_all");
+    });
+
+    it("notices when it's the one affected", () => {
+        expect(toGroupEvent(notice({ ...ban, user_id: "999" }), NOW, names)?.targetIsSelf).toBe(true);
+    });
+
+    it("maps departures, keeping the operator only for a kick", () => {
+        const decrease = { notice_type: "group_decrease", user_id: "7", operator_id: "8" };
+        expect(toGroupEvent(notice({ ...decrease, sub_type: "kick" }), NOW, names)).toMatchObject({ kind: "kicked", actor: { id: "8" } });
+        expect(toGroupEvent(notice({ ...decrease, sub_type: "leave" }), NOW, names)).toMatchObject({ kind: "left", actor: undefined });
+    });
+
+    it("maps joins and admin changes", () => {
+        expect(
+            toGroupEvent(notice({ notice_type: "group_increase", sub_type: "approve", user_id: "7", operator_id: "8" }), NOW, names),
+        ).toMatchObject({
+            kind: "joined",
+            actor: undefined,
+        });
+        expect(toGroupEvent(notice({ notice_type: "group_admin", sub_type: "set", user_id: "7" }), NOW, names)?.kind).toBe("admin_added");
+    });
+
+    it("treats essence messages as pins", () => {
+        const essence = { notice_type: "essence", sub_type: "add", sender_id: "7", operator_id: "8", message_id: "55" };
+        expect(toGroupEvent(notice(essence), NOW, names)).toMatchObject({ kind: "pinned", actor: { id: "8" }, messageId: "55", targetIsSelf: false });
+        expect(toGroupEvent(notice({ ...essence, sub_type: "delete" }), NOW, names)?.kind).toBe("unpinned");
+    });
+
+    it("ignores stale notices and ones it has no use for", () => {
+        expect(toGroupEvent(notice({ ...ban, time: (NOW - 300_000) / 1000 }), NOW, names)).toBeUndefined();
+        expect(toGroupEvent(notice({ notice_type: "group_upload" }), NOW, names)).toBeUndefined();
+    });
+
+    it("looks up names it hasn't seen, and carries on if it can't", async () => {
+        const { socket, groupEvents } = await connected();
+        socket.emit("message", { post_type: "notice", self_id: 999, group_id: 181, time: NOW / 1000, ...ban });
+        const [first, second] = socket.sent.slice(-2);
+        expect(first).toMatchObject({ action: "get_group_member_info", params: { group_id: 181, user_id: 7 } });
+        socket.emit("message", { status: "ok", retcode: 0, data: { card: "小明", nickname: "n" }, echo: first?.echo });
+        socket.emit("message", { status: "failed", retcode: 1400, wording: "nope", echo: second?.echo });
+        await vi.waitFor(() => expect(groupEvents).toHaveLength(1));
+        expect(groupEvents[0]).toMatchObject({ target: { displayName: "小明" }, actor: { displayName: "8" } });
     });
 });
