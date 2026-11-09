@@ -35,7 +35,6 @@ export const NEUTRAL_CONTEXT: SpeakContext = {
 };
 
 const ALREADY_ANSWERED_FACTOR = 0.4;
-const UNCLEAR_ADDRESS_FACTOR = 1.5;
 const LOW_BATTERY = 0.3;
 const EMPTY_BATTERY_ANSWER_FACTOR = 0.3;
 const STALE_JOIN_MS = 20 * 60_000;
@@ -104,7 +103,6 @@ function joinProbability(features: GateFeatures, persona: Persona, context: Spea
     const interest = clamp(features.interest);
     let probability = persona.talkativeness * (0.25 + 1.5 * interest) * context.joinFactor;
     if (features.someoneAlreadyAnswered) probability *= ALREADY_ANSWERED_FACTOR;
-    if (features.addressedToMe === "unclear") probability *= UNCLEAR_ADDRESS_FACTOR;
     if (context.battery < LOW_BATTERY) probability *= context.battery / LOW_BATTERY;
     if (context.staleMs > STALE_JOIN_MS) probability *= STALE_FACTOR;
     return clamp(probability);

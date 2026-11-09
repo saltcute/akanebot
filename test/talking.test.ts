@@ -68,6 +68,11 @@ describe("decideToSpeak", () => {
         expect(decideToSpeak(features(), { ...PERSONA, ignoreDirectAsks: 0 }, true, rng(), context).speak).toBe(true);
     });
 
+    it("doesn't join in any more readily when unsure who was meant", () => {
+        const chance = (addressedToMe: "no" | "unclear") => decideToSpeak(features({ addressedToMe }), PERSONA, false, rng()).probability;
+        expect(chance("unclear")).toBe(chance("no"));
+    });
+
     it("is more likely to join on an interesting topic", () => {
         const dull = decideToSpeak(features({ interest: 0.1 }), PERSONA, false, rng()).probability;
         const keen = decideToSpeak(features({ interest: 0.9 }), PERSONA, false, rng()).probability;
