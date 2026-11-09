@@ -17,6 +17,7 @@ export const PERSONA: Persona = {
     slipRate: 0.25,
     maxCodeLines: 12,
     lowEffort: 0,
+    repeatRate: 0,
     reactions: { discord: ["👍", "😭"], qq: { thumbs: 76, "👍": 128077 } },
     dailyLife: [],
     prose: "# Who I am\n小茜",
@@ -36,6 +37,7 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         towardMe: "neutral",
         lookUp: "",
         quickReaction: "",
+        safeToRepeat: true,
         privateThought: "嗯",
         ...overrides,
     };

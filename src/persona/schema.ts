@@ -44,6 +44,7 @@ export const personaSettingsSchema = z.strictObject({
     skills: z.record(z.string(), z.number().int().min(1).max(5)),
     slipRate: unit,
     lowEffort: unit.default(0),
+    repeatRate: unit.default(0),
     reactions: z
         .strictObject({
             discord: z.array(z.string().min(1)).default([]),

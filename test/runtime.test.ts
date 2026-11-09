@@ -955,6 +955,66 @@ describe("senses", () => {
         });
     });
 
+    describe("repeating", () => {
+        const quiet = { addressedToMe: "no" as const };
+        const eager = { persona: { repeatRate: 1, talkativeness: 0 }, gate: quiet };
+
+        it("sends the line word for word without the reply model", async () => {
+            const { adapter, reply, settle } = await setup(eager);
+            adapter.say("alice", "我超");
+            adapter.say("bob", "我超");
+            await settle();
+            expect(adapter.sent.map((s) => s.text)).toEqual(["我超"]);
+            expect(reply.calls).toHaveLength(0);
+        });
+
+        it("doesn't join the same chain twice", async () => {
+            const { adapter, settle } = await setup(eager);
+            adapter.say("alice", "我超");
+            adapter.say("bob", "我超");
+            await settle();
+            adapter.say("carol", "我超");
+            await settle();
+            expect(adapter.sent).toHaveLength(1);
+        });
+
+        it("falls back to the normal decision when the dice say no", async () => {
+            const { adapter, trace, settle } = await setup({ persona: { repeatRate: 0, talkativeness: 0 }, gate: quiet });
+            adapter.say("alice", "我超");
+            adapter.say("bob", "我超");
+            await settle();
+            expect(adapter.sent).toEqual([]);
+            expect(trace.all().some((entry) => entry.kind === "gate.repeat")).toBe(true);
+        });
+
+        it("stays out of what the gate flagged", async () => {
+            const { adapter, settle } = await setup({ ...eager, gate: { ...quiet, safeToRepeat: false } });
+            adapter.say("alice", "我超");
+            adapter.say("bob", "我超");
+            await settle();
+            expect(adapter.sent).toEqual([]);
+        });
+
+        it("still answers when someone is talking to it", async () => {
+            const { adapter, settle } = await setup({ persona: { repeatRate: 1 } });
+            adapter.say("alice", "我超");
+            adapter.say("bob", "我超");
+            await settle();
+            expect(adapter.sent.map((s) => s.text)).toEqual(["哈哈"]);
+        });
+
+        it("drops it if the chain breaks while typing", async () => {
+            const { adapter, clock, trace } = await setup({ ...eager, pacing: pacingSchema.parse({}) });
+            adapter.say("alice", "我超");
+            adapter.say("bob", "我超");
+            await clock.advance(1000);
+            adapter.say("carol", "吃饭了吗");
+            await clock.advance(30_000);
+            expect(adapter.sent.map((s) => s.text)).not.toContain("我超");
+            expect(trace.all().some((entry) => entry.kind === "reply.abandoned")).toBe(true);
+        });
+    });
+
     describe("reactions", () => {
         it("sometimes reacts instead of writing, skipping the expensive model", async () => {
             const { adapter, reply, settle } = await setup({ persona: { lowEffort: 1 }, gate: { quickReaction: "👍" } });

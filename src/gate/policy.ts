@@ -3,6 +3,7 @@ import type { Persona } from "../persona/schema.ts";
 import type { GateFeatures } from "./features.ts";
 
 export type SpeakDecision = { speak: boolean; probability: number; addressed: boolean };
+export type RepeatDecision = { repeat: boolean; probability: number };
 
 /** The state of the body, the relationship and the question at the moment of deciding. */
 export type SpeakContext = {
@@ -44,6 +45,19 @@ export function decideToSpeak(
     const addressed = mentioned || features.addressedToMe === "yes";
     const probability = addressed ? answerProbability(persona, context) : joinProbability(features, persona, context);
     return { speak: rng.chance(probability), probability, addressed };
+}
+
+/** Joining a chain needs no interest in the topic, but it still takes being around and having the energy. */
+export function decideToRepeat(features: GateFeatures, persona: Persona, rng: Rng, context: SpeakContext = NEUTRAL_CONTEXT): RepeatDecision {
+    const probability = features.safeToRepeat && !features.highStakes ? repeatProbability(persona, context) : 0;
+    return { repeat: rng.chance(probability), probability };
+}
+
+function repeatProbability(persona: Persona, context: SpeakContext): number {
+    if (context.staleMs > STALE_JOIN_MS) return 0;
+    let probability = persona.repeatRate * context.joinFactor;
+    if (context.battery < LOW_BATTERY) probability *= context.battery / LOW_BATTERY;
+    return clamp(probability);
 }
 
 function answerProbability(persona: Persona, context: SpeakContext): number {

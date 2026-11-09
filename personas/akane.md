@@ -31,6 +31,7 @@ slipRate: 0.25 # chance of a mistake when working something out at the edge of i
 maxCodeLines: 12 # never sends a snippet longer than this
 
 lowEffort: 0.05 # chance of just reacting with an emoji instead of writing something
+repeatRate: 0.35 # chance of joining in each time it reads two or more people repeating the same line
 reactions: # the only reactions she uses, listed per platform because QQ's set is much smaller
   discord: ["👍", "😭", "🤔", "👀", "💀", "🫡", "🥀", "🪉"]
   # name she knows it by: QQ emoji_id. A QQ face uses its face ID (0-484). A Unicode emoji uses its decimal code point, and only some work (👍 is 128077)

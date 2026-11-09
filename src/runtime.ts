@@ -9,7 +9,8 @@ import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
 import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
-import { decideToSpeak } from "./gate/policy.ts";
+import { decideToRepeat, decideToSpeak } from "./gate/policy.ts";
+import { findRepeatChain } from "./gate/repeat.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
@@ -546,14 +547,15 @@ export class Runtime {
         const day = dayState(persona, now);
         const battery = this.vitals.battery();
         const competence = assessCompetence(features, persona, this.#competenceRng);
-        const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, {
+        const speakContext = {
             battery,
             joinFactor: day.joinFactor,
             affinity: askerKey ? currentRelationship(store, key, askerKey, now).affinity : 0,
             staleMs: newest ? now - newest.sentAt : 0,
             forceAnswer: this.vitals.wasRecentlyIgnored(ignoreKey),
             outOfDepth: competence.mode === "out_of_depth",
-        });
+        };
+        const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, speakContext);
         trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, battery, features } });
         for (const speaker of new Set(newMessages.map(userKey))) {
             updateRelationship(
@@ -585,6 +587,16 @@ export class Runtime {
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         };
+        const chain = decision.addressed ? undefined : findRepeatChain(window);
+        if (chain !== undefined) {
+            const repeat = decideToRepeat(features, persona, this.#gateRng, speakContext);
+            trace.record("gate.repeat", { channel: key, ...idField, detail: { ...repeat } });
+            if (repeat.repeat) {
+                perception.settle(seenSeq);
+                await this.#repeat(channel, chain, lease);
+                return;
+            }
+        }
         if (!decision.speak) {
             if (decision.addressed) this.vitals.noteIgnored(ignoreKey);
             perception.settle(seenSeq);
@@ -680,6 +692,27 @@ export class Runtime {
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         }
+    }
+
+    /** Sends the line as it stands, without the reply model, unless the chain has broken by the time it's typed. */
+    async #repeat(channel: Channel, text: string, lease: Lease): Promise<void> {
+        const { clock, pacing, trace } = this.#options;
+        const { perception } = channel;
+        lease.setState("composing");
+        if (pacing && !(await sleep(clock, readingDelay(pacing, text.length), lease.signal))) return;
+        lease.setState("sending");
+        if (pacing && !(await this.#type(channel, typingDelay(pacing, text, this.#pacingRng, true), lease.signal))) return;
+        if (findRepeatChain(perception.window()) !== text) {
+            trace.record("reply.abandoned", { channel: lease.candidate.channel, detail: { repeat: true } });
+            return;
+        }
+        const outcome = await this.guard.send(channel.adapter, channel.ref, text, { signal: lease.signal });
+        if (outcome.kind === "blocked" && outcome.reason === "shadow") this.vitals.spend(1);
+        if (outcome.kind !== "sent") return;
+        this.vitals.spend(1);
+        const own = ownMessage(channel.ref, outcome.messageId, text, clock.now(), this.#persona.name);
+        perception.recordOwn(own);
+        this.memory.recordOwn(own);
     }
 
     /** Pictures cost a model call, so they're only looked at once the agent is actually reading them. */

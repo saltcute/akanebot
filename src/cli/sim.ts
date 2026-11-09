@@ -32,6 +32,7 @@ const CANNED_GATE = JSON.stringify({
     towardMe: "neutral",
     lookUp: "",
     quickReaction: "",
+    safeToRepeat: true,
     privateThought: "(fake backend)",
 });
 
