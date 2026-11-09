@@ -19,7 +19,7 @@ function renderPersona() {
         "div",
         { className: "detail" },
         el("h2", { className: "detail-title" }, rest.name),
-        el("p", { className: "meta" }, "Read-only. Edit personas/akane.md and it reloads by itself."),
+        el("p", { className: "meta" }, "Read-only. Edit the persona file and it reloads by itself."),
         el("h3", {}, "How she is written"),
         el("p", { className: "message-text" }, prose),
         el("h3", {}, "Settings"),
