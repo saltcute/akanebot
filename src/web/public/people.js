@@ -1,5 +1,5 @@
 import { showPerson } from "./dialogs.js";
-import { act, api, count, el, formatTime, pill } from "./ui.js";
+import { act, api, count, el, formatTime, pill, toast } from "./ui.js";
 
 const people = { list: [], selected: undefined, search: "" };
 
@@ -116,6 +116,29 @@ function renderStanding(person) {
     ];
 }
 
+function optOut(person) {
+    return act(async () => {
+        const path = `/people/${encodeURIComponent(person.key)}`;
+        const impact = await api(path);
+        const warning = `Opt out ${person.name}? She stops reading them on every account, and ${count(impact.memories, "memory", "memories")} and ${count(impact.messages, "logged message", "logged messages")} are deleted for good.`;
+        if (!confirm(warning)) return;
+        const { forgotten } = await api(`${path}/opt-out`, { method: "POST" });
+        await load();
+        render();
+        toast(`Opted out, and forgot ${count(forgotten, "memory", "memories")}`);
+    });
+}
+
+function optIn(person) {
+    if (!confirm(`Opt ${person.name} back in? If they opted out themselves, this overrides their choice. Nothing already forgotten comes back.`))
+        return;
+    act(async () => {
+        await api(`/people/${encodeURIComponent(person.key)}/opt-in`, { method: "POST" });
+        await load();
+        render();
+    }, "Opted back in");
+}
+
 function renderDetail() {
     const person = people.list.find((candidate) => candidate.key === people.selected);
     if (!person) return el("div", { className: "empty" }, "Pick someone to see what she knows about them.");
@@ -146,7 +169,14 @@ function renderDetail() {
                       el("p", {}, `Familiarity ${group.familiarity.toFixed(2)}, affinity ${group.affinity.toFixed(2)}`),
                   ),
               ),
-        el("div", { className: "actions" }, el("button", { className: "danger push", onclick: () => act(() => showPerson(person.key)) }, "Forget…")),
+        el(
+            "div",
+            { className: "actions" },
+            person.optedOut
+                ? el("button", { onclick: () => optIn(person) }, "Opt back in")
+                : el("button", { className: "danger", onclick: () => optOut(person) }, "Opt out…"),
+            el("button", { className: "danger push", onclick: () => showPerson(person.key) }, "Forget…"),
+        ),
     );
 }
 

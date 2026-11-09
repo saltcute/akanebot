@@ -30,11 +30,7 @@ export function showPerson(key) {
                 {},
                 `She has ${count(person.memories, "memory", "memories")} and ${count(person.messages, "logged message", "logged messages")} tied to this person. Forgetting deletes all of them, along with how she feels about them.`,
             ),
-            el(
-                "p",
-                { className: "meta" },
-                "She can still learn about them from new messages. To stop that, they can send the opt-out command in chat.",
-            ),
+            el("p", { className: "meta" }, "She can still learn about them from new messages. To stop that, opt them out on the People tab."),
             el("div", { className: "actions" }, el("button", { className: "danger", onclick: forget }, "Forget this person")),
         );
     });

@@ -345,6 +345,18 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             handle: (request) => ({ forgotten: runtime.forgetPerson(personKey(request)) }),
         },
         {
+            method: "POST",
+            path: /^\/api\/people\/([^/]+)\/opt-out$/,
+            handle: (request) => ({ forgotten: runtime.optOutPerson(personKey(request)) }),
+        },
+        {
+            method: "POST",
+            path: /^\/api\/people\/([^/]+)\/opt-in$/,
+            handle: (request) => {
+                runtime.optInPerson(personKey(request));
+            },
+        },
+        {
             method: "PATCH",
             path: /^\/api\/people\/([^/]+)\/relationship$/,
             handle: (request) => {

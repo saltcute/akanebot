@@ -517,6 +517,37 @@ describe("web console people", () => {
         expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "reset_relationship", user: "cli:alice" });
     });
 
+    it("opts someone out: their data and window go, and later messages aren't read", async () => {
+        const { adapter, store, runtime, json, post, trace } = await setup({ people: ALICE_ACCOUNTS });
+        adapter.say("alice", "secret");
+        adapter.say("bob", "hi");
+        store.addMemory(draft());
+        expect(await post(`/api/people/${ALICE_KEY}/opt-out`)).toEqual({ forgotten: 1 });
+        expect(store.all()).toEqual([]);
+        adapter.say("alice", "still talking");
+        expect(runtime.conversation(CHANNEL)?.messages.map((message) => message.senderName)).toEqual(["bob"]);
+        const { people } = await json("/api/people");
+        expect(people.find((person: { key: string }) => person.key === "cli:alice")).toMatchObject({ optedOut: true, messages: 0 });
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "opt_out", user: "cli:alice" });
+    });
+
+    it("opts someone back in, on all their accounts, restoring reading only", async () => {
+        const { adapter, store, runtime, post, trace } = await setup({ people: ALICE_ACCOUNTS });
+        adapter.say("alice", "before");
+        store.addMemory(draft());
+        await post(`/api/people/${encodeURIComponent("discord:42")}/opt-out`);
+        await post(`/api/people/${ALICE_KEY}/opt-in`);
+        expect(store.all()).toEqual([]);
+        adapter.say("alice", "after");
+        expect(runtime.conversation(CHANNEL)?.messages.map((message) => message.text)).toEqual(["after"]);
+        expect(trace.ofKind("control.web").at(-1)?.detail).toEqual({ action: "opt_in", user: "cli:alice" });
+    });
+
+    it("refuses to opt out the persona herself", async () => {
+        const { call } = await setup();
+        expect((await call(`/api/people/${encodeURIComponent("cli:self")}/opt-out`, { method: "POST" })).status).toBe(400);
+    });
+
     it("doesn't list her own lines or group events as people", async () => {
         const { store, json } = await setup();
         const base = {

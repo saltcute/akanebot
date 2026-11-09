@@ -465,6 +465,19 @@ export class Runtime {
         return this.#forgetUser(user);
     }
 
+    /** What the chat command does: she stops reading them and everything derived from them goes. Returns how many memories went. */
+    optOutPerson(user: string): number {
+        this.#state.optOut(user);
+        this.#options.trace.record("control.web", { detail: { action: "opt_out", user } });
+        return this.#forgetUser(user);
+    }
+
+    /** She can read them again. Whatever went when they opted out doesn't come back. */
+    optInPerson(user: string): void {
+        this.#state.optIn(user);
+        this.#options.trace.record("control.web", { detail: { action: "opt_in", user } });
+    }
+
     /** False when she has no feelings about this person to correct. */
     correctStanding(user: string, correction: Partial<Relationship>): boolean {
         const corrected = correctStanding(this.memory.store, user, correction, this.#options.clock.now(), this.#people);
