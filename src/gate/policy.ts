@@ -4,7 +4,7 @@ import type { GateFeatures } from "./features.ts";
 
 export type SpeakDecision = { speak: boolean; probability: number; addressed: boolean };
 
-/** The state of the body and the relationship at the moment of deciding. */
+/** The state of the body, the relationship and the question at the moment of deciding. */
 export type SpeakContext = {
     /** From 1 (rested) to 0 (done talking for today). */
     battery: number;
@@ -15,9 +15,11 @@ export type SpeakContext = {
     staleMs: number;
     /** The person already got ignored once and is asking again. */
     forceAnswer: boolean;
+    /** The question is technical and beyond the persona's skills. */
+    outOfDepth: boolean;
 };
 
-export const NEUTRAL_CONTEXT: SpeakContext = { battery: 1, joinFactor: 1, affinity: 0, staleMs: 0, forceAnswer: false };
+export const NEUTRAL_CONTEXT: SpeakContext = { battery: 1, joinFactor: 1, affinity: 0, staleMs: 0, forceAnswer: false, outOfDepth: false };
 
 const ALREADY_ANSWERED_FACTOR = 0.4;
 const UNCLEAR_ADDRESS_FACTOR = 1.5;
@@ -54,6 +56,8 @@ function answerProbability(persona: Persona, context: SpeakContext): number {
 }
 
 function joinProbability(features: GateFeatures, persona: Persona, context: SpeakContext): number {
+    // Nobody asked, so a person who can't follow the conversation just stays out of it.
+    if (!features.canFollow || context.outOfDepth) return 0;
     const interest = clamp(features.interest);
     let probability = persona.talkativeness * (0.25 + 1.5 * interest) * context.joinFactor;
     if (features.someoneAlreadyAnswered) probability *= ALREADY_ANSWERED_FACTOR;

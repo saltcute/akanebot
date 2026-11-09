@@ -8,6 +8,7 @@ export const gateFeaturesSchema = z.object({
     addressedToMe: z.enum(["yes", "no", "unclear"]),
     topic: z.string(),
     interest: z.number(),
+    canFollow: z.boolean(),
     someoneAlreadyAnswered: z.boolean(),
     isTechnical: z.boolean(),
     domain: z.string(),
@@ -33,6 +34,7 @@ Fields:
 - addressedToMe: are the latest messages directed at ${persona.name}?
 - topic: a few words on what the chat is currently about.
 - interest: 0 to 1, how much this particular person would care, judged from the profile below.
+- canFollow: could ${persona.name} actually follow what the new messages are about, judged from the profile below? false if it's a subject the profile says they know nothing about, or it needs background they wouldn't have, such as a game, sport or scene they don't follow. true for ordinary banter that needs no background, and for anything about ${persona.name} or the chat itself.
 - someoneAlreadyAnswered: has another member already dealt with what was asked?
 - isTechnical: is there a computing, programming or maths question or claim to engage with?
 - domain: one of ${[...Object.keys(persona.skills), "other"].join(", ")}. Use "other" when not technical.

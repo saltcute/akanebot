@@ -678,7 +678,7 @@ describe("relationships", () => {
 
 describe("speaking under pressure", () => {
     const rng = () => new Rng(1);
-    const context = (overrides = {}) => ({ battery: 1, joinFactor: 1, affinity: 0, staleMs: 0, forceAnswer: false, ...overrides });
+    const context = (overrides = {}) => ({ battery: 1, joinFactor: 1, affinity: 0, staleMs: 0, forceAnswer: false, outOfDepth: false, ...overrides });
     const join = (overrides = {}) => decideToSpeak(features({ interest: 0.6 }), PERSONA, false, rng(), context(overrides)).probability;
     const answer = (overrides = {}) => decideToSpeak(features(), PERSONA, true, rng(), context(overrides)).probability;
 

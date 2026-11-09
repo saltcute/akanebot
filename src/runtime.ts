@@ -604,14 +604,15 @@ export class Runtime {
         const ignoreKey = `${key}|${askerKey}`;
         const day = dayState(persona, now);
         const battery = this.vitals.battery();
+        const competence = assessCompetence(features, persona, this.#competenceRng);
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, {
             battery,
             joinFactor: day.joinFactor,
             affinity: askerKey ? currentRelationship(store, key, askerKey, now).affinity : 0,
             staleMs: newest ? now - newest.sentAt : 0,
             forceAnswer: this.vitals.wasRecentlyIgnored(ignoreKey),
+            outOfDepth: competence.mode === "out_of_depth",
         });
-        const competence = assessCompetence(features, persona, this.#competenceRng);
         trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, battery, features } });
         for (const speaker of new Set(newMessages.map(userKey))) {
             updateRelationship(

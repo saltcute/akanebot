@@ -173,6 +173,18 @@ describe("Runtime", () => {
         expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ speak: false });
     });
 
+    it("stays out of a technical conversation beyond its skills when nobody asked", async () => {
+        const { adapter, technical, trace, settle } = await setup({
+            gate: { addressedToMe: "no", interest: 1, isTechnical: true, domain: "web", difficulty: 5 },
+            persona: { talkativeness: 1, skills: { web: 1 } },
+        });
+        adapter.say("alice", "这个 CRDT 的收敛证明怎么看");
+        await settle();
+        expect(adapter.sent).toEqual([]);
+        expect(technical.calls).toHaveLength(0);
+        expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ mode: "out_of_depth", probability: 0 });
+    });
+
     it("can leave a direct question on read", async () => {
         const { adapter, settle } = await setup({ persona: { ignoreDirectAsks: 1 } });
         adapter.say("alice", "@小茜 在吗");

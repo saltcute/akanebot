@@ -27,6 +27,7 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         addressedToMe: "no",
         topic: "chat",
         interest: 0.5,
+        canFollow: true,
         someoneAlreadyAnswered: false,
         isTechnical: false,
         domain: "other",

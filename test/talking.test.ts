@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ChatMessage } from "../src/adapters/types.ts";
 import { appConfigSchema } from "../src/config.ts";
 import { assessCompetence } from "../src/gate/competence.ts";
-import { decideToSpeak } from "../src/gate/policy.ts";
+import { decideToSpeak, NEUTRAL_CONTEXT } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -68,6 +68,27 @@ describe("decideToSpeak", () => {
         const open = decideToSpeak(features(), PERSONA, false, rng()).probability;
         const answered = decideToSpeak(features({ someoneAlreadyAnswered: true }), PERSONA, false, rng()).probability;
         expect(answered).toBeLessThan(open);
+    });
+
+    it("never joins a conversation it can't follow, however interesting", () => {
+        const decision = decideToSpeak(features({ canFollow: false, interest: 1 }), { ...PERSONA, talkativeness: 1 }, false, rng());
+        expect(decision).toMatchObject({ speak: false, probability: 0 });
+    });
+
+    it("never joins a technical question beyond its skills", () => {
+        const decision = decideToSpeak(features({ interest: 1 }), { ...PERSONA, talkativeness: 1 }, false, rng(), {
+            ...NEUTRAL_CONTEXT,
+            outOfDepth: true,
+        });
+        expect(decision).toMatchObject({ speak: false, probability: 0 });
+    });
+
+    it("still answers when asked directly about something it can't follow", () => {
+        const decision = decideToSpeak(features({ canFollow: false }), { ...PERSONA, ignoreDirectAsks: 0 }, true, rng(), {
+            ...NEUTRAL_CONTEXT,
+            outOfDepth: true,
+        });
+        expect(decision.speak).toBe(true);
     });
 
     it("never joins if talkativeness is zero", () => {
