@@ -770,6 +770,24 @@ describe("living like a person", () => {
             expect(gate.calls).toHaveLength(1);
         });
 
+        it("reports the wait for the next phone check, shortened by a mention", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { adapter, runtime, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });
+            await settle(minute);
+            const before = runtime.bodySnapshot().nextPhoneCheckInMs ?? 0;
+            expect(before).toBeGreaterThan(0);
+            adapter.say("alice", "@小茜 在吗");
+            await settle(0);
+            expect(runtime.bodySnapshot().nextPhoneCheckInMs).toBeLessThan(before);
+        });
+
+        it("reports no phone check while asleep", async () => {
+            const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
+            const { runtime, settle } = await setup({ routine: true, persona, startAt: wednesday + 3 * hour });
+            await settle(minute);
+            expect(runtime.bodySnapshot().nextPhoneCheckInMs).toBeUndefined();
+        });
+
         it("doesn't check its phone sooner for ordinary chat", async () => {
             const persona = { ...awakeAllDay, schedule: { ...baseSchedule, busy: urgentClasses } };
             const { adapter, trace, settle } = await setup({ routine: true, persona, startAt: wednesday + 10 * hour });

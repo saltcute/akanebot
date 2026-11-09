@@ -177,6 +177,8 @@ export type BodySnapshot = {
     activity: "asleep" | "busy" | "free";
     /** Undefined when this run doesn't follow the schedule. */
     present: boolean | undefined;
+    /** Undefined unless she is busy and away with a glance at her phone coming up. */
+    nextPhoneCheckInMs: number | undefined;
     day: DayState;
     battery: number;
     searchesToday: number;
@@ -417,6 +419,7 @@ export class Runtime {
             awayReasons: this.body.awayReasons,
             activity: isAsleep(persona, now) ? "asleep" : busyPeriod(persona, now) ? "busy" : "free",
             present: this.#routine?.present,
+            nextPhoneCheckInMs: this.#routine?.nextPhoneCheckInMs,
             day: dayState(persona, now),
             battery: this.vitals.battery(),
             searchesToday: this.vitals.searchesToday(),

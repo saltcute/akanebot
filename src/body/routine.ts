@@ -42,6 +42,12 @@ export class Routine {
         return this.#present;
     }
 
+    /** How long until the next glance at the phone, while busy and away. Undefined when no glance is coming. */
+    get nextPhoneCheckInMs(): number | undefined {
+        if (this.#present || this.#nextPhoneCheck === 0) return undefined;
+        return Math.max(0, this.#nextPhoneCheck - this.#clock.now());
+    }
+
     start(): void {
         this.#tick();
     }

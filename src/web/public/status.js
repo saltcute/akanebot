@@ -26,6 +26,13 @@ function moodWord(mood) {
     return "Ordinary";
 }
 
+/** In whole minutes, so the page only redraws when this text changes. */
+function phoneCheckWait() {
+    if (body?.nextPhoneCheckInMs === undefined) return undefined;
+    const minutes = Math.ceil(body.nextPhoneCheckInMs / 60_000);
+    return minutes <= 1 ? "Within a minute" : `In about ${minutes} minutes`;
+}
+
 function renderNow() {
     return card(
         "Right now",
@@ -37,6 +44,7 @@ function renderNow() {
             fact("Away because", body.awayReasons.length > 0 ? body.awayReasons.join(", ") : "Not away"),
             fact("Schedule", ACTIVITIES[body.activity] ?? body.activity),
             body.present === undefined ? undefined : fact("Looking at chat", body.present ? "Yes" : "No"),
+            body.nextPhoneCheckInMs === undefined ? undefined : fact("Next phone check", phoneCheckWait()),
         ),
     );
 }
@@ -164,4 +172,4 @@ function editing() {
     return document.getElementById("view")?.contains(document.activeElement) && document.activeElement.matches("input, select, textarea");
 }
 
-export const statusTab = { label: "Status", load, render, editing, live: () => JSON.stringify(body) };
+export const statusTab = { label: "Status", load, render, editing, live: () => JSON.stringify({ ...body, nextPhoneCheckInMs: phoneCheckWait() }) };
