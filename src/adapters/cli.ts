@@ -51,6 +51,7 @@ export class CliAdapter implements Adapter {
         const text = rawText.replace(/\[img:\S+?\]/g, "[image]");
         const mentioned = [...text.matchAll(MENTION_TOKEN)].flatMap((match) => (match[1] ? [match[1]] : []));
         const mentionsSelf = mentioned.some((name) => this.#ownNames.has(name.toLowerCase()));
+        const mentions = mentioned.filter((name) => !this.#ownNames.has(name.toLowerCase()));
         this.#onMessage?.({
             platform: this.platform,
             channelId,
@@ -60,6 +61,7 @@ export class CliAdapter implements Adapter {
             ...(images.length > 0 ? { images } : {}),
             sentAt: this.#clock.now(),
             mentionsSelf,
+            ...(mentions.length > 0 ? { mentions } : {}),
             repliesToSelf: false,
             ...(replyTo ? { replyTo, replyToMessageId: replyTo.messageId } : {}),
             isSelf: false,

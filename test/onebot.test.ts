@@ -134,6 +134,16 @@ describe("OneBot message mapping", () => {
         expect(map([{ type: "at", data: { qq: "43", name: "carol" } }])?.text).toBe("@carol");
     });
 
+    it("lists who else was mentioned, without itself or @all", () => {
+        const message = map([
+            { type: "at", data: { qq: "999" } },
+            { type: "at", data: { qq: "all" } },
+            { type: "at", data: { qq: "42" } },
+            { type: "at", data: { qq: "43", name: "carol" } },
+        ]);
+        expect(message?.mentions).toEqual(["bob", "carol"]);
+    });
+
     it("recognises a reply to something it sent", () => {
         const message = map([{ type: "reply", data: { id: "77" } }, text("真的吗")], {}, ["77"]);
         expect(message).toMatchObject({ repliesToSelf: true, replyToMessageId: "77", text: "真的吗" });

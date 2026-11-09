@@ -28,6 +28,13 @@ function readableText(message: Message): string {
     return [message.cleanContent, ...placeholders].filter(Boolean).join(" ");
 }
 
+/** The names `cleanContent` writes after each @. A reply that pings its author lists them too, even with no @ in the text. */
+function mentionedNames(message: Message, selfId: string): string[] {
+    return [...message.mentions.users]
+        .filter(([id]) => id !== selfId)
+        .map(([id, user]) => message.mentions.members?.get(id)?.displayName ?? user.displayName);
+}
+
 function toQuotedMessage(message: Message, selfId: string): QuotedMessage | undefined {
     const text = readableText(message);
     if (text === "") return undefined;
@@ -56,6 +63,7 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
     const cached = repliedToId ? message.channel.messages.cache.get(repliedToId) : undefined;
     const repliedTo = cached?.partial ? undefined : cached;
     const quoted = repliedTo ? toQuotedMessage(repliedTo, selfId) : undefined;
+    const mentions = mentionedNames(message, selfId);
     return {
         platform: "discord",
         channelId: message.channelId,
@@ -70,6 +78,7 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
         sentAt: message.createdTimestamp,
         // Checks the user list directly, so @everyone doesn't count as being addressed.
         mentionsSelf: message.mentions.users.has(selfId),
+        ...(mentions.length > 0 ? { mentions } : {}),
         repliesToSelf: repliedTo?.author.id === selfId || message.mentions.repliedUser?.id === selfId,
         ...(repliedToId ? { replyToMessageId: repliedToId } : {}),
         ...(quoted ? { replyTo: quoted } : {}),

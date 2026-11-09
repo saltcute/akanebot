@@ -56,6 +56,16 @@ describe("toChatMessage", () => {
         expect(toChatMessage(discordMessage({ mentions: { users: new Map([[SELF, {}]]), repliedUser: null } }), SELF)?.mentionsSelf).toBe(true);
     });
 
+    it("lists other people it mentions by their server name, and leaves itself out", () => {
+        const users = new Map([
+            [SELF, { displayName: "me" }],
+            ["a", { displayName: "global a" }],
+            ["b", { displayName: "global b" }],
+        ]);
+        const members = new Map([["a", { displayName: "nick a" }]]);
+        expect(toChatMessage(discordMessage({ mentions: { users, members, repliedUser: null } }), SELF)?.mentions).toEqual(["nick a", "global b"]);
+    });
+
     it("doesn't count someone else's mention", () => {
         expect(toChatMessage(discordMessage({ mentions: { users: new Map([["other", {}]]), repliedUser: null } }), SELF)?.mentionsSelf).toBe(false);
     });

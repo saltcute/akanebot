@@ -1429,4 +1429,9 @@ describe("CliAdapter mentions", () => {
     it("doesn't count a longer name that merely starts the same", async () => {
         expect((await said("@akane2 在吗"))?.mentionsSelf).toBe(false);
     });
+
+    it("lists who else was mentioned", async () => {
+        expect((await said("@akane @bob, 看 a@b.com"))?.mentions).toEqual(["bob"]);
+        expect((await said("没人"))?.mentions).toBeUndefined();
+    });
 });

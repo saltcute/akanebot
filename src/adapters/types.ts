@@ -62,6 +62,8 @@ export type ChatMessage = ChannelRef & {
     reactions?: readonly MessageReaction[];
     sentAt: number;
     mentionsSelf: boolean;
+    /** Names of the other people this message @-mentions, as they appear in the text. Never includes @everyone. */
+    mentions?: readonly string[];
     repliesToSelf: boolean;
     replyToMessageId?: string;
     /** Absent on a reply if the platform couldn't say what it was replying to, or that person has been forgotten. */

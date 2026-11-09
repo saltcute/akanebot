@@ -93,6 +93,10 @@ function asText(value: unknown): string {
     return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
+function mentionedName(data: Segment["data"], target: string, names: Lookup["names"]): string {
+    return asText(data.name) || names.get(target) || target;
+}
+
 function describeSegment({ type, data }: Segment, selfId: string, { selfName, names }: Lookup): string {
     switch (type) {
         case "text":
@@ -101,7 +105,7 @@ function describeSegment({ type, data }: Segment, selfId: string, { selfName, na
             const target = asText(data.qq);
             if (target === "all") return "@全体成员";
             if (target === selfId) return `@${selfName}`;
-            return `@${asText(data.name) || names.get(target) || target}`;
+            return `@${mentionedName(data, target, names)}`;
         }
         case "image":
             return "[image]";
@@ -127,6 +131,13 @@ function describeSegment({ type, data }: Segment, selfId: string, { selfName, na
     }
 }
 
+function mentionedOthers(segments: readonly Segment[], selfId: string, names: Lookup["names"]): string[] {
+    return segments.flatMap(({ type, data }) => {
+        const target = asText(data.qq);
+        return type === "at" && target !== "all" && target !== selfId ? [mentionedName(data, target, names)] : [];
+    });
+}
+
 function isDescribableImage({ type, data }: Segment): boolean {
     return type === "image" && asText(data.url) !== "" && Number(data.file_size ?? 0) <= MAX_DESCRIBABLE_IMAGE_BYTES;
 }
@@ -150,6 +161,7 @@ export function toChatMessage(
     const images = event.message.filter(isDescribableImage).map(({ data }) => ({ url: asText(data.url) }));
     const replyTo = asText(event.message.find((segment) => segment.type === "reply")?.data.id);
     const sentAt = event.time * 1000;
+    const mentions = mentionedOthers(event.message, event.self_id, lookup.names);
     return {
         platform: "qq",
         channelId: event.group_id,
@@ -160,6 +172,7 @@ export function toChatMessage(
         sentAt,
         // Compares against its own ID, so @全体成员 doesn't count as being addressed.
         mentionsSelf: event.message.some((segment) => segment.type === "at" && asText(segment.data.qq) === event.self_id),
+        ...(mentions.length > 0 ? { mentions } : {}),
         repliesToSelf: replyTo !== "" && repliedToSelf(replyTo),
         ...(replyTo ? { replyToMessageId: replyTo } : {}),
         isSelf: event.user_id === event.self_id,
