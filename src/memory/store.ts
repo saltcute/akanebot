@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { ChatMessage, MessageReaction, Platform, QuotedMessage } from "../adapters/types.ts";
 import { channelKey } from "../adapters/types.ts";
+import { NO_LINKS, type People } from "../control/people.ts";
 
 export type MemoryKind = "episode" | "fact" | "claim" | "event";
 
@@ -348,34 +349,47 @@ export class MemoryStore {
     }
 
     /** Removes everything derived from a person, including shared summaries they contributed to. Returns how many memories went. */
-    forgetUser(user: string): number {
-        const ids = this.#memoriesDerivedFrom(user);
+    forgetUser(user: string, people: People = NO_LINKS): number {
+        const ids = this.#memoriesDerivedFrom(user, people);
         for (const id of ids) this.forget(id);
-        this.#run("DELETE FROM rawLog WHERE userKey = ?", user);
-        this.#run("UPDATE rawLog SET replyTo = NULL WHERE json_extract(replyTo, '$.byUser') = ?", user);
-        this.#removeReactionsBy(user);
-        this.#run("DELETE FROM relationships WHERE userKey = ?", user);
+        for (const account of people.accountsOf(user)) {
+            this.#run("DELETE FROM rawLog WHERE userKey = ?", account);
+            this.#run("UPDATE rawLog SET replyTo = NULL WHERE json_extract(replyTo, '$.byUser') = ?", account);
+            this.#removeReactionsBy(account);
+            this.#run("DELETE FROM relationships WHERE userKey = ?", account);
+        }
         return ids.size;
     }
 
     /** What `forgetUser` would delete. */
-    forgetImpact(user: string): { memories: number; messages: number } {
-        const [row] = this.#all<{ total: number }>("SELECT COUNT(*) AS total FROM rawLog WHERE userKey = ?", user);
-        return { memories: this.#memoriesDerivedFrom(user).size, messages: row?.total ?? 0 };
+    forgetImpact(user: string, people: People = NO_LINKS): { memories: number; messages: number } {
+        const accounts = people.accountsOf(user);
+        const messages = accounts.reduce((total, account) => {
+            const [row] = this.#all<{ total: number }>("SELECT COUNT(*) AS total FROM rawLog WHERE userKey = ?", account);
+            return total + (row?.total ?? 0);
+        }, 0);
+        return { memories: this.#memoriesDerivedFrom(user, people).size, messages };
     }
 
-    #memoriesDerivedFrom(user: string): Set<number> {
-        // Things others said about this person are stored under their display name, so those go too.
-        const names = this.#all<{ displayName: string }>("SELECT DISTINCT displayName FROM rawLog WHERE userKey = ?", user).map(
-            (row) => `name:${row.displayName}`,
-        );
-        const ids = this.#all<{ id: number }>(
-            `SELECT id FROM memories WHERE subject = ?1 OR attributedTo = ?1
-             UNION SELECT memoryId AS id FROM memorySources WHERE speaker = ?1`,
-            user,
-        ).map((row) => row.id);
-        for (const name of names) ids.push(...this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ?", name).map((row) => row.id));
-        return new Set(ids);
+    #memoriesDerivedFrom(user: string, people: People): Set<number> {
+        const ids = new Set<number>();
+        const configuredName = people.nameOf(user);
+        const names = new Set(configuredName ? [configuredName] : []);
+        for (const account of people.accountsOf(user)) {
+            // Things others said about this person are stored under their display name, so those go too.
+            for (const { displayName } of this.#all<{ displayName: string }>("SELECT DISTINCT displayName FROM rawLog WHERE userKey = ?", account)) {
+                names.add(displayName);
+            }
+            const derived = this.#all<{ id: number }>(
+                `SELECT id FROM memories WHERE subject = ?1 OR attributedTo = ?1
+                 UNION SELECT memoryId AS id FROM memorySources WHERE speaker = ?1`,
+                account,
+            );
+            for (const { id } of derived) ids.add(id);
+        }
+        for (const name of names)
+            for (const { id } of this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ?", `name:${name}`)) ids.add(id);
+        return ids;
     }
 
     #removeReactionsBy(user: string): void {
@@ -409,6 +423,11 @@ export class MemoryStore {
 
     getRelationship(channel: string, user: string): RelationshipRow | undefined {
         return this.#all<RelationshipRow>("SELECT * FROM relationships WHERE channel = ? AND userKey = ?", channel, user)[0];
+    }
+
+    /** Every row for these accounts, in any group. */
+    relationshipsOf(accounts: readonly string[]): RelationshipRow[] {
+        return accounts.flatMap((account) => this.#all<RelationshipRow>("SELECT * FROM relationships WHERE userKey = ?", account));
     }
 
     saveRelationship(row: RelationshipRow): void {

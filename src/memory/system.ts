@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../adapters/types.ts";
 import { isAsleep, localTime } from "../body/schedule.ts";
+import { NO_LINKS, type People } from "../control/people.ts";
 import { userKey } from "../control/state.ts";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
 import type { Rng } from "../lib/rng.ts";
@@ -40,6 +41,7 @@ export class MemorySystem {
     #persona: () => Persona;
     #settings: MemorySettings;
     #alert: (reason: string, detail: Record<string, unknown>) => void;
+    #people: People;
     #segmentTimers = new Map<string, CancelTimer>();
     #closing = new Set<string>();
     #cancelNightly: CancelTimer | undefined;
@@ -55,6 +57,7 @@ export class MemorySystem {
         persona: () => Persona;
         settings: MemorySettings;
         alert: (reason: string, detail: Record<string, unknown>) => void;
+        people?: People;
     }) {
         this.store = options.store;
         this.#embedder = options.embedder;
@@ -65,6 +68,7 @@ export class MemorySystem {
         this.#persona = options.persona;
         this.#settings = options.settings;
         this.#alert = options.alert;
+        this.#people = options.people ?? NO_LINKS;
     }
 
     /** Digests conversations left open by a restart, and starts the nightly check. */
@@ -109,7 +113,7 @@ export class MemorySystem {
     async recall(channel: string, newMessages: readonly ChatMessage[]): Promise<{ block: string; recalled: Recalled[] }> {
         const persona = this.#persona();
         const text = newMessages.map((message) => message.text).join(" ");
-        const speakers = newMessages.map(userKey);
+        const speakers = newMessages.flatMap((message) => this.#people.accountsOf(userKey(message)));
         const now = this.#clock.now();
         const vector = await this.#embedder.embed(text, "query");
         const recalled = selectMemories({
@@ -125,7 +129,7 @@ export class MemorySystem {
             channel,
             detail: { recalled: recalled.map(({ memory, score, detailed }) => ({ id: memory.id, gist: memory.gist, score, detailed })) },
         });
-        return { block: renderMemories(recalled, (key) => this.store.displayNameOf(key) ?? "someone"), recalled };
+        return { block: renderMemories(recalled, (key) => this.#people.nameOf(key) ?? this.store.displayNameOf(key) ?? "someone"), recalled };
     }
 
     /** Digests a finished conversation. If the model fails, it stays open and is retried later. */
@@ -213,7 +217,7 @@ export class MemorySystem {
             );
             if (!judgment) continue;
             const speakers = sourced.filter((message) => !message.isSelf).map(userKey);
-            if (speakers.some((speaker) => this.store.writesSince(speaker, startOfDay) >= this.#settings.dailyWritesPerUser)) {
+            if (speakers.some((speaker) => this.#writesToday(speaker, startOfDay) >= this.#settings.dailyWritesPerUser)) {
                 this.#trace.record("memory.quota_exceeded", { channel, detail: { speakers } });
                 continue;
             }
@@ -232,6 +236,11 @@ export class MemorySystem {
         return written;
     }
 
+    /** The quota is per person, or a second account would double it. */
+    #writesToday(speaker: string, startOfDay: number): number {
+        return this.#people.accountsOf(speaker).reduce((total, account) => total + this.store.writesSince(account, startOfDay), 0);
+    }
+
     async #add(draft: Omit<Parameters<MemoryStore["addMemory"]>[0], "embedding" | "embeddingModel">): Promise<void> {
         const embedding = await this.#embedder.embed(`${draft.gist} ${draft.detail}`, "passage");
         this.store.addMemory({ ...draft, embedding, embeddingModel: this.#embedder.modelId });
@@ -239,9 +248,14 @@ export class MemorySystem {
 
     /** Removes everything derived from this person. Returns how many memories went. */
     forgetUser(user: string): number {
-        const removed = this.store.forgetUser(user);
+        const removed = this.store.forgetUser(user, this.#people);
         this.#trace.record("memory.forget_user", { detail: { user, removed } });
         return removed;
+    }
+
+    /** What `forgetUser` would delete. */
+    forgetImpact(user: string): { memories: number; messages: number } {
+        return this.store.forgetImpact(user, this.#people);
     }
 
     /** Re-indexes changed text right away, so an edited memory doesn't drop out of recall until the nightly run. */
@@ -264,6 +278,7 @@ export class MemorySystem {
             now: this.#clock.now(),
             rawRetentionMs: this.#settings.rawRetentionMs,
             signal: new AbortController().signal,
+            people: this.#people,
         });
         this.#trace.record("memory.consolidated", { detail: report });
         return report;

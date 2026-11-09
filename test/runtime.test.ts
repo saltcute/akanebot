@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CliAdapter } from "../src/adapters/cli.ts";
 import type { ChatMessage } from "../src/adapters/types.ts";
+import { People } from "../src/control/people.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import type { GateFeatures } from "../src/gate/features.ts";
 import { ManualClock } from "../src/lib/clock.ts";
@@ -21,6 +22,7 @@ import { features, PERSONA } from "./fixtures.ts";
 const USAGE: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
 
 type Setup = {
+    people?: People;
     reply?: FakeResponder;
     technical?: FakeResponder;
     gate?: Partial<GateFeatures>;
@@ -126,6 +128,7 @@ async function setup(options: Setup) {
         ...(options.pacing ? { pacing: options.pacing } : {}),
         ...(options.routine ? { routine: true } : {}),
         ...(options.search ? { search: options.search } : {}),
+        ...(options.people ? { people: options.people } : {}),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -800,6 +803,33 @@ describe("living like a person", () => {
             first.runtime.vitals.spend(4);
             const second = await setup({ memoryStore, persona: { socialBattery: 10 } });
             expect(second.runtime.vitals.battery()).toBe(0.6);
+        });
+    });
+
+    describe("linked accounts", () => {
+        const people = new People([{ name: "土豆", ids: ["cli:potato", "qq:1"], note: "关系很好的网友" }]);
+
+        it("shows the operator's note for the real account, and connects a different display name", async () => {
+            const { adapter, reply, settle } = await setup({ people });
+            adapter.say("potato", "hi");
+            await settle();
+            expect(reply.calls[0]?.transcript).toContain("- potato: this is 土豆; 关系很好的网友");
+            expect(reply.calls[0]?.transcript).not.toContain("barely know");
+        });
+
+        it("gives someone nothing for using the name as a nickname", async () => {
+            const { adapter, reply, settle } = await setup({ people });
+            adapter.say("土豆", "hi");
+            await settle();
+            expect(reply.calls[0]?.transcript).not.toContain("关系很好的网友");
+        });
+
+        it("forgets the person's other accounts when one opts out", async () => {
+            const { adapter, memoryStore, settle } = await setup({ people });
+            memoryStore.saveRelationship({ channel: "qq:g", userKey: "qq:1", familiarity: 0.5, affinity: 0, updatedAt: 0, gainDay: 0, dayGain: 0 });
+            adapter.say("potato", "/akanebot opt-out");
+            await settle();
+            expect(memoryStore.relationshipsOf(["qq:1"])).toEqual([]);
         });
     });
 

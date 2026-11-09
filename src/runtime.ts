@@ -6,6 +6,7 @@ import { currentRelationship, describeRelationship, updateRelationship } from ".
 import { Routine } from "./body/routine.ts";
 import { Vitals } from "./body/vitals.ts";
 import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
+import { NO_LINKS, type People } from "./control/people.ts";
 import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
@@ -66,6 +67,8 @@ export type RuntimeOptions = {
     /** Follow the persona's sleep and busy hours. */
     routine?: boolean;
     search?: SearchBackend;
+    /** Which accounts are the same person. */
+    people?: People;
 };
 
 /** One line of a conversation, as the operator sees it. */
@@ -161,6 +164,7 @@ export class Runtime {
     #competenceRng: Rng;
     #persona: Persona;
     #state: ControlState;
+    #people: People;
     #allowedChannels: ReadonlySet<string>;
     #background = new Set<Promise<void>>();
     #nextEventId = 1;
@@ -174,7 +178,8 @@ export class Runtime {
         const attend: Attend = (lease) => this.#attend(lease);
         this.body = new BodyActor({ clock: options.clock, trace: options.trace, attend });
         this.#persona = options.persona;
-        this.#state = new ControlState({ clock: options.clock, store: options.controlStore });
+        this.#people = options.people ?? NO_LINKS;
+        this.#state = new ControlState({ clock: options.clock, store: options.controlStore, people: this.#people });
         this.#allowedChannels = new Set(options.control.groups.filter((group) => group.disclosed).map(channelKey));
         if (this.#state.killed) this.body.goAway(KILL_REASON);
         this.#pacingRng = options.rng.fork("pacing");
@@ -204,6 +209,7 @@ export class Runtime {
             persona: () => this.#persona,
             settings: options.memorySettings,
             alert: (reason, detail) => this.#alert(reason, detail),
+            people: this.#people,
         });
     }
 
@@ -288,10 +294,12 @@ export class Runtime {
 
     #forgetUser(user: string): number {
         const removed = this.memory.forgetUser(user);
-        for (const channel of this.#channels.values()) {
-            channel.perception.purge((message) => userKey(message) === user || Boolean(message.groupEvent?.involves.includes(user)));
-            channel.perception.purgeReactionsBy(user);
-            channel.perception.purgeQuotesBy(user);
+        for (const account of this.#people.accountsOf(user)) {
+            for (const channel of this.#channels.values()) {
+                channel.perception.purge((message) => userKey(message) === account || Boolean(message.groupEvent?.involves.includes(account)));
+                channel.perception.purgeReactionsBy(account);
+                channel.perception.purgeQuotesBy(account);
+            }
         }
         return removed;
     }
@@ -571,7 +579,7 @@ export class Runtime {
         const speakContext = {
             battery,
             joinFactor: day.joinFactor,
-            affinity: askerKey ? currentRelationship(store, key, askerKey, now).affinity : 0,
+            affinity: askerKey ? currentRelationship(store, askerKey, now, this.#people).affinity : 0,
             staleMs: newest ? now - newest.sentAt : 0,
             forceAnswer: this.vitals.wasRecentlyIgnored(ignoreKey),
             outOfDepth: competence.mode === "out_of_depth",
@@ -588,6 +596,7 @@ export class Runtime {
                 speaker === askerKey ? features.towardMe : "neutral",
                 decision.addressed && speaker === askerKey,
                 now,
+                this.#people,
             );
         }
         if (decision.addressed) this.vitals.spend(ADDRESSED_BATTERY_COST);
@@ -642,7 +651,7 @@ export class Runtime {
         const { block: memories } = await this.memory.recall(key, newMessages);
         const lookup = await this.#maybeLookUp(key, features.lookUp, newMessages, lease.signal);
         const people = [...new Map(newMessages.map((message) => [userKey(message), message.sender.displayName]))].flatMap(([user, name]) => {
-            const description = describeRelationship(currentRelationship(store, key, user, now));
+            const description = this.#describePerson(user, name, now);
             return description ? [{ name, description }] : [];
         });
         const lowBattery = battery < LOW_BATTERY;
@@ -716,6 +725,18 @@ export class Runtime {
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         }
+    }
+
+    /** Goes by account, so a nickname alone never gets anyone treated as someone she knows. */
+    #describePerson(user: string, shownAs: string, now: number): string | undefined {
+        const knownAs = this.#people.nameOf(user);
+        const note = this.#people.noteOf(user);
+        const parts = [
+            knownAs !== undefined && knownAs !== shownAs ? `this is ${knownAs}` : undefined,
+            note,
+            describeRelationship(currentRelationship(this.memory.store, user, now, this.#people), note !== undefined),
+        ].filter((part) => part !== undefined);
+        return parts.length > 0 ? parts.join("; ") : undefined;
     }
 
     /** Sends the line as it stands, without the reply model, unless the chain has broken by the time it's typed. */

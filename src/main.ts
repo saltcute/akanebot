@@ -3,6 +3,7 @@ import { OneBotAdapter } from "./adapters/onebot.ts";
 import type { Adapter } from "./adapters/types.ts";
 import { printTraceEvent } from "./cli/print-trace.ts";
 import { loadConfig } from "./config.ts";
+import { People } from "./control/people.ts";
 import { JsonFileControlStore } from "./control/state.ts";
 import { SystemClock } from "./lib/clock.ts";
 import { CostMeter } from "./lib/cost.ts";
@@ -85,6 +86,7 @@ const runtime = new Runtime({
     controlStore: new JsonFileControlStore(config.control.statePath),
     memoryStore: new MemoryStore(config.memory.path),
     embedder: createEmbedder(config.embedder, (message) => trace.record("alert", { detail: { reason: "embedder_failed", message } })),
+    people: new People(config.people),
     memorySettings: {
         segmentGapMs: config.memory.segmentGapMinutes * 60_000,
         maxSegmentMessages: config.memory.maxSegmentMessages,

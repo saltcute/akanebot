@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
+import { peopleSchema } from "./control/people.ts";
 import { pricesSchema } from "./lib/cost.ts";
 import { embedderConfigSchema } from "./llm/embedder.ts";
 import { llmConfigSchema } from "./llm/registry.ts";
@@ -51,6 +52,8 @@ export const appConfigSchema = z.strictObject({
             .default([]),
         statePath: z.string().min(1).default("data/control.json"),
     }),
+    /** Links one person's accounts across platforms, and says how she knows them. */
+    people: peopleSchema,
     dailyBudgetUsd: z.number().positive(),
     /** A OneBot 11 server such as NapCat, needed for any `qq` group. Its access token, if any, comes from ONEBOT_TOKEN. */
     qq: z.strictObject({ url: z.string().min(1) }).optional(),

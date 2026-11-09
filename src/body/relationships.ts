@@ -1,3 +1,4 @@
+import { NO_LINKS, type People } from "../control/people.ts";
 import type { MemoryStore, RelationshipRow } from "../memory/store.ts";
 
 export type TowardMe = "friendly" | "neutral" | "hostile";
@@ -22,13 +23,28 @@ function faded(row: RelationshipRow, now: number): number {
     return row.affinity * 0.5 ** ((now - row.updatedAt) / DAY_MS / AFFINITY_HALF_LIFE_DAYS);
 }
 
-export function currentRelationship(store: MemoryStore, channel: string, user: string, now: number): Relationship {
-    const row = store.getRelationship(channel, user);
+/** One body, so a person is the same person in every group. Each update starts from this, so the newest row always holds where they stand. */
+function standingOf(store: MemoryStore, user: string, people: People): RelationshipRow | undefined {
+    const rows = store.relationshipsOf(people.accountsOf(user)).sort((a, b) => b.updatedAt - a.updatedAt);
+    const [newest] = rows;
+    return newest && { ...newest, familiarity: Math.max(...rows.map((row) => row.familiarity)) };
+}
+
+export function currentRelationship(store: MemoryStore, user: string, now: number, people: People = NO_LINKS): Relationship {
+    const row = standingOf(store, user, people);
     return row ? { familiarity: row.familiarity, affinity: faded(row, now) } : STRANGER;
 }
 
-export function updateRelationship(store: MemoryStore, channel: string, user: string, towardMe: TowardMe, addressed: boolean, now: number): void {
-    const row = store.getRelationship(channel, user);
+export function updateRelationship(
+    store: MemoryStore,
+    channel: string,
+    user: string,
+    towardMe: TowardMe,
+    addressed: boolean,
+    now: number,
+    people: People = NO_LINKS,
+): void {
+    const row = standingOf(store, user, people);
     const today = dayOf(now);
     const gainedToday = row?.gainDay === today ? row.dayGain : 0;
     let affinity = row ? faded(row, now) : 0;
@@ -50,11 +66,11 @@ export function updateRelationship(store: MemoryStore, channel: string, user: st
     });
 }
 
-/** Undefined when there's nothing worth mentioning. */
-export function describeRelationship({ familiarity, affinity }: Relationship): string | undefined {
+/** Undefined when there's nothing worth mentioning. `introduced` means the operator already said how she knows them. */
+export function describeRelationship({ familiarity, affinity }: Relationship, introduced = false): string | undefined {
     const parts: string[] = [];
     if (familiarity > 0.6) parts.push("you know them well");
-    else if (familiarity < 0.1) parts.push("you barely know them");
+    else if (familiarity < 0.1 && !introduced) parts.push("you barely know them");
     if (affinity > 0.25) parts.push("you like them");
     else if (affinity < -0.25) parts.push("they've annoyed you and you may be curt");
     return parts.length > 0 ? parts.join(", ") : undefined;

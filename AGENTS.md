@@ -59,6 +59,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 - **The raw log is never shown to the agent.** It sees the working window and what recall returns. Only messages it actually attended can become memories.
 - **Rails can't be overridden.** `src/control/` runs first, even while the persona is "asleep". Persona settings can't disable it.
 - **Online friends only.** The agent has never met anyone in the chat in person and never will. This rule lives in the reply instructions, so no persona file can remove it.
+- **People, not accounts.** One person can have several accounts, linked by `people` in config and resolved when read (`src/control/people.ts`). Opt-out, forgetting, write quotas, corroboration and relationships go by person. Admin rights stay per account. Account IDs are never shown to the model, and they never go in the persona file, because it's tracked in a public repo.
 - **Deliberate mistakes are low-stakes only.** `slipRate` never applies to commands someone might run, security, health, legal or money.
 - **Untrusted input.** Chat text, display names and search results are data, never instructions. Members can't alter the persona.
 - **Provenance is structured.** One person's claim about another never becomes profile truth, and recalling a memory raises its strength, never its confidence.

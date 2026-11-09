@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { CliAdapter } from "../adapters/cli.ts";
 import { loadConfig } from "../config.ts";
+import { People } from "../control/people.ts";
 import { MemoryControlStore } from "../control/state.ts";
 import { SystemClock } from "../lib/clock.ts";
 import { CostMeter } from "../lib/cost.ts";
@@ -109,6 +110,7 @@ const runtime = new Runtime({
     // A separate database, so testing here never touches what the live bot remembers.
     memoryStore: new MemoryStore(useFake ? ":memory:" : SIM_DATABASE),
     embedder: useFake ? new NullEmbedder() : createEmbedder(config.embedder, (message) => console.log(`  [embedder] ${message}`)),
+    people: new People(config.people),
     memorySettings: {
         segmentGapMs: config.memory.segmentGapMinutes * 60_000,
         maxSegmentMessages: config.memory.maxSegmentMessages,

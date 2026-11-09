@@ -1,0 +1,54 @@
+import { z } from "zod";
+
+const personSchema = z.strictObject({
+    /** What she knows them as, whatever their display name is today. */
+    name: z.string().min(1),
+    /** Every `platform:userId` this person uses. */
+    ids: z.array(z.string().regex(/^[a-z]+:.+$/, "Expected platform:userId")).min(1),
+    /** How she knows them, shown to her only while they are talking. Goes by account, so nobody can claim it with a nickname. */
+    note: z.string().min(1).optional(),
+});
+
+export type PersonEntry = z.infer<typeof personSchema>;
+
+export const peopleSchema = z
+    .array(personSchema)
+    .superRefine((entries, context) => {
+        const seen = new Set<string>();
+        for (const id of entries.flatMap((entry) => entry.ids)) {
+            if (seen.has(id)) context.addIssue({ code: "custom", message: `${id} is listed more than once, but an account can only be one person` });
+            seen.add(id);
+        }
+    })
+    .default([]);
+
+/**
+ * Which accounts belong to the same person, as the operator declared it. An account nobody listed is simply its own person.
+ * Links are looked up when needed and never written to the database, so editing the list needs no migration.
+ */
+export class People {
+    #byAccount = new Map<string, PersonEntry>();
+
+    constructor(entries: readonly PersonEntry[] = []) {
+        for (const entry of entries) for (const id of entry.ids) this.#byAccount.set(id, entry);
+    }
+
+    accountsOf(user: string): readonly string[] {
+        return this.#byAccount.get(user)?.ids ?? [user];
+    }
+
+    /** The same value for all of someone's accounts. Only for comparing people, since it changes if the list is reordered. */
+    personOf(user: string): string {
+        return this.accountsOf(user)[0] ?? user;
+    }
+
+    nameOf(user: string): string | undefined {
+        return this.#byAccount.get(user)?.name;
+    }
+
+    noteOf(user: string): string | undefined {
+        return this.#byAccount.get(user)?.note;
+    }
+}
+
+export const NO_LINKS = new People();

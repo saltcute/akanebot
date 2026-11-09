@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import type { ChatMessage } from "../adapters/types.ts";
 import type { Clock } from "../lib/clock.ts";
+import { NO_LINKS, type People } from "./people.ts";
 
 const snapshotSchema = z.object({
     killed: z.boolean(),
@@ -61,9 +62,11 @@ export class ControlState {
     #killed: boolean;
     #mutedUntil: Map<string, number>;
     #optedOut: Set<string>;
+    #people: People;
 
-    constructor(options: { clock: Clock; store: ControlStore }) {
+    constructor(options: { clock: Clock; store: ControlStore; people?: People }) {
         this.#clock = options.clock;
+        this.#people = options.people ?? NO_LINKS;
         this.#store = options.store;
         const snapshot = options.store.load();
         this.#killed = snapshot?.killed ?? false;
@@ -99,8 +102,9 @@ export class ControlState {
         this.#persist();
     }
 
+    /** Opting out covers the person, so it holds on every account they're linked to. */
     isOptedOut(user: string): boolean {
-        return this.#optedOut.has(user);
+        return this.#people.accountsOf(user).some((account) => this.#optedOut.has(account));
     }
 
     optOut(user: string): void {
@@ -109,7 +113,7 @@ export class ControlState {
     }
 
     optIn(user: string): void {
-        this.#optedOut.delete(user);
+        for (const account of this.#people.accountsOf(user)) this.#optedOut.delete(account);
         this.#persist();
     }
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NO_LINKS, type People } from "../control/people.ts";
 import type { Embedder } from "../llm/embedder.ts";
 import type { LlmRegistry } from "../llm/registry.ts";
 import { canPromote } from "./poison-guards.ts";
@@ -29,8 +30,9 @@ export async function consolidate(options: {
     now: number;
     rawRetentionMs: number;
     signal: AbortSignal;
+    people?: People;
 }): Promise<ConsolidationReport> {
-    const { store, embedder, llm, now, rawRetentionMs, signal } = options;
+    const { store, embedder, llm, now, rawRetentionMs, signal, people = NO_LINKS } = options;
     const report: ConsolidationReport = { embedded: 0, merged: 0, promoted: 0, superseded: 0, archived: 0 };
 
     for (const scope of store.scopes()) {
@@ -41,7 +43,7 @@ export async function consolidate(options: {
             store.setEmbedding(memory.id, vector, embedder.modelId);
             report.embedded++;
         }
-        mergeDuplicates(store, scope, report);
+        mergeDuplicates(store, scope, report, people);
         await resolveContradictions(store, scope, llm, signal, report);
         for (const memory of store.activeIn(scope)) {
             store.setStrength(memory.id, memory.strength * NIGHTLY_STRENGTH_DECAY);
@@ -61,7 +63,7 @@ function isDuplicate(a: Memory, b: Memory): boolean {
     return Boolean(a.embedding && b.embedding && a.embeddingModel === b.embeddingModel && cosine(a.embedding, b.embedding) >= DUPLICATE_COSINE);
 }
 
-function mergeDuplicates(store: MemoryStore, scope: string, report: ConsolidationReport): void {
+function mergeDuplicates(store: MemoryStore, scope: string, report: ConsolidationReport, people: People): void {
     const memories = store.activeIn(scope).sort((a, b) => b.importance - a.importance || a.id - b.id);
     const merged = new Set<number>();
     for (const keeper of memories) {
@@ -76,7 +78,8 @@ function mergeDuplicates(store: MemoryStore, scope: string, report: Consolidatio
             absorbed = true;
         }
         // Independent people repeating a claim about the group can make it a fact. One person repeating it can't.
-        if (absorbed && keeper.kind === "claim" && canPromote(keeper.subject) && store.sourceSpeakers(keeper.id).length >= PROMOTION_SPEAKERS) {
+        const voices = new Set(store.sourceSpeakers(keeper.id).map((speaker) => people.personOf(speaker)));
+        if (absorbed && keeper.kind === "claim" && canPromote(keeper.subject) && voices.size >= PROMOTION_SPEAKERS) {
             store.promote(keeper.id, PROMOTED_CONFIDENCE);
             report.promoted++;
         }

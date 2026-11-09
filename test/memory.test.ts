@@ -7,6 +7,7 @@ import type { ChatMessage } from "../src/adapters/types.ts";
 import { dayState } from "../src/body/life.ts";
 import { currentRelationship, describeRelationship, updateRelationship } from "../src/body/relationships.ts";
 import { busyPeriod, isAsleep, localTime } from "../src/body/schedule.ts";
+import { People } from "../src/control/people.ts";
 import { decideToSpeak } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -536,6 +537,25 @@ describe("consolidate", () => {
         expect((await run(store)).promoted).toBe(0);
     });
 
+    it("counts one person's linked accounts as one voice", async () => {
+        const store = new MemoryStore(":memory:");
+        const people = new People([{ name: "a", ids: ["cli:a1", "cli:a2", "cli:a3"] }]);
+        for (const speaker of ["a1", "a2", "a3"])
+            store.addMemory(
+                draft({ kind: "claim", subject: "group", gist: "下周停课", sources: [{ messageId: `m${speaker}`, speaker: `cli:${speaker}` }] }),
+            );
+        const report = await consolidate({
+            store,
+            embedder,
+            llm: registry(() => ""),
+            now: 0,
+            rawRetentionMs: 30 * DAY,
+            signal: new AbortController().signal,
+            people,
+        });
+        expect(report.promoted).toBe(0);
+    });
+
     it("never promotes a claim about a person, however many repeat it", async () => {
         const store = new MemoryStore(":memory:");
         for (const speaker of ["a", "b", "c", "d"])
@@ -679,33 +699,46 @@ describe("relationships", () => {
     it("caps how fast anyone can become a favourite in a day", () => {
         const store = new MemoryStore(":memory:");
         for (let i = 0; i < 50; i++) updateRelationship(store, Channel, "u", "friendly", true, 1000);
-        expect(currentRelationship(store, Channel, "u", 1000).affinity).toBeCloseTo(0.1);
+        expect(currentRelationship(store, "u", 1000).affinity).toBeCloseTo(0.1);
     });
 
     it("lets grudges form faster than friendships", () => {
         const store = new MemoryStore(":memory:");
         for (let i = 0; i < 5; i++) updateRelationship(store, Channel, "u", "hostile", true, 1000);
-        expect(currentRelationship(store, Channel, "u", 1000).affinity).toBeLessThan(-0.5);
+        expect(currentRelationship(store, "u", 1000).affinity).toBeLessThan(-0.5);
     });
 
     it("lets feelings fade over time", () => {
         const store = new MemoryStore(":memory:");
         for (let i = 0; i < 5; i++) updateRelationship(store, Channel, "u", "hostile", true, 0);
-        const soon = currentRelationship(store, Channel, "u", DAY).affinity;
-        const later = currentRelationship(store, Channel, "u", 90 * DAY).affinity;
+        const soon = currentRelationship(store, "u", DAY).affinity;
+        const later = currentRelationship(store, "u", 90 * DAY).affinity;
         expect(Math.abs(later)).toBeLessThan(Math.abs(soon));
     });
 
     it("grows familiar through talking", () => {
         const store = new MemoryStore(":memory:");
         for (let i = 0; i < 40; i++) updateRelationship(store, Channel, "u", "neutral", true, 1000);
-        expect(describeRelationship(currentRelationship(store, Channel, "u", 1000))).toContain("know them well");
+        expect(describeRelationship(currentRelationship(store, "u", 1000))).toContain("know them well");
     });
 
-    it("keeps separate groups separate", () => {
+    it("carries feelings about someone from one group to another", () => {
         const store = new MemoryStore(":memory:");
         updateRelationship(store, Channel, "u", "hostile", true, 0);
-        expect(currentRelationship(store, "cli:other", "u", 0).affinity).toBe(0);
+        updateRelationship(store, "cli:other", "u", "neutral", false, 1);
+        expect(currentRelationship(store, "u", 1).affinity).toBeCloseTo(-0.12);
+    });
+
+    it("applies the daily gain cap across groups", () => {
+        const store = new MemoryStore(":memory:");
+        for (let i = 0; i < 50; i++) updateRelationship(store, i % 2 ? Channel : "cli:other", "u", "friendly", true, 1000 + i);
+        expect(currentRelationship(store, "u", 1050).affinity).toBeCloseTo(0.1, 2);
+    });
+
+    it("doesn't call someone a stranger after the operator has introduced them", () => {
+        const stranger = { familiarity: 0, affinity: 0 };
+        expect(describeRelationship(stranger)).toContain("barely know");
+        expect(describeRelationship(stranger, true)).toBeUndefined();
     });
 });
 

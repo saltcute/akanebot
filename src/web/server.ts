@@ -311,7 +311,7 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             path: /^\/api\/people\/([^/]+)$/,
             handle: (request) => {
                 const key = personKey(request);
-                return { key, displayName: store.displayNameOf(key) ?? key, ...store.forgetImpact(key) };
+                return { key, displayName: store.displayNameOf(key) ?? key, ...runtime.memory.forgetImpact(key) };
             },
         },
         {
