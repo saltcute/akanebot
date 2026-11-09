@@ -212,6 +212,22 @@ describe("renderTranscript", () => {
 
     const quoted = { messageId: "old", by: "bob", byUser: "cli:bob", text: "吃了吗", isSelf: false };
 
+    it("shows who a message is aimed at", () => {
+        expect(renderTranscript([{ ...message("@bob 睡了吗"), mentions: ["bob", "bob", "ca:rol"] }], PERSONA)).toContain(
+            "alice (to bob, ca rol): @bob 睡了吗",
+        );
+    });
+
+    it("doesn't repeat someone a reply already quotes", () => {
+        const output = renderTranscript([{ ...message("@bob 没"), mentions: ["bob"], replyToMessageId: "old", replyTo: quoted }], PERSONA);
+        expect(output).not.toContain("(to bob)");
+    });
+
+    it("limits how many mentions it spells out", () => {
+        const mentions = Array.from({ length: 50 }, (_, i) => `person${i}`);
+        expect(renderTranscript([{ ...message("hi"), mentions }], PERSONA)).not.toContain("person4,");
+    });
+
     it("shows what a message is replying to", () => {
         const output = renderTranscript([{ ...message("没"), replyToMessageId: "old", replyTo: quoted }], PERSONA);
         expect(output).toContain('alice (replying to bob: "吃了吗"): 没');

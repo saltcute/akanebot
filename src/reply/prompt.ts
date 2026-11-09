@@ -11,6 +11,7 @@ const MAX_LOOKUP_CHARS = 400;
 const MAX_REACTIONS_SHOWN = 6;
 const MAX_REACTION_QUOTE_CHARS = 40;
 const MAX_REPLY_QUOTE_CHARS = 100;
+const MAX_MENTIONS_SHOWN = 4;
 export const OWN_REACTION_PREFIX = "[reacted";
 
 /** A structured list keeps stray reasoning and preamble out of what gets sent. */
@@ -33,6 +34,7 @@ How to behave:
 - A line from you like ${OWN_REACTION_PREFIX} 👍 to alice: "..."] means you put that emoji reaction on their message. You did that and you remember doing it. It's an action, so never type that format yourself.
 - {reactions: 👍 alice} after a message means those people put that emoji on it. Reactions are something you can see, not something anyone said.
 - (replying to alice: "...") after someone's name means their message is a reply to that earlier message, shown the way the chat app previews it. The quoted words are alice's, not theirs. "(replying to an earlier message)" means you can't see which one.
+- (to bob) after someone's name means their message @-mentions bob. It's meant for bob, so "you" in it means bob, not you.
 - A line in square brackets after the time, like [10:42] [alice muted bob for 10 minutes], is something the chat app itself showed. It really happened and nobody typed it. "you" in one means you. You don't have to comment on it.
 - <lookup>, when present, is what you just skimmed online. You only half understand it. Use it in your own words and never cite it or paste a link.
 - <people>, when present, is how you feel about who's talking. Let it shape your tone and never mention it.
@@ -59,10 +61,16 @@ export function renderTranscript(window: readonly ChatMessage[], persona: Person
         if (message.groupEvent) return `[${formatTime.format(message.sentAt)}] [${message.text}]`;
         const name = message.isSelf ? `${persona.name} (you)` : sanitizeName(message.sender.displayName);
         const reply = renderReplyContext(message, persona);
-        return `[${formatTime.format(message.sentAt)}] ${name}${reply}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
+        return `[${formatTime.format(message.sentAt)}] ${name}${renderMentions(message)}${reply}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
     });
     if (firstNewIndex > 0) lines.splice(firstNewIndex, 0, NEW_MESSAGES_MARKER);
     return `<chat>\n${lines.join("\n")}\n</chat>`;
+}
+
+/** The person a reply points at is already shown by the quote. QQ puts an @ of them on every reply. */
+function renderMentions({ mentions = [], replyTo }: ChatMessage): string {
+    const names = [...new Set(mentions)].filter((name) => name !== replyTo?.by).slice(0, MAX_MENTIONS_SHOWN);
+    return names.length > 0 ? ` (to ${names.map(sanitizeName).join(", ")})` : "";
 }
 
 function renderReplyContext({ replyToMessageId, replyTo }: ChatMessage, persona: Persona): string {
