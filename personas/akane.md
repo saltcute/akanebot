@@ -31,7 +31,19 @@ slipRate: 0.25 # chance of a mistake when working something out at the edge of i
 maxCodeLines: 12 # never sends a snippet longer than this
 
 lowEffort: 0.15 # chance of just reacting with an emoji instead of writing something
-reactions: ["👍", "😭", "🤔", "👀", "💀", "🫡", "🥀", "🪉"] # the only emoji she reacts with
+reactions: # the only reactions she uses, listed per platform because QQ's set is much smaller
+  discord: ["👍", "😭", "🤔", "👀", "💀", "🫡", "🥀", "🪉"]
+  # name she knows it by: QQ emoji_id. A QQ face uses its face ID (0-484). A Unicode emoji uses its decimal code point, and only some work (👍 is 128077)
+  qq:
+    赞: 76
+    大哭: 9
+    笑哭: 182
+    捂脸: 264
+    问号脸: 268
+    暗中观察: 269
+    吃瓜: 271
+    敬礼: 282
+    按按钮: 424
 
 dailyLife: # one is picked each morning and stays true all day
   - 昨晚没睡好

@@ -2,6 +2,7 @@ import type { Adapter, ChannelRef, ChatMessage, SendOptions } from "../adapters/
 import { channelKey } from "../adapters/types.ts";
 import type { Clock } from "../lib/clock.ts";
 import type { DecisionTrace } from "../lib/trace.ts";
+import type { ReactionChoice } from "../persona/schema.ts";
 
 export type GuardLimits = {
     /** Largest burst of messages across all channels. */
@@ -71,16 +72,16 @@ export class SendGuard {
     }
 
     /** A reaction counts against the rate limit but not as talking. */
-    async react(adapter: Adapter, channel: ChannelRef, messageId: string, emoji: string): Promise<"reacted" | "shadow" | "failed"> {
+    async react(adapter: Adapter, channel: ChannelRef, messageId: string, reaction: ReactionChoice): Promise<"reacted" | "shadow" | "failed"> {
         const key = channelKey(channel);
         if (this.#shadow) {
-            this.#trace.record("send.shadow", { channel: key, messageId, detail: { text: `(reacts ${emoji})` } });
+            this.#trace.record("send.shadow", { channel: key, messageId, detail: { text: `(reacts ${reaction.label})` } });
             return "shadow";
         }
         if (!adapter.react || !this.#takeToken()) return "failed";
         try {
-            await adapter.react(channel, messageId, emoji);
-            this.#trace.record("send.reacted", { channel: key, messageId, detail: { emoji } });
+            await adapter.react(channel, messageId, reaction.id);
+            this.#trace.record("send.reacted", { channel: key, messageId, detail: { emoji: reaction.label } });
             return "reacted";
         } catch (error) {
             this.#trace.record("send.failed", { channel: key, messageId, detail: { error: String(error) } });

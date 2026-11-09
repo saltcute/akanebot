@@ -19,4 +19,4 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `dailyLife` | One is picked each morning and colours the whole day | Active |
 | `search` | How curious it is about unfamiliar topics, and how many searches a day | Active |
 | `lowEffort` | Chance of reacting with an emoji instead of writing something | Active |
-| `reactions` | The only emoji it reacts with | Active |
+| `reactions` | The only reactions it uses, per platform. `discord` lists emoji; `qq` maps each name to a QQ `emoji_id`, either a face ID or a decimal code point | Active |

@@ -28,7 +28,7 @@ import type { SearchBackend } from "./llm/search.ts";
 import type { MemoryStore } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming } from "./perception/channel.ts";
-import type { Persona } from "./persona/schema.ts";
+import { type Persona, reactionChoices } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
 import {
@@ -548,7 +548,7 @@ export class Runtime {
         const idField = messageId ? { messageId } : {};
         const transcript = renderTranscript(window, persona, firstNewIndex);
         const gate = await llm.generate("gate", {
-            stable: renderGateInstructions(persona),
+            stable: renderGateInstructions(persona, channel.ref.platform),
             transcript,
             volatile: "",
             schema: gateFeaturesSchema,
@@ -599,7 +599,7 @@ export class Runtime {
             return;
         }
         if (decision.addressed) this.vitals.spend(ADDRESSED_BATTERY_COST);
-        const reaction = persona.reactions.includes(features.quickReaction) ? features.quickReaction : undefined;
+        const reaction = reactionChoices(persona, channel.ref.platform).find(({ label }) => label === features.quickReaction);
         const reactTarget = asker ?? newest;
         const react = async () => {
             if (!reaction || !reactTarget) return;
@@ -610,8 +610,8 @@ export class Runtime {
             // Written into its own view of the chat, or it would have no idea it had reacted.
             const own = ownMessage(
                 channel.ref,
-                `reaction:${reactTarget.messageId}:${reaction}`,
-                renderOwnReaction(reaction, reactTarget),
+                `reaction:${reactTarget.messageId}:${reaction.label}`,
+                renderOwnReaction(reaction.label, reactTarget),
                 clock.now(),
                 persona.name,
             );
@@ -631,7 +631,7 @@ export class Runtime {
         this.vitals.noteAnswered(ignoreKey);
         if (reaction && this.#reactionRng.chance(persona.lowEffort)) {
             perception.settle(seenSeq);
-            trace.record("reply.reaction_only", { channel: key, ...idField, detail: { reaction } });
+            trace.record("reply.reaction_only", { channel: key, ...idField, detail: { reaction: reaction.label } });
             await react();
             return;
         }

@@ -153,6 +153,7 @@ describe("OneBot reactions", () => {
     it("reads Unicode reactions and QQ's own faces", () => {
         expect(emojiFromId("128077")).toBe("👍");
         expect(emojiFromId("76")).toBe("表情76");
+        expect(emojiFromId("9728")).toBe("☀");
     });
 
     it("turns a notice into reaction events", () => {
@@ -240,10 +241,10 @@ describe("OneBotAdapter", () => {
         await failure;
     });
 
-    it("reacts with the emoji's code point", async () => {
+    it("reacts with the configured emoji ID", async () => {
         const { adapter, socket } = await connected();
-        const reacting = adapter.react({ platform: "qq", channelId: "181" }, "55", "👍");
-        expect(socket.sent.at(-1)).toMatchObject({ action: "set_msg_emoji_like", params: { message_id: "55", emoji_id: "128077", set: true } });
+        const reacting = adapter.react({ platform: "qq", channelId: "181" }, "55", "76");
+        expect(socket.sent.at(-1)).toMatchObject({ action: "set_msg_emoji_like", params: { message_id: "55", emoji_id: "76", set: true } });
         socket.reply(null);
         await reacting;
     });

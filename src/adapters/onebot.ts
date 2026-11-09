@@ -11,8 +11,8 @@ const MAX_RETRY_MS = 60_000;
 const MAX_REMEMBERED_SENDS = 1000;
 /** QQ can hand over messages from while the client was offline, and those must never be answered as if live. */
 const MAX_LIVE_AGE_MS = 120_000;
-/** QQ's own faces have small IDs. Anything above this is a Unicode code point. */
-const LAST_QQ_FACE_ID = 9999;
+/** QQ's own faces have small IDs. Anything above this is a Unicode code point, the lowest QQ uses being ☀ at 9728. */
+const LAST_QQ_FACE_ID = 9727;
 
 const idSchema = z.union([z.number(), z.string()]).transform(String);
 const segmentSchema = z.object({ type: z.string(), data: z.record(z.string(), z.unknown()).default({}) });
@@ -212,8 +212,9 @@ export class OneBotAdapter implements Adapter {
     /** QQ shows no typing indicator in groups. */
     async sendTyping(): Promise<void> {}
 
-    async react(_channel: ChannelRef, messageId: string, emoji: string): Promise<void> {
-        await this.#call("set_msg_emoji_like", { message_id: messageId, emoji_id: String(emoji.codePointAt(0)), set: true });
+    /** `emojiId` is a face ID, or a decimal code point for the Unicode emoji QQ supports. */
+    async react(_channel: ChannelRef, messageId: string, emojiId: string): Promise<void> {
+        await this.#call("set_msg_emoji_like", { message_id: messageId, emoji_id: emojiId, set: true });
     }
 
     channelName(channelId: string): string | undefined {

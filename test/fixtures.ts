@@ -17,7 +17,7 @@ export const PERSONA: Persona = {
     slipRate: 0.25,
     maxCodeLines: 12,
     lowEffort: 0,
-    reactions: ["👍", "😭"],
+    reactions: { discord: ["👍", "😭"], qq: { thumbs: 76, "👍": 128077 } },
     dailyLife: [],
     prose: "# Who I am\n小茜",
 };
