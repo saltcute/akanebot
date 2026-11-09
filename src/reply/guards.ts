@@ -103,7 +103,8 @@ export class SendGuard {
     async #deliver(adapter: Adapter, channel: ChannelRef, text: string, options: SendOptions): Promise<SendOutcome> {
         const key = channelKey(channel);
         if (this.#shadow) {
-            this.#trace.record("send.shadow", { channel: key, detail: { text } });
+            const replyTo = options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {};
+            this.#trace.record("send.shadow", { channel: key, detail: { text, ...replyTo } });
             return { kind: "blocked", reason: "shadow" };
         }
         try {

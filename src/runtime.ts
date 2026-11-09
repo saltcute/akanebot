@@ -1,4 +1,4 @@
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, ReactionEvent } from "./adapters/types.ts";
+import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, QuotedMessage, ReactionEvent } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
 import { dayState } from "./body/life.ts";
@@ -20,7 +20,7 @@ import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
 import type { MemoryStore } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
-import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming } from "./perception/channel.ts";
+import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutQuote } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
@@ -81,6 +81,9 @@ export type ConversationMessage = {
     text: string;
     sentAt: number;
     reactions: readonly { emoji: string; by: string }[];
+    isReply: boolean;
+    /** What it replies to, when that's known. */
+    quoted: { senderName: string; text: string } | undefined;
 };
 
 export type ConversationSummary = {
@@ -264,7 +267,8 @@ export class Runtime {
             return;
         }
 
-        this.#admit(channel, message);
+        // The chat app would show them the quote, but an opt-out means she doesn't get to read this person at all.
+        this.#admit(channel, message.replyTo && this.#state.isOptedOut(message.replyTo.byUser) ? withoutQuote(message) : message);
     }
 
     /** Coming back works like checking a phone: everything unread gets a look, most important first. */
@@ -280,6 +284,7 @@ export class Runtime {
         for (const channel of this.#channels.values()) {
             channel.perception.purge((message) => userKey(message) === user || Boolean(message.groupEvent?.involves.includes(user)));
             channel.perception.purgeReactionsBy(user);
+            channel.perception.purgeQuotesBy(user);
         }
         return removed;
     }
@@ -321,7 +326,7 @@ export class Runtime {
     conversation(key: string): ConversationDetail | undefined {
         if (!this.hasConversation(key)) return undefined;
         const window = this.#visibleMessages(key);
-        const messages = withShadowSends(window.map(toConversationMessage), this.#shadowSends(key, window[0]?.sentAt ?? Infinity));
+        const messages = withShadowSends(window.map(toConversationMessage), this.#shadowSends(key, window));
         const firstNew = this.#channels.get(key)?.perception.firstNewIndex();
         return {
             ...this.#summarize(key, window),
@@ -389,12 +394,21 @@ export class Runtime {
     }
 
     /** For the operator only. These stay out of the window, so the agent never sees words it didn't send. */
-    #shadowSends(key: string, since: number): ConversationMessage[] {
+    #shadowSends(key: string, window: readonly ChatMessage[]): ConversationMessage[] {
         const channel = this.#channels.get(key);
         if (!channel) return [];
+        const since = window[0]?.sentAt ?? Infinity;
         return this.#options.trace.ofKind("send.shadow").flatMap((event, index) => {
             if (event.channel !== key || event.at < since) return [];
-            const own = ownMessage(channel.ref, `shadow:${index}`, String(event.detail?.text ?? ""), event.at, this.#persona.name);
+            const target = window.find((message) => message.messageId === event.detail?.replyToMessageId);
+            const own = ownMessage(
+                channel.ref,
+                `shadow:${index}`,
+                String(event.detail?.text ?? ""),
+                event.at,
+                this.#persona.name,
+                target && quoteOf(target),
+            );
             return [{ ...toConversationMessage(own), isShadow: true }];
         });
     }
@@ -688,7 +702,7 @@ export class Runtime {
             // Settled on the first send, so a reply cut short partway is never answered a second time.
             perception.settle(seenSeq);
             this.vitals.spend(1);
-            const own = ownMessage(channel.ref, outcome.messageId, text, clock.now(), persona.name);
+            const own = ownMessage(channel.ref, outcome.messageId, text, clock.now(), persona.name, quote ? quoteOf(quote) : undefined);
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         }
@@ -789,6 +803,18 @@ function toConversationMessage(message: ChatMessage): ConversationMessage {
         text: message.text,
         sentAt: message.sentAt,
         reactions: (message.reactions ?? []).map(({ emoji, by }) => ({ emoji, by })),
+        isReply: message.replyToMessageId !== undefined,
+        quoted: message.replyTo ? { senderName: message.replyTo.by, text: message.replyTo.text } : undefined,
+    };
+}
+
+function quoteOf(message: ChatMessage): QuotedMessage {
+    return {
+        messageId: message.messageId,
+        by: message.sender.displayName,
+        byUser: userKey(message),
+        text: message.text,
+        isSelf: message.isSelf,
     };
 }
 
@@ -813,7 +839,7 @@ function describeFailure(result: { kind: string; detail?: string }): Record<stri
     return { result: result.kind, ...(result.detail ? { error: result.detail } : {}) };
 }
 
-function ownMessage(ref: ChannelRef, messageId: string, text: string, sentAt: number, name: string): ChatMessage {
+function ownMessage(ref: ChannelRef, messageId: string, text: string, sentAt: number, name: string, replyTo?: QuotedMessage): ChatMessage {
     return {
         ...ref,
         messageId,
@@ -822,6 +848,7 @@ function ownMessage(ref: ChannelRef, messageId: string, text: string, sentAt: nu
         sender: { id: "self", displayName: name, isBot: false },
         mentionsSelf: false,
         repliesToSelf: false,
+        ...(replyTo ? { replyTo, replyToMessageId: replyTo.messageId } : {}),
         isSelf: true,
         isBacklog: false,
     };

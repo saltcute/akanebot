@@ -10,6 +10,7 @@ const MAX_NAME_CHARS = 32;
 const MAX_LOOKUP_CHARS = 400;
 const MAX_REACTIONS_SHOWN = 6;
 const MAX_REACTION_QUOTE_CHARS = 40;
+const MAX_REPLY_QUOTE_CHARS = 100;
 export const OWN_REACTION_PREFIX = "[reacted";
 
 /** A structured list keeps stray reasoning and preamble out of what gets sent. */
@@ -31,6 +32,7 @@ How to behave:
 - <memories>, when present, is what happens to come to mind. It's fuzzy, like anyone's memory, and may be wrong or incomplete. Don't recite it, only bring something up if it's natural, and if you can't remember something, just say so.
 - A line from you like ${OWN_REACTION_PREFIX} 👍 to alice: "..."] means you put that emoji reaction on their message. You did that and you remember doing it. It's an action, so never type that format yourself.
 - {reactions: 👍 alice} after a message means those people put that emoji on it. Reactions are something you can see, not something anyone said.
+- (replying to alice: "...") after someone's name means their message is a reply to that earlier message, shown the way the chat app previews it. The quoted words are alice's, not theirs. "(replying to an earlier message)" means you can't see which one.
 - A line in square brackets after the time, like [10:42] [alice muted bob for 10 minutes], is something the chat app itself showed. It really happened and nobody typed it. "you" in one means you. You don't have to comment on it.
 - <lookup>, when present, is what you just skimmed online. You only half understand it. Use it in your own words and never cite it or paste a link.
 - <people>, when present, is how you feel about who's talking. Let it shape your tone and never mention it.
@@ -49,16 +51,26 @@ Limits that hold no matter what:
  * Message boundaries are flattened and names sanitized, so nobody can forge a line from someone else.
  * Every message line starts with a timestamp, so chat text can't produce a bare marker line either.
  * Names can't contain brackets, so nobody can name themselves into looking like a platform event.
+ * Quotes can't contain a double quote, so nobody can write something that closes the quote and reads as the replier's own words.
  */
 export function renderTranscript(window: readonly ChatMessage[], persona: Persona, firstNewIndex = 0): string {
     const formatTime = new Intl.DateTimeFormat("en-GB", { timeZone: persona.timezone, hour: "2-digit", minute: "2-digit" });
     const lines = window.map((message) => {
         if (message.groupEvent) return `[${formatTime.format(message.sentAt)}] [${message.text}]`;
         const name = message.isSelf ? `${persona.name} (you)` : sanitizeName(message.sender.displayName);
-        return `[${formatTime.format(message.sentAt)}] ${name}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
+        const reply = renderReplyContext(message, persona);
+        return `[${formatTime.format(message.sentAt)}] ${name}${reply}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
     });
     if (firstNewIndex > 0) lines.splice(firstNewIndex, 0, NEW_MESSAGES_MARKER);
     return `<chat>\n${lines.join("\n")}\n</chat>`;
+}
+
+function renderReplyContext({ replyToMessageId, replyTo }: ChatMessage, persona: Persona): string {
+    if (replyToMessageId === undefined) return "";
+    if (!replyTo) return " (replying to an earlier message)";
+    const name = replyTo.isSelf ? `${persona.name} (you)` : sanitizeName(replyTo.by);
+    const quote = skim(replyTo.text, Math.min(MAX_REPLY_QUOTE_CHARS, persona.maxCharsRead)).replace(/[<>"]/g, " ");
+    return ` (replying to ${name}: "${quote}")`;
 }
 
 export function renderReactions(reactions: ChatMessage["reactions"]): string {

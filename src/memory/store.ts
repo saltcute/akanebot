@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import type { ChatMessage, MessageReaction, Platform } from "../adapters/types.ts";
+import type { ChatMessage, MessageReaction, Platform, QuotedMessage } from "../adapters/types.ts";
 import { channelKey } from "../adapters/types.ts";
 
 export type MemoryKind = "episode" | "fact" | "claim" | "event";
@@ -68,6 +68,7 @@ type LoggedRow = {
     text: string;
     sentAt: number;
     reactions: string | null;
+    replyTo: string | null;
 };
 
 type MemoryRow = Omit<Memory, "embedding"> & { embedding: Uint8Array | null };
@@ -85,7 +86,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rawLog (
     channel TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL, displayName TEXT NOT NULL,
     isSelf INTEGER NOT NULL, text TEXT NOT NULL, sentAt INTEGER NOT NULL,
-    attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT,
+    attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT, replyTo TEXT,
     PRIMARY KEY (channel, messageId)
 );
 CREATE INDEX IF NOT EXISTS rawLogOpen ON rawLog (channel, attended, segmented, sentAt);
@@ -128,7 +129,7 @@ export class MemoryStore {
 
     logMessage(message: ChatMessage, userKey: string, attended: boolean): void {
         this.#run(
-            "INSERT OR IGNORE INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended, replyTo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             channelKey(message),
             message.messageId,
             userKey,
@@ -137,13 +138,15 @@ export class MemoryStore {
             message.text,
             message.sentAt,
             attended ? 1 : 0,
+            message.replyTo ? JSON.stringify(message.replyTo) : null,
         );
     }
 
-    /** Older databases predate this column, and CREATE TABLE IF NOT EXISTS won't add it. */
+    /** Older databases predate these columns, and CREATE TABLE IF NOT EXISTS won't add them. */
     #addMissingColumns(): void {
         const columns = this.#all<{ name: string }>("PRAGMA table_info(rawLog)").map((column) => column.name);
         if (!columns.includes("reactions")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN reactions TEXT");
+        if (!columns.includes("replyTo")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN replyTo TEXT");
     }
 
     setReactions(channel: string, messageId: string, reactions: readonly MessageReaction[]): void {
@@ -349,6 +352,7 @@ export class MemoryStore {
         const ids = this.#memoriesDerivedFrom(user);
         for (const id of ids) this.forget(id);
         this.#run("DELETE FROM rawLog WHERE userKey = ?", user);
+        this.#run("UPDATE rawLog SET replyTo = NULL WHERE json_extract(replyTo, '$.byUser') = ?", user);
         this.#removeReactionsBy(user);
         this.#run("DELETE FROM relationships WHERE userKey = ?", user);
         return ids.size;
@@ -458,6 +462,7 @@ function toReactionsColumn(reactions: readonly MessageReaction[]): string | null
 
 function toChatMessage(row: LoggedRow): ChatMessage {
     const separator = row.channel.indexOf(":");
+    const replyTo = row.replyTo ? (JSON.parse(row.replyTo) as QuotedMessage) : undefined;
     return {
         platform: row.channel.slice(0, separator) as Platform,
         channelId: row.channel.slice(separator + 1),
@@ -468,6 +473,7 @@ function toChatMessage(row: LoggedRow): ChatMessage {
         sentAt: row.sentAt,
         mentionsSelf: false,
         repliesToSelf: false,
+        ...(replyTo ? { replyTo, replyToMessageId: replyTo.messageId } : {}),
         isSelf: row.isSelf === 1,
         isBacklog: false,
     };

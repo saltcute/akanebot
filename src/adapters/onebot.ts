@@ -1,11 +1,13 @@
 // biome-ignore-all lint/style/useNamingConvention: these names are OneBot's wire format
 import { z } from "zod";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, ReactionEvent, Sender, SendOptions } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, QuotedMessage, ReactionEvent, Sender, SendOptions } from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
 const CALL_TIMEOUT_MS = 15_000;
+/** Everything behind a reply waits for this lookup, so it gives up sooner than other calls. */
+const QUOTE_TIMEOUT_MS = 3000;
 const FIRST_RETRY_MS = 1000;
 const MAX_RETRY_MS = 60_000;
 const MAX_REMEMBERED_SENDS = 1000;
@@ -41,6 +43,13 @@ const groupMessageSchema = z.object({
     time: z.number(),
     message: z.array(segmentSchema),
     sender: z.object({ nickname: z.string().optional(), card: z.string().optional() }).default({}),
+});
+
+const fetchedMessageSchema = z.object({
+    group_id: idSchema.optional(),
+    user_id: idSchema.optional(),
+    message: z.array(segmentSchema),
+    sender: z.object({ user_id: idSchema.optional(), nickname: z.string().optional(), card: z.string().optional() }).default({}),
 });
 
 const reactionNoticeSchema = z.object({
@@ -158,6 +167,32 @@ export function toChatMessage(
     };
 }
 
+/** Reads a `get_msg` result. Returns undefined if it can't say who wrote it, since a quote has to be attributable to be forgettable. */
+export function toQuotedMessage(
+    data: unknown,
+    messageId: string,
+    context: { self_id: string; group_id: string },
+    lookup: Lookup,
+): QuotedMessage | undefined {
+    const parsed = fetchedMessageSchema.safeParse(data);
+    if (!parsed.success) return undefined;
+    const { group_id: groupId, user_id: topLevelId, message, sender } = parsed.data;
+    const author = topLevelId ?? sender.user_id;
+    if (!author || (groupId !== undefined && groupId !== context.group_id)) return undefined;
+    const text = message
+        .map((segment) => describeSegment(segment, context.self_id, lookup))
+        .join("")
+        .trim();
+    if (text === "") return undefined;
+    return {
+        messageId,
+        by: sender.card || sender.nickname || lookup.names.get(author) || author,
+        byUser: `qq:${author}`,
+        text,
+        isSelf: author === context.self_id,
+    };
+}
+
 export function emojiFromId(id: string): string {
     const code = Number(id);
     return Number.isInteger(code) && code > LAST_QQ_FACE_ID && code <= 0x10ffff ? String.fromCodePoint(code) : `表情${id}`;
@@ -218,6 +253,7 @@ export class OneBotAdapter implements Adapter {
     #ownMessages = new Set<string>();
     #names = new Map<string, string>();
     #groupNames = new Map<string, string>();
+    #inbound: Promise<void> | undefined;
 
     constructor(options: {
         url: string;
@@ -308,12 +344,12 @@ export class OneBotAdapter implements Adapter {
         }
     }
 
-    #call(action: string, params: Record<string, unknown>): Promise<unknown> {
+    #call(action: string, params: Record<string, unknown>, timeoutMs = CALL_TIMEOUT_MS): Promise<unknown> {
         const socket = this.#socket;
         if (!socket) return Promise.reject(new Error("Not connected to the OneBot server"));
         const echo = String(this.#nextEcho++);
         return new Promise((resolve, reject) => {
-            const cancelTimeout = this.#clock.setTimer(CALL_TIMEOUT_MS, () => {
+            const cancelTimeout = this.#clock.setTimer(timeoutMs, () => {
                 this.#pending.delete(echo);
                 reject(new Error(`OneBot ${action} timed out`));
             });
@@ -380,6 +416,33 @@ export class OneBotAdapter implements Adapter {
         this.#names.set(event.user_id, displayName(event));
         const lookup = { selfName: this.#selfName, names: this.#names };
         const message = toChatMessage(event, this.#clock.now(), lookup, (id) => this.#ownMessages.has(id));
-        if (message) this.#onMessage?.(message);
+        if (!message) return;
+        if (!message.replyToMessageId && !this.#inbound) {
+            this.#onMessage?.(message);
+            return;
+        }
+        // QQ only says which message a reply points at, and looking it up takes a moment. Whatever arrives meanwhile waits, to keep the chat in order.
+        const turn: Promise<void> = (this.#inbound ?? Promise.resolve())
+            .then(() => this.#withQuote(message, event))
+            .then((quoted) => this.#onMessage?.(quoted))
+            .catch((error) => this.#onStatus("message_failed", String(error)))
+            .finally(() => {
+                if (this.#inbound === turn) this.#inbound = undefined;
+            });
+        this.#inbound = turn;
+    }
+
+    /** A withdrawn or expired message can't be looked up, and the reply is still worth reading without it. */
+    async #withQuote(message: ChatMessage, event: GroupMessage): Promise<ChatMessage> {
+        const id = message.replyToMessageId;
+        if (!id || message.isBacklog) return message;
+        try {
+            const data = await this.#call("get_msg", { message_id: Number(id) }, QUOTE_TIMEOUT_MS);
+            const replyTo = toQuotedMessage(data, id, event, { selfName: this.#selfName, names: this.#names });
+            // Its record of its own sends is lost on restart, but QQ still knows who wrote the original.
+            return replyTo ? { ...message, replyTo, repliesToSelf: message.repliesToSelf || replyTo.isSelf } : message;
+        } catch {
+            return message;
+        }
     }
 }

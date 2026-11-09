@@ -49,6 +49,9 @@ export type GroupEvent = ChannelRef & {
     at: number;
 };
 
+/** The message a reply points at, as the chat app previews it above the reply. `byUser` is who wrote it, as a user key. */
+export type QuotedMessage = { messageId: string; by: string; byUser: string; text: string; isSelf: boolean };
+
 export type ChatMessage = ChannelRef & {
     messageId: string;
     sender: Sender;
@@ -61,6 +64,8 @@ export type ChatMessage = ChannelRef & {
     mentionsSelf: boolean;
     repliesToSelf: boolean;
     replyToMessageId?: string;
+    /** Absent on a reply if the platform couldn't say what it was replying to, or that person has been forgotten. */
+    replyTo?: QuotedMessage;
     /** The agent's own account sent this. */
     isSelf: boolean;
     /** Delivered as history (for example after a reconnect) rather than live. */

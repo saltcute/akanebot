@@ -194,6 +194,43 @@ describe("web console conversations", () => {
         expect(detail.messages).toHaveLength(1);
     });
 
+    it("shows what a message is replying to", async () => {
+        const { adapter, json } = await setup();
+        adapter.say("bob", "hi");
+        adapter.say("alice", "没", "group", { messageId: "old", by: "bob", byUser: "cli:bob", text: "吃了吗", isSelf: false });
+        const { messages } = await json(`/api/conversations/${CHANNEL_PATH}`);
+        expect(messages[0].isReply).toBe(false);
+        expect(messages[1]).toMatchObject({ isReply: true, quoted: { senderName: "bob", text: "吃了吗" } });
+    });
+
+    it("drops a forgotten person's words from replies quoting them, in the window and after a restart", async () => {
+        const { adapter, store, runtime, json } = await setup();
+        const quote = { messageId: "old", by: "bob", byUser: "cli:bob", text: "my secret", isSelf: false };
+        const id = adapter.say("alice", "没", "group", quote);
+        store.markAttended(CHANNEL, [id]);
+        await json(`/api/people/${encodeURIComponent("cli:bob")}`, { method: "DELETE" });
+        expect(runtime.conversation(CHANNEL)?.messages[0]).toMatchObject({ isReply: true, quoted: undefined, text: "没" });
+        const restored = store.recentAttended(CHANNEL, 10);
+        expect(restored.map((message) => message.text)).toEqual(["没"]);
+        expect(JSON.stringify(restored)).not.toContain("my secret");
+    });
+
+    it("never shows the words of someone who has opted out, even quoted", async () => {
+        const { adapter, runtime } = await setup();
+        adapter.say("bob", "/akanebot opt-out");
+        adapter.say("alice", "没", "group", { messageId: "old", by: "bob", byUser: "cli:bob", text: "my secret", isSelf: false });
+        const last = runtime.conversation(CHANNEL)?.messages.at(-1);
+        expect(last).toMatchObject({ text: "没", isReply: true, quoted: undefined });
+    });
+
+    it("stores a quote so it can be restored after a restart", async () => {
+        const { adapter, store } = await setup();
+        const quote = { messageId: "old", by: "bob", byUser: "cli:bob", text: "吃了吗", isSelf: false };
+        const id = adapter.say("alice", "没", "group", quote);
+        store.markAttended(CHANNEL, [id]);
+        expect(store.recentAttended(CHANNEL, 10)[0]).toMatchObject({ replyTo: quote, replyToMessageId: "old" });
+    });
+
     it("digests what she has read into memories on request", async () => {
         const { adapter, runtime, json, post } = await setup();
         const id = adapter.say("alice", "noodles are great");

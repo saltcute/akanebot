@@ -11,7 +11,7 @@ import {
     Partials,
     type User,
 } from "discord.js";
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, ReactionEvent, Sender, SendOptions } from "./types.ts";
+import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, QuotedMessage, ReactionEvent, Sender, SendOptions } from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
@@ -20,14 +20,30 @@ function isDescribableImage(contentType: string | null, size: number): boolean {
     return Boolean(contentType?.startsWith("image/")) && size <= MAX_DESCRIBABLE_IMAGE_BYTES;
 }
 
-/** Returns undefined for anything that isn't an ordinary message in a server. */
-export function toChatMessage(message: Message, selfId: string): ChatMessage | undefined {
-    if (!message.inGuild() || message.system) return undefined;
+function readableText(message: Message): string {
     const placeholders = [
         ...message.attachments.map((attachment) => (attachment.contentType?.startsWith("image/") ? "[image]" : "[file]")),
         ...message.stickers.map((sticker) => (sticker.name ? `[sticker: ${sticker.name}]` : "[sticker]")),
     ];
-    const text = [message.cleanContent, ...placeholders].filter(Boolean).join(" ");
+    return [message.cleanContent, ...placeholders].filter(Boolean).join(" ");
+}
+
+function toQuotedMessage(message: Message, selfId: string): QuotedMessage | undefined {
+    const text = readableText(message);
+    if (text === "") return undefined;
+    return {
+        messageId: message.id,
+        by: message.member?.displayName ?? message.author.displayName,
+        byUser: `discord:${message.author.id}`,
+        text,
+        isSelf: message.author.id === selfId,
+    };
+}
+
+/** Returns undefined for anything that isn't an ordinary message in a server. */
+export function toChatMessage(message: Message, selfId: string): ChatMessage | undefined {
+    if (!message.inGuild() || message.system) return undefined;
+    const text = readableText(message);
     if (text === "") return undefined;
 
     const images = [
@@ -36,7 +52,10 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
             .map((attachment) => ({ url: attachment.url })),
     ];
     const repliedToId = message.reference?.messageId;
-    const repliedTo = repliedToId ? message.channel.messages.cache.get(repliedToId) : undefined;
+    // The gateway sends the original along with a reply, so it's cached by now. A reaction can leave a partial with no author or text.
+    const cached = repliedToId ? message.channel.messages.cache.get(repliedToId) : undefined;
+    const repliedTo = cached?.partial ? undefined : cached;
+    const quoted = repliedTo ? toQuotedMessage(repliedTo, selfId) : undefined;
     return {
         platform: "discord",
         channelId: message.channelId,
@@ -53,6 +72,7 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
         mentionsSelf: message.mentions.users.has(selfId),
         repliesToSelf: repliedTo?.author.id === selfId || message.mentions.repliedUser?.id === selfId,
         ...(repliedToId ? { replyToMessageId: repliedToId } : {}),
+        ...(quoted ? { replyTo: quoted } : {}),
         isSelf: message.author.id === selfId,
         // The gateway only delivers live events and never replays history after a reconnect.
         isBacklog: false,

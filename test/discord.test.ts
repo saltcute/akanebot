@@ -61,9 +61,24 @@ describe("toChatMessage", () => {
     });
 
     it("recognizes a reply to itself even with the reply ping turned off", () => {
-        const channel = { messages: { cache: new Map([["old", { author: { id: SELF } }]]) } };
+        const channel = { messages: { cache: new Map([["old", discordMessage({ id: "old", author: { id: SELF } })]]) } };
         const mapped = toChatMessage(discordMessage({ reference: { messageId: "old" }, channel }), SELF);
         expect(mapped).toMatchObject({ repliesToSelf: true, replyToMessageId: "old" });
+    });
+
+    it("quotes the message being replied to, the way the chat app previews it", () => {
+        const original = discordMessage({ id: "old", cleanContent: "吃了吗", attachments: collection([{ contentType: "image/png" }]) });
+        const channel = { messages: { cache: new Map([["old", original]]) } };
+        const mapped = toChatMessage(discordMessage({ reference: { messageId: "old" }, channel }), SELF);
+        expect(mapped?.replyTo).toEqual({ messageId: "old", by: "server nick", byUser: "discord:u1", text: "吃了吗 [image]", isSelf: false });
+    });
+
+    it("still reads a reply when the original isn't available", () => {
+        const partial = { id: "old", partial: true, author: null };
+        const channel = { messages: { cache: new Map([["old", partial]]) } };
+        const mapped = toChatMessage(discordMessage({ reference: { messageId: "old" }, channel }), SELF);
+        expect(mapped).toMatchObject({ text: "hello", replyToMessageId: "old" });
+        expect(mapped?.replyTo).toBeUndefined();
     });
 
     it("flags its own messages", () => {

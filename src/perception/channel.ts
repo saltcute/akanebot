@@ -16,6 +16,10 @@ const NORMAL_PRIORITY = 1;
 const MAX_EVENTS_IN_WINDOW = 5;
 export const ADDRESSED_PRIORITY = 10;
 
+export function withoutQuote({ replyTo: _replyTo, ...message }: ChatMessage): ChatMessage {
+    return message;
+}
+
 export function isAddressed(message: ChatMessage): boolean {
     return message.mentionsSelf || message.repliesToSelf;
 }
@@ -94,6 +98,11 @@ export class ChannelPerception {
             if (entry.message.reactions)
                 entry.message = { ...entry.message, reactions: entry.message.reactions.filter((item) => item.byUser !== user) };
         }
+    }
+
+    /** Someone forgotten can't live on in the preview above another person's reply. */
+    purgeQuotesBy(user: string): void {
+        for (const entry of this.#window) if (entry.message.replyTo?.byUser === user) entry.message = withoutQuote(entry.message);
     }
 
     window(): readonly ChatMessage[] {

@@ -1,6 +1,14 @@
 // biome-ignore-all lint/style/useNamingConvention: these names are OneBot's wire format
 import { describe, expect, it, vi } from "vitest";
-import { emojiFromId, OneBotAdapter, type OneBotSocket, toChatMessage, toGroupEvent, toReactionEvents } from "../src/adapters/onebot.ts";
+import {
+    emojiFromId,
+    OneBotAdapter,
+    type OneBotSocket,
+    toChatMessage,
+    toGroupEvent,
+    toQuotedMessage,
+    toReactionEvents,
+} from "../src/adapters/onebot.ts";
 import type { ChatMessage, GroupEvent, ReactionEvent } from "../src/adapters/types.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 
@@ -54,6 +62,10 @@ class FakeSocket implements OneBotSocket {
         const call = this.sent.at(-1);
         this.emit("message", { status, retcode: status === "ok" ? 0 : 1400, data, wording: "nope", echo: call?.echo });
     }
+}
+
+async function lookupSent(socket: FakeSocket) {
+    await vi.waitFor(() => expect(socket.sent.at(-1)).toMatchObject({ action: "get_msg" }));
 }
 
 async function connected() {
@@ -223,7 +235,75 @@ describe("OneBotAdapter", () => {
         socket.reply({ message_id: 321 });
         await sending;
         socket.emit("message", { post_type: "message", message_type: "group", ...event([{ type: "reply", data: { id: "321" } }, text("ok")]) });
+        await lookupSent(socket);
+        socket.reply(null, "failed");
+        await vi.waitFor(() => expect(messages).toHaveLength(1));
         expect(messages[0]?.repliesToSelf).toBe(true);
+    });
+
+    const quoteSegment = { type: "reply", data: { id: "55" } };
+    const incoming = (message: { type: string; data: Record<string, unknown> }[], overrides: Record<string, unknown> = {}) => ({
+        post_type: "message",
+        message_type: "group",
+        ...event(message, overrides),
+    });
+    const original = {
+        message_id: 55,
+        group_id: 181,
+        user_id: 42,
+        sender: { user_id: 42, nickname: "alice", card: "" },
+        message: [text("吃了吗"), { type: "image", data: {} }],
+    };
+
+    it("looks up what a reply is quoting", async () => {
+        const { socket, messages } = await connected();
+        socket.emit("message", incoming([quoteSegment, text("没")]));
+        await lookupSent(socket);
+        expect(socket.sent.at(-1)).toMatchObject({ params: { message_id: 55 } });
+        socket.reply(original);
+        await vi.waitFor(() => expect(messages).toHaveLength(1));
+        expect(messages[0]).toMatchObject({
+            text: "没",
+            replyToMessageId: "55",
+            replyTo: { messageId: "55", by: "alice", byUser: "qq:42", text: "吃了吗[image]", isSelf: false },
+        });
+    });
+
+    it("keeps messages in order while a quote is being looked up", async () => {
+        const { socket, messages } = await connected();
+        socket.emit("message", incoming([quoteSegment, text("first")], { message_id: 1 }));
+        socket.emit("message", incoming([text("second")], { message_id: 2 }));
+        await lookupSent(socket);
+        expect(messages).toHaveLength(0);
+        socket.reply(original);
+        await vi.waitFor(() => expect(messages.map((message) => message.text)).toEqual(["first", "second"]));
+    });
+
+    it("delivers a reply without its quote when the lookup fails or times out", async () => {
+        const { socket, messages, clock } = await connected();
+        socket.emit("message", incoming([quoteSegment, text("没")]));
+        await lookupSent(socket);
+        await clock.advance(3000);
+        await vi.waitFor(() => expect(messages).toHaveLength(1));
+        expect(messages[0]).toMatchObject({ replyToMessageId: "55" });
+        expect(messages[0]?.replyTo).toBeUndefined();
+    });
+
+    it("treats a reply to its own message as addressed even if it has forgotten sending it", async () => {
+        const { socket, messages } = await connected();
+        socket.emit("message", incoming([quoteSegment, text("真的吗")]));
+        await lookupSent(socket);
+        socket.reply({ ...original, user_id: Number(event([]).self_id) });
+        await vi.waitFor(() => expect(messages).toHaveLength(1));
+        expect(messages[0]).toMatchObject({ repliesToSelf: true, replyTo: { isSelf: true } });
+    });
+
+    it("won't quote a message from another group, or one it can't attribute", () => {
+        const context = { self_id: "999", group_id: "181" };
+        const lookup = { selfName: "小茜", names: new Map() };
+        expect(toQuotedMessage({ ...original, group_id: 7 }, "55", context, lookup)).toBeUndefined();
+        expect(toQuotedMessage({ message: original.message, sender: {} }, "55", context, lookup)).toBeUndefined();
+        expect(toQuotedMessage("nonsense", "55", context, lookup)).toBeUndefined();
     });
 
     it("reports a refused send and doesn't retry it", async () => {

@@ -428,6 +428,22 @@ describe("MemorySystem extraction", () => {
 });
 
 describe("older databases", () => {
+    it("gains the reply column on a database that predates it", () => {
+        const directory = mkdtempSync(join(tmpdir(), "akanebot-"));
+        const path = join(directory, "memory.db");
+        const old = new DatabaseSync(path);
+        old.exec(
+            "CREATE TABLE rawLog (channel TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL, displayName TEXT NOT NULL, isSelf INTEGER NOT NULL, text TEXT NOT NULL, sentAt INTEGER NOT NULL, attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT, PRIMARY KEY (channel, messageId))",
+        );
+        old.prepare("INSERT INTO rawLog VALUES ('cli:group', 'm1', 'cli:alice', 'alice', 0, '旧消息', 1, 1, 0, NULL)").run();
+        old.close();
+        const store = new MemoryStore(path);
+        expect(store.recentAttended("cli:group", 10)[0]).toMatchObject({ text: "旧消息" });
+        expect(store.recentAttended("cli:group", 10)[0]?.replyTo).toBeUndefined();
+        store.close();
+        rmSync(directory, { recursive: true });
+    });
+
     it("gains the reactions column without losing messages", () => {
         const directory = mkdtempSync(join(tmpdir(), "akanebot-"));
         const path = join(directory, "old.db");
