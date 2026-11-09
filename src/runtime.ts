@@ -31,6 +31,7 @@ import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore } from "./memory
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutForwarded, withoutQuote } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
+import { explainAliases } from "./reply/aliases.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
 import { mentionablePeople, resolveMentions } from "./reply/mentions.ts";
@@ -829,12 +830,13 @@ export class Runtime {
         }
 
         lease.setState("composing");
-        const { block: memories } = await this.memory.recall(key, newMessages);
+        const { block: memories, recalled } = await this.memory.recall(key, newMessages);
         const lookup = await this.#maybeLookUp(key, features.lookUp, newMessages, lease.signal);
         const people = [...new Map(newMessages.map((message) => [userKey(message), message.sender.displayName]))].flatMap(([user, name]) => {
             const description = this.#describePerson(user, name, now);
             return description ? [{ name, description }] : [];
         });
+        people.push(...explainAliases(this.#people, window, recalled));
         const lowBattery = battery < LOW_BATTERY;
         const situation = [
             ...day.notes,

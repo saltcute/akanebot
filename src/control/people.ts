@@ -7,6 +7,8 @@ const personSchema = z.strictObject({
     ids: z.array(z.string().regex(/^[a-z]+:.+$/, "Expected platform:userId")).min(1),
     /** How she knows them, shown to her only while they are talking. Goes by account, so nobody can claim it with a nickname. */
     note: z.string().min(1).optional(),
+    /** Other names people call them by. Two characters at least, since one would turn up inside unrelated words. */
+    aliases: z.array(z.string().trim().min(2)).optional(),
 });
 
 export type PersonEntry = z.infer<typeof personSchema>;
@@ -18,6 +20,19 @@ export const peopleSchema = z
         for (const id of entries.flatMap((entry) => entry.ids)) {
             if (seen.has(id)) context.addIssue({ code: "custom", message: `${id} is listed more than once, but an account can only be one person` });
             seen.add(id);
+        }
+        const aliasOwners = new Map<string, PersonEntry>();
+        for (const entry of entries) {
+            for (const alias of entry.aliases ?? []) {
+                const owner = aliasOwners.get(alias.toLowerCase());
+                if (owner && owner !== entry)
+                    context.addIssue({ code: "custom", message: `${alias} is an alias of both ${owner.name} and ${entry.name}` });
+                aliasOwners.set(alias.toLowerCase(), entry);
+            }
+        }
+        for (const entry of entries) {
+            const owner = aliasOwners.get(entry.name.toLowerCase());
+            if (owner && owner !== entry) context.addIssue({ code: "custom", message: `${entry.name} is also an alias of ${owner.name}` });
         }
     })
     .default([]);
@@ -52,6 +67,10 @@ export class People {
 
     noteOf(user: string): string | undefined {
         return this.#byAccount.get(user)?.note;
+    }
+
+    aliasesOf(user: string): readonly string[] {
+        return this.#byAccount.get(user)?.aliases ?? [];
     }
 }
 

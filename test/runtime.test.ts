@@ -824,6 +824,15 @@ describe("living like a person", () => {
             expect(reply.calls[0]?.transcript).not.toContain("关系很好的网友");
         });
 
+        it("says whose nickname it is when someone uses one, without the note", async () => {
+            const nicknamed = new People([{ name: "土豆", ids: ["qq:1"], note: "关系很好的网友", aliases: ["薯仔"] }]);
+            const { adapter, reply, settle } = await setup({ people: nicknamed });
+            adapter.say("alice", "薯仔昨天去哪了");
+            await settle();
+            expect(reply.calls[0]?.transcript).toContain("- 薯仔: a nickname for 土豆");
+            expect(reply.calls[0]?.transcript).not.toContain("关系很好的网友");
+        });
+
         it("forgets the person's other accounts when one opts out", async () => {
             const { adapter, memoryStore, settle } = await setup({ people });
             memoryStore.saveRelationship({ channel: "qq:g", userKey: "qq:1", familiarity: 0.5, affinity: 0, updatedAt: 0, gainDay: 0, dayGain: 0 });

@@ -491,6 +491,9 @@ export class MemoryStore {
         }
         for (const name of names)
             for (const { id } of this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ?", `name:${name}`)) ids.add(id);
+        for (const alias of people.aliasesOf(user)) {
+            for (const { id } of this.#all<{ id: number }>("SELECT id FROM memories WHERE subject = ? COLLATE NOCASE", `name:${alias}`)) ids.add(id);
+        }
         return ids;
     }
 

@@ -23,7 +23,7 @@ export function mentionablePeople(window: readonly ChatMessage[]): Mentionable[]
         .sort((a, b) => b.name.length - a.name.length);
 }
 
-function runsTogether(left: string | undefined, right: string | undefined): boolean {
+export function runsTogether(left: string | undefined, right: string | undefined): boolean {
     return left !== undefined && right !== undefined && WORD_CHARACTER.test(left) && WORD_CHARACTER.test(right);
 }
 

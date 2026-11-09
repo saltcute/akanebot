@@ -45,9 +45,10 @@ control:
 # Links one person's accounts, and says how she knows them. Keep real IDs in your own config.yaml, which git ignores.
 # The same account in two groups is already one person, so list someone only to link platforms or add a note.
 # She sees the note only while that account is talking, so it can't be claimed by copying a nickname.
+# aliases are other names people call them by, two characters or longer. When one comes up, she's told whose nickname it is, and nothing about who's talking.
 # Opting out or being forgotten covers all of a person's accounts. Admin rights stay per account.
 people: []
-#  - { name: 土豆, ids: ["discord:123456789", "qq:123456789"], note: 关系很好的网友，经常一起聊音游 }
+#  - { name: 土豆, ids: ["discord:123456789", "qq:123456789"], note: 关系很好的网友，经常一起聊音游, aliases: [薯仔, potato] }
 
 # NapCat or another OneBot 11 server, needed for any group with platform: qq.
 # qq:

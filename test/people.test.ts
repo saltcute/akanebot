@@ -51,6 +51,20 @@ describe("People", () => {
     it("rejects an ID without a platform", () => {
         expect(peopleSchema.safeParse([{ name: "a", ids: ["12345"] }]).success).toBe(false);
     });
+
+    it("rejects an alias that could mean two people", () => {
+        const a = { name: "a", ids: ["qq:1"], aliases: ["Potato"] };
+        expect(peopleSchema.safeParse([a, { name: "b", ids: ["qq:2"], aliases: ["potato"] }]).success).toBe(false);
+        expect(peopleSchema.safeParse([a, { name: "potato", ids: ["qq:2"] }]).success).toBe(false);
+    });
+
+    it("rejects a one-character alias", () => {
+        expect(peopleSchema.safeParse([{ name: "a", ids: ["qq:1"], aliases: ["薯"] }]).success).toBe(false);
+    });
+
+    it("accepts aliases that only repeat within one person", () => {
+        expect(peopleSchema.safeParse([{ name: "土豆", ids: ["qq:1"], aliases: ["土豆", "薯仔", "薯仔"] }]).success).toBe(true);
+    });
 });
 
 describe("opting out with linked accounts", () => {
@@ -82,6 +96,19 @@ describe("forgetting a linked person", () => {
         const unrelated = store.addMemory(draft({ subject: "qq:7", attributedTo: "qq:7", sources: [{ messageId: "m4", speaker: "qq:7" }] }));
         expect(store.forgetImpact("discord:2", PEOPLE).memories).toBe(3);
         expect(store.forgetUser("discord:2", PEOPLE)).toBe(3);
+        expect(store.all().map((memory) => memory.id)).toEqual([unrelated]);
+    });
+
+    it("removes what others said about them under an alias, whatever its case", () => {
+        const people = new People([{ name: "土豆", ids: ["qq:1"], aliases: ["薯仔", "potato"] }]);
+        const store = new MemoryStore(":memory:");
+        for (const [i, subject] of ["name:薯仔", "name:Potato"].entries()) {
+            store.addMemory(draft({ kind: "claim", subject, attributedTo: "qq:7", sources: [{ messageId: `m${i}`, speaker: "qq:7" }] }));
+        }
+        const unrelated = store.addMemory(
+            draft({ kind: "claim", subject: "name:番茄", attributedTo: "qq:7", sources: [{ messageId: "m9", speaker: "qq:7" }] }),
+        );
+        expect(store.forgetUser("qq:1", people)).toBe(2);
         expect(store.all().map((memory) => memory.id)).toEqual([unrelated]);
     });
 
