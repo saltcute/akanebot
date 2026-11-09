@@ -8,7 +8,7 @@ schedule:
   busy:
     - { days: mon-fri, time: "10:00-16:30", checkPhoneEveryMin: [10, 50] } # lectures; phones come out a lot
 
-talkativeness: 0.55 # 0 = lurker，1 = never shuts up
+talkativeness: 0.35 # 0 = lurker，1 = never shuts up
 stubbornness: 0.7 # how rarely it concedes on matters of taste
 ignoreDirectAsks: 0.2 # chance of leaving a direct question on read
 forgetfulness: 0.4 # higher = recalls less
