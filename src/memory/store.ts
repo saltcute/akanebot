@@ -73,6 +73,26 @@ export type LoggedMessage = {
     quoted: { senderName: string; text: string } | undefined;
 };
 
+/** A picture she decided to keep. `scope` is the group it came from and `userKey` whoever posted it, so it goes if they're forgotten. */
+export type SavedImageDraft = {
+    sha256: string;
+    scope: string;
+    messageId: string;
+    userKey: string;
+    mime: string;
+    bytes: Uint8Array;
+    description: string;
+    /** The moment it would suit, in a few words. */
+    useFor: string;
+    appeal: number;
+    embedding: Float32Array | undefined;
+    embeddingModel: string | null;
+    savedAt: number;
+};
+
+/** A saved picture without its bytes, which are only loaded to send it. */
+export type SavedImage = Omit<SavedImageDraft, "bytes" | "sha256"> & { id: number; size: number; lastSentAt: number | null; timesSent: number };
+
 export type MemoryStats = { active: number; archived: number; replaced: number; unindexed: number; messages: number };
 
 export type LoggedSpeaker = { userKey: string; displayName: string; messages: number; lastSeen: number };
@@ -101,6 +121,7 @@ type LoggedRow = {
     replyTo: string | null;
 };
 
+type SavedImageRow = Omit<SavedImage, "embedding"> & { embedding: Uint8Array | null };
 type MemoryRow = Omit<Memory, "embedding"> & { embedding: Uint8Array | null };
 type MemoryViewRow = Omit<MemoryView, "indexed"> & { indexed: number };
 
@@ -138,6 +159,12 @@ CREATE TABLE IF NOT EXISTS relationships (
     updatedAt INTEGER NOT NULL, gainDay INTEGER NOT NULL, dayGain REAL NOT NULL,
     PRIMARY KEY (channel, userKey)
 );
+CREATE TABLE IF NOT EXISTS savedImages (
+    id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, scope TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL,
+    mime TEXT NOT NULL, bytes BLOB NOT NULL, description TEXT NOT NULL, useFor TEXT NOT NULL, appeal REAL NOT NULL,
+    embedding BLOB, embeddingModel TEXT, savedAt INTEGER NOT NULL, lastSentAt INTEGER, timesSent INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS savedImagesUser ON savedImages (userKey, savedAt);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
@@ -248,6 +275,7 @@ export class MemoryStore {
 
     /** Also clears the text quoted in replies to it. Memory sources stay, because forgetting and write quotas rely on them. False if it wasn't logged. */
     deleteLogged(channel: string, messageId: string): boolean {
+        this.#run("DELETE FROM savedImages WHERE scope = ? AND messageId = ?", channel, messageId);
         const { changes } = this.#run("DELETE FROM rawLog WHERE channel = ? AND messageId = ?", channel, messageId);
         if (changes === 0) return false;
         this.#run("UPDATE rawLog SET replyTo = NULL WHERE channel = ? AND json_extract(replyTo, '$.messageId') = ?", channel, messageId);
@@ -459,18 +487,19 @@ export class MemoryStore {
             this.#run("UPDATE rawLog SET replyTo = NULL WHERE json_extract(replyTo, '$.byUser') = ?", account);
             this.#removeReactionsBy(account);
             this.#run("DELETE FROM relationships WHERE userKey = ?", account);
+            this.#run("DELETE FROM savedImages WHERE userKey = ?", account);
         }
         return ids.size;
     }
 
     /** What `forgetUser` would delete. */
-    forgetImpact(user: string, people: People = NO_LINKS): { memories: number; messages: number } {
+    forgetImpact(user: string, people: People = NO_LINKS): { memories: number; messages: number; images: number } {
         const accounts = people.accountsOf(user);
         const messages = accounts.reduce((total, account) => {
             const [row] = this.#all<{ total: number }>("SELECT COUNT(*) AS total FROM rawLog WHERE userKey = ?", account);
             return total + (row?.total ?? 0);
         }, 0);
-        return { memories: this.#memoriesDerivedFrom(user, people).size, messages };
+        return { memories: this.#memoriesDerivedFrom(user, people).size, messages, images: this.savedImagesSince(accounts, 0) };
     }
 
     #memoriesDerivedFrom(user: string, people: People): Set<number> {
@@ -565,6 +594,75 @@ export class MemoryStore {
         );
     }
 
+    hasSavedImage(sha256: string): boolean {
+        return this.#all("SELECT 1 FROM savedImages WHERE sha256 = ?", sha256).length > 0;
+    }
+
+    /** Undefined if she already has this exact picture. */
+    saveImage(draft: SavedImageDraft): number | undefined {
+        const result = this.#run(
+            `INSERT OR IGNORE INTO savedImages (sha256, scope, messageId, userKey, mime, bytes, description, useFor, appeal, embedding, embeddingModel, savedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            draft.sha256,
+            draft.scope,
+            draft.messageId,
+            draft.userKey,
+            draft.mime,
+            draft.bytes,
+            draft.description,
+            draft.useFor,
+            draft.appeal,
+            toBlob(draft.embedding),
+            draft.embedding ? draft.embeddingModel : null,
+            draft.savedAt,
+        );
+        return result.changes === 0 ? undefined : Number(result.lastInsertRowid);
+    }
+
+    /** Everything she has saved, with no image data. */
+    savedImages(): SavedImage[] {
+        return this.#all<SavedImageRow>(
+            `SELECT id, scope, messageId, userKey, mime, length(bytes) AS size, description, useFor, appeal, embedding, embeddingModel, savedAt, lastSentAt, timesSent
+             FROM savedImages ORDER BY id`,
+        ).map((row) => ({ ...row, embedding: toEmbedding(row.embedding) }));
+    }
+
+    /** Undefined if it's been forgotten since she thought of it. */
+    savedImageContent(id: number): { bytes: Uint8Array; mime: string } | undefined {
+        return this.#all<{ bytes: Uint8Array; mime: string }>("SELECT bytes, mime FROM savedImages WHERE id = ?", id)[0];
+    }
+
+    /** How many of these accounts' pictures she has kept since then. */
+    savedImagesSince(accounts: readonly string[], since: number): number {
+        return accounts.reduce((total, account) => {
+            const [row] = this.#all<{ total: number }>(
+                "SELECT COUNT(*) AS total FROM savedImages WHERE userKey = ? AND savedAt >= ?",
+                account,
+                since,
+            );
+            return total + (row?.total ?? 0);
+        }, 0);
+    }
+
+    noteImageSent(id: number, at: number): void {
+        this.#run("UPDATE savedImages SET lastSentAt = ?, timesSent = timesSent + 1 WHERE id = ?", at, id);
+    }
+
+    deleteSavedImage(id: number): boolean {
+        return this.#run("DELETE FROM savedImages WHERE id = ?", id).changes > 0;
+    }
+
+    /** Over the limit, what she has never used and likes least goes first. Returns how many went. */
+    trimSavedImages(maxKept: number): number {
+        const { changes } = this.#run(
+            `DELETE FROM savedImages WHERE id IN (
+                SELECT id FROM savedImages ORDER BY timesSent DESC, appeal DESC, savedAt DESC, id DESC LIMIT -1 OFFSET ?
+            )`,
+            maxKept,
+        );
+        return Number(changes);
+    }
+
     getMeta(key: string): string | undefined {
         return this.#all<{ value: string }>("SELECT value FROM meta WHERE key = ?", key)[0]?.value;
     }
@@ -586,9 +684,13 @@ function toBlob(embedding: Float32Array | undefined): Uint8Array | null {
     return embedding ? new Uint8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength) : null;
 }
 
+/** Copied first, because a Float32Array needs an aligned buffer and SQLite's blob may not be. */
+function toEmbedding(blob: Uint8Array | null): Float32Array | undefined {
+    return blob ? new Float32Array(blob.slice().buffer) : undefined;
+}
+
 function toMemory(row: MemoryRow): Memory {
-    // Copied first, because a Float32Array needs an aligned buffer and SQLite's blob may not be.
-    return { ...row, embedding: row.embedding ? new Float32Array(row.embedding.slice().buffer) : undefined };
+    return { ...row, embedding: toEmbedding(row.embedding) };
 }
 
 function toMemoryView(row: MemoryViewRow): MemoryView {

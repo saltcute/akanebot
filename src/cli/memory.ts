@@ -13,7 +13,9 @@ const USAGE = `Usage: pnpm memory [--sim] <command>
   reach <id> group|shared       keep a memory in its group, or let it come up in other groups
   forget <id>                   delete one memory
   forget-user <platform:id>     delete everything derived from a person, on all their linked accounts
-  restore <id>                  undo a merge or archive`;
+  restore <id>                  undo a merge or archive
+  images                        every picture she has saved
+  forget-image <id>             delete one saved picture so she can't send it`;
 
 const args = process.argv.slice(2);
 const useSim = args[0] === "--sim";
@@ -109,6 +111,16 @@ switch (command) {
         console.log(`Restored #${id}`);
         break;
     }
+    case "images":
+        for (const image of store.savedImages()) {
+            console.log(
+                `#${image.id} ${image.mime} ${image.size} bytes, sent ${image.timesSent}x, from ${image.userKey} in ${image.scope}\n    ${image.useFor}: ${image.description}`,
+            );
+        }
+        break;
+    case "forget-image":
+        console.log(store.deleteSavedImage(requireId(first)) ? "Deleted." : `No saved picture #${first}`);
+        break;
     default:
         console.log(USAGE);
 }

@@ -292,7 +292,7 @@ export class MemorySystem {
     }
 
     /** What `forgetUser` would delete. */
-    forgetImpact(user: string): { memories: number; messages: number } {
+    forgetImpact(user: string): { memories: number; messages: number; images: number } {
         return this.store.forgetImpact(user, this.#people);
     }
 

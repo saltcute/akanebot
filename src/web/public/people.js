@@ -120,7 +120,7 @@ function optOut(person) {
     return act(async () => {
         const path = `/people/${encodeURIComponent(person.key)}`;
         const impact = await api(path);
-        const warning = `Opt out ${person.name}? She stops reading them on every account, and ${count(impact.memories, "memory", "memories")} and ${count(impact.messages, "logged message", "logged messages")} are deleted for good.`;
+        const warning = `Opt out ${person.name}? She stops reading them on every account, and ${count(impact.memories, "memory", "memories")}, ${count(impact.messages, "logged message", "logged messages")} and ${count(impact.images, "saved picture", "saved pictures")} are deleted for good.`;
         if (!confirm(warning)) return;
         const { forgotten } = await api(`${path}/opt-out`, { method: "POST" });
         await load();
