@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliAdapter } from "../src/adapters/cli.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
@@ -19,6 +19,9 @@ const CHANNEL = "cli:group";
 const CHANNEL_PATH = encodeURIComponent(CHANNEL);
 const ROLES = ["gate", "reply", "technical", "vision", "extract", "consolidate"];
 const EXTRACTION = JSON.stringify({ summary: "they talked about noodles", importance: 0.8, emotion: 0.2, memories: [] });
+
+const PUBLIC_DIRECTORY = new URL("../src/web/public/", import.meta.url);
+const PAGE_SCRIPTS = readdirSync(PUBLIC_DIRECTORY).filter((file) => file.endsWith(".js"));
 
 const running: WebServer[] = [];
 
@@ -119,6 +122,11 @@ describe("web console access", () => {
         expect((await fetch(`${base}/app.js`)).status).toBe(200);
     });
 
+    it("serves every script the page is made of", async () => {
+        const { base } = await setup();
+        for (const script of PAGE_SCRIPTS) expect((await fetch(`${base}/${script}`)).status, script).toBe(200);
+    });
+
     it("serves only the known files", async () => {
         const { base } = await setup();
         expect((await fetch(`${base}/server.ts`)).status).toBe(404);
@@ -127,8 +135,12 @@ describe("web console access", () => {
     });
 
     it("never builds markup from strings in the browser", () => {
-        const source = readFileSync(new URL("../src/web/public/app.js", import.meta.url), "utf8");
-        expect(source).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+        expect(PAGE_SCRIPTS).toContain("app.js");
+        for (const script of PAGE_SCRIPTS) {
+            expect(readFileSync(new URL(script, PUBLIC_DIRECTORY), "utf8"), script).not.toMatch(
+                /innerHTML|outerHTML|insertAdjacentHTML|document\.write/,
+            );
+        }
     });
 
     it("makes up a token when none is set, and rejects a weak one", () => {

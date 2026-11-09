@@ -19,6 +19,8 @@ const DEFAULT_PAGE_SIZE = 50;
 const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
     ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
+    ["/ui.js", { file: "ui.js", type: "text/javascript; charset=utf-8" }],
+    ["/dialogs.js", { file: "dialogs.js", type: "text/javascript; charset=utf-8" }],
     ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 

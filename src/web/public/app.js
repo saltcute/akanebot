@@ -1,10 +1,10 @@
 // Everything shown here can come from strangers in a chat, so text only ever enters the page as text nodes.
 
-const TOKEN_KEY = "akanebot.token";
+import { showDecisions, showPerson } from "./dialogs.js";
+import { act, api, count, el, formatTime, hooks, openDialog, PAGE_SIZE, pill, renderEvents, SEARCH_DELAY_MS, session, toast } from "./ui.js";
+
 const POLL_MS = 3000;
-const PAGE_SIZE = 50;
-const SEARCH_DELAY_MS = 250;
-const TOAST_MS = 3500;
+const TAB_KEY = "akanebot.tab";
 const STICK_TO_BOTTOM_PX = 40;
 const MUTE_CHOICES = [
     [15, "15 minutes"],
@@ -19,12 +19,9 @@ const MEMORY_KINDS = { episode: "Episode", fact: "Fact", claim: "Claim", event: 
 const MEMORY_REACHES = { group: "This group only", shared: "Shared" };
 
 const root = document.getElementById("root");
-const dialog = document.getElementById("dialog");
-const toastBox = document.getElementById("toast");
 
 const ui = {
-    token: sessionStorage.getItem(TOKEN_KEY) ?? "",
-    tab: "conversations",
+    tab: sessionStorage.getItem(TAB_KEY) ?? "conversations",
     status: undefined,
     conversations: [],
     conversationKey: undefined,
@@ -35,78 +32,17 @@ const ui = {
     memory: undefined,
 };
 
-/** Builds an element. Children are always appended as nodes or text, never parsed as markup. */
-function el(tag, properties = {}, ...children) {
-    const element = document.createElement(tag);
-    for (const [name, value] of Object.entries(properties)) {
-        if (value === undefined) continue;
-        if (name.startsWith("on")) element.addEventListener(name.slice(2), value);
-        else if (name in element && name !== "list") element[name] = value;
-        else element.setAttribute(name, String(value));
-    }
-    element.append(...children.flat().filter((child) => child !== undefined && child !== null && child !== false));
-    return element;
-}
-
-function count(amount, singular, plural) {
-    return `${amount} ${amount === 1 ? singular : plural}`;
-}
-
-function pill(text, tone = "") {
-    return el("span", { className: `pill ${tone}` }, text);
-}
-
-let toastTimer;
-function toast(message) {
-    toastBox.textContent = message;
-    toastBox.classList.add("visible");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastBox.classList.remove("visible"), TOAST_MS);
-}
-
 function signOut() {
-    ui.token = "";
-    sessionStorage.removeItem(TOKEN_KEY);
+    session.clear();
     showLogin();
 }
 
-async function api(path, options = {}) {
-    const response = await fetch(`/api${path}`, {
-        method: options.method ?? "GET",
-        headers: {
-            authorization: `Bearer ${ui.token}`,
-            ...(options.body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-    });
-    if (response.status === 401) {
-        signOut();
-        throw new Error("Signed out");
-    }
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "That didn't work");
-    return data;
-}
-
-/** Runs something the operator asked for, and reports any failure where they can see it. */
-async function act(work, done) {
-    try {
-        await work();
-        if (done) toast(done);
-    } catch (error) {
-        toast(error.message);
-    }
-}
-
-function formatTime(at) {
-    if (at === null || at === undefined) return "";
-    const date = new Date(at);
-    const sameDay = date.toDateString() === new Date().toDateString();
-    return date.toLocaleString(
-        undefined,
-        sameDay ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" },
-    );
-}
+hooks.onUnauthorized = signOut;
+hooks.afterPersonGone = async () => {
+    ui.memory = undefined;
+    await TABS[ui.tab].load();
+    TABS[ui.tab].render();
+};
 
 function conversationTitle(conversation) {
     return conversation.name ?? conversation.key;
@@ -139,22 +75,22 @@ function showLogin(message) {
 }
 
 async function signIn(token) {
-    ui.token = token;
+    session.token = token;
     try {
         const response = await fetch("/api/status", { headers: { authorization: `Bearer ${token}` } });
         if (!response.ok) throw new Error(response.status === 401 ? "That token isn't right." : "The server didn't respond properly.");
-        sessionStorage.setItem(TOKEN_KEY, token);
+        session.remember(token);
         ui.status = await response.json();
-        await refresh();
+        await TABS[ui.tab].load();
         render();
     } catch (error) {
-        ui.token = "";
+        session.clear();
         showLogin(error.message);
     }
 }
 
 async function refresh() {
-    const [status] = await Promise.all([api("/status"), ui.tab === "conversations" ? refreshConversations() : undefined]);
+    const [status] = await Promise.all([api("/status"), TABS[ui.tab].live ? TABS[ui.tab].load() : undefined]);
     ui.status = status;
 }
 
@@ -186,12 +122,11 @@ async function reloadMemoriesAfterChange(id) {
 function render() {
     root.replaceChildren(el("div", { className: "app" }, renderTop(), el("div", { id: "banner" }), el("main", { id: "view", className: "split" })));
     renderBanner();
-    if (ui.tab === "conversations") renderConversations();
-    else renderMemories();
+    TABS[ui.tab].render();
 }
 
 function renderTop() {
-    const tab = (id, label) =>
+    const tab = ([id, { label }]) =>
         el(
             "button",
             {
@@ -200,8 +135,8 @@ function renderTop() {
                 onclick: () =>
                     act(async () => {
                         ui.tab = id;
-                        if (id === "memories") await refreshMemories();
-                        else await refreshConversations();
+                        sessionStorage.setItem(TAB_KEY, id);
+                        await TABS[id].load();
                         render();
                     }),
             },
@@ -211,7 +146,7 @@ function renderTop() {
         "header",
         { className: "top" },
         el("div", { className: "brand", id: "brand" }, ui.status?.personaName ?? "Akanebot"),
-        el("nav", { className: "tabs", role: "tablist" }, tab("conversations", "Conversations"), tab("memories", "Memories")),
+        el("nav", { className: "tabs", role: "tablist" }, Object.entries(TABS).map(tab)),
         el("div", { className: "vitals", id: "vitals" }, renderVitals()),
     );
 }
@@ -653,98 +588,44 @@ function renderMemoryDetail() {
     );
 }
 
-function openDialog(...children) {
-    dialog.replaceChildren(
-        ...children.flat().filter(Boolean),
-        el("div", { className: "actions" }, el("button", { className: "push", onclick: () => dialog.close() }, "Close")),
-    );
-    if (!dialog.open) dialog.showModal();
-}
-
-function renderEvents(events) {
-    return events.map((event) =>
-        el(
-            "div",
-            { className: "event" },
-            el("b", {}, event.kind),
-            ` · ${formatTime(event.at)}`,
-            event.detail ? el("pre", {}, JSON.stringify(event.detail, null, 2)) : undefined,
-        ),
-    );
-}
-
-function showDecisions(messageId) {
-    return act(async () => {
-        const { decisions } = await api(`/messages/${encodeURIComponent(messageId)}/decisions`);
-        openDialog(
-            el("h2", {}, "Why she did what she did"),
-            decisions.length === 0 ? el("p", {}, "Nothing recorded for this message since the bot last started.") : renderEvents(decisions),
-        );
-    });
-}
-
 function showAlerts() {
     openDialog(el("h2", {}, "Recent alerts"), renderEvents([...(ui.status?.alerts ?? [])].reverse()));
 }
 
-function showPerson(key) {
-    return act(async () => {
-        const person = await api(`/people/${encodeURIComponent(key)}`);
-        const forget = () => {
-            if (!confirm(`Permanently delete everything about ${person.displayName}? This can't be undone.`)) return;
-            act(async () => {
-                const { forgotten } = await api(`/people/${encodeURIComponent(key)}`, { method: "DELETE" });
-                dialog.close();
-                ui.memory = undefined;
-                if (ui.tab === "memories") {
-                    await refreshMemories();
-                    renderMemories();
-                } else {
-                    await refreshConversations();
-                    renderConversations();
-                }
-                toast(`Forgot ${count(forgotten, "memory", "memories")}`);
-            });
-        };
-        openDialog(
-            el("h2", {}, person.displayName),
-            el("p", { className: "meta" }, person.key),
-            el(
-                "p",
-                {},
-                `She has ${count(person.memories, "memory", "memories")} and ${count(person.messages, "logged message", "logged messages")} tied to this person. Forgetting deletes all of them, along with how she feels about them.`,
-            ),
-            el(
-                "p",
-                { className: "meta" },
-                "She can still learn about them from new messages. To stop that, they can send the opt-out command in chat.",
-            ),
-            el("div", { className: "actions" }, el("button", { className: "danger", onclick: forget }, "Forget this person")),
-        );
-    });
-}
-
 async function poll() {
-    if (!ui.token || document.hidden || !document.getElementById("view")) return;
+    if (!session.token || document.hidden || !document.getElementById("view")) return;
     try {
-        const previous = JSON.stringify([ui.conversations, ui.conversation]);
+        const tab = TABS[ui.tab];
+        const previous = tab.live?.();
         await refresh();
         updateChrome();
         // Redrawing only on change keeps text selection and open dropdowns intact.
-        if (ui.tab === "conversations" && JSON.stringify([ui.conversations, ui.conversation]) !== previous) renderConversations();
+        if (tab.live && tab.live() !== previous) tab.render();
     } catch {
         // The next poll tries again. A dropped connection shouldn't throw up an error every few seconds.
     }
 }
 
+/** Each tab says how to fetch and draw itself. `live` is for tabs that follow the bot: it returns what a redraw would depend on. */
+const TABS = {
+    conversations: {
+        label: "Conversations",
+        load: refreshConversations,
+        render: renderConversations,
+        live: () => JSON.stringify([ui.conversations, ui.conversation]),
+    },
+    memories: { label: "Memories", load: refreshMemories, render: renderMemories },
+};
+
 function start() {
+    if (!Object.hasOwn(TABS, ui.tab)) ui.tab = "conversations";
     const fromLink = new URLSearchParams(location.hash.slice(1)).get("token");
     if (fromLink) {
         // Kept out of the address bar and browser history once it has been read.
         history.replaceState(null, "", location.pathname);
         signIn(fromLink);
-    } else if (ui.token) {
-        signIn(ui.token);
+    } else if (session.token) {
+        signIn(session.token);
     } else {
         showLogin();
     }
