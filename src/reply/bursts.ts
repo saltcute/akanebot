@@ -1,4 +1,4 @@
-import { OWN_REACTION_PREFIX } from "./prompt.ts";
+import { OWN_IMAGE_PREFIX, OWN_REACTION_PREFIX } from "./prompt.ts";
 
 const MAX_BURSTS = 4;
 /** Reasoning a model sometimes emits as a tagged block, removed along with its contents. */
@@ -8,10 +8,10 @@ const STRAY_WRAPPER_TAG = /<\/?(?:chat[\w-]*|reply|response|message|output)>/gi;
 
 /** Turns the model's list into chat messages: cleaned, capped, and with lines split unless they are fenced code. */
 export function toBursts(messages: readonly string[], maxBursts = MAX_BURSTS): string[] {
-    // The model sometimes imitates the transcript's record of a reaction. That's not something to say out loud.
+    // The model sometimes imitates the transcript's record of a reaction or a picture. That's not something to say out loud.
     return messages
         .flatMap(splitLines)
-        .filter((burst) => !burst.startsWith(OWN_REACTION_PREFIX))
+        .filter((burst) => !burst.startsWith(OWN_REACTION_PREFIX) && !burst.startsWith(OWN_IMAGE_PREFIX))
         .slice(0, maxBursts);
 }
 

@@ -15,7 +15,7 @@ import { NullEmbedder } from "../src/llm/embedder.ts";
 import { FakeBackend, type FakeResponder, type FakeResponse } from "../src/llm/fake.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 import type { SearchBackend } from "../src/llm/search.ts";
-import { MemoryStore } from "../src/memory/store.ts";
+import { MemoryStore, type SavedImageDraft } from "../src/memory/store.ts";
 import type { Persona } from "../src/persona/schema.ts";
 import { type Pacing, pacingSchema } from "../src/reply/timing.ts";
 import { type ControlOptions, Runtime } from "../src/runtime.ts";
@@ -54,7 +54,7 @@ const TALKING_TO_IT: Partial<GateFeatures> = { addressedToMe: "yes" };
 function asMessages(respond: FakeResponder): FakeResponder {
     return (request) => {
         const response = respond(request);
-        return typeof response === "string" ? JSON.stringify({ messages: [response] }) : response;
+        return typeof response === "string" && !response.startsWith('{"messages"') ? JSON.stringify({ messages: [response] }) : response;
     };
 }
 
@@ -1574,6 +1574,167 @@ describe("senses", () => {
                 await settle();
                 expect(memoryStore.savedImages()).toEqual([]);
                 expect(trace.ofKind("image.skipped")[0]?.detail).toMatchObject({ reason: "not_an_image" });
+            });
+        });
+
+        describe("sending them", () => {
+            const saved = (overrides: Partial<SavedImageDraft> = {}): SavedImageDraft => ({
+                sha256: "a",
+                scope: "cli:group",
+                messageId: "old",
+                userKey: "cli:bob",
+                mime: "image/gif",
+                bytes: Uint8Array.of(0x47, 0x49, 0x46, 0x38),
+                description: "猫猫瞪眼",
+                useFor: "无语",
+                appeal: 0.9,
+                embedding: undefined,
+                embeddingModel: null,
+                savedAt: 0,
+                ...overrides,
+            });
+            const inMind = { savedImages: { ...PERSONA.savedImages, useRate: 1 } };
+            const picksFirst = () => JSON.stringify({ messages: ["草"], image: 1 });
+
+            it("shows what she has and sends the one she picks after her words", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                const id = memoryStore.saveImage(saved()) ?? 0;
+                const { adapter, reply, settle } = await setup({ memoryStore, persona: inMind, reply: picksFirst });
+                adapter.say("alice", "我又挂科了");
+                await settle();
+                expect(reply.calls[0]?.transcript).toContain("<saved_images>\n1. 猫猫瞪眼 (good for: 无语)\n</saved_images>");
+                expect(adapter.sent.map((s) => s.text)).toEqual(["草"]);
+                expect(adapter.sentImages.map((s) => s.image.mime)).toEqual(["image/gif"]);
+                expect(memoryStore.savedImages()[0]).toMatchObject({ id, timesSent: 1 });
+            });
+
+            it("can answer with only a picture, and knows it did", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, reply, settle } = await setup({
+                    memoryStore,
+                    persona: inMind,
+                    reply: () => JSON.stringify({ messages: [], image: 1 }),
+                });
+                adapter.say("alice", "我又挂科了");
+                await settle();
+                expect(adapter.sent).toEqual([]);
+                expect(adapter.sentImages).toHaveLength(1);
+                adapter.say("alice", "?");
+                await settle();
+                expect(reply.calls[1]?.transcript).toContain("[sent a picture: 猫猫瞪眼]");
+            });
+
+            it("ignores a number it wasn't offered", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, settle } = await setup({
+                    memoryStore,
+                    persona: inMind,
+                    reply: () => JSON.stringify({ messages: ["草"], image: 9 }),
+                });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(adapter.sentImages).toEqual([]);
+            });
+
+            it("mostly doesn't have them in mind", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, reply, settle } = await setup({ memoryStore, persona: { savedImages: { ...PERSONA.savedImages, useRate: 0 } } });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(reply.calls[0]?.transcript).not.toContain("<saved_images>");
+            });
+
+            it("doesn't offer pictures on a technical question", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, technical, settle } = await setup({
+                    memoryStore,
+                    persona: inMind,
+                    gate: { addressedToMe: "yes", isTechnical: true, domain: "web", difficulty: 2 },
+                });
+                adapter.say("alice", "useEffect 怎么清理");
+                await settle();
+                expect(technical.calls[0]?.transcript).not.toContain("<saved_images>");
+            });
+
+            it("doesn't send another right after one, or the same one again soon", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, reply, settle } = await setup({ memoryStore, persona: inMind, reply: picksFirst });
+                adapter.say("alice", "1");
+                await settle();
+                adapter.say("alice", "2");
+                await settle();
+                expect(reply.calls[1]?.transcript).not.toContain("<saved_images>");
+                adapter.say("alice", "3");
+                await settle(20 * 60_000);
+                adapter.say("alice", "4");
+                await settle();
+                expect(reply.calls.at(-1)?.transcript).not.toContain("<saved_images>");
+                expect(adapter.sentImages).toHaveLength(1);
+            });
+
+            it("keeps a walled-off group's pictures in that group", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved({ scope: "cli:walled" }));
+                const groups = [
+                    { platform: "cli", channelId: "group", disclosed: true },
+                    { platform: "cli", channelId: "walled", disclosed: true, shareMemory: false },
+                ] as const;
+                const { adapter, reply, settle } = await setup({ memoryStore, persona: inMind, control: { groups } });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(reply.calls[0]?.transcript).not.toContain("<saved_images>");
+            });
+
+            it("shares pictures between groups that share memories", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved({ scope: "cli:other" }));
+                const groups = [
+                    { platform: "cli", channelId: "group", disclosed: true },
+                    { platform: "cli", channelId: "other", disclosed: true },
+                ] as const;
+                const { adapter, reply, settle } = await setup({ memoryStore, persona: inMind, control: { groups } });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(reply.calls[0]?.transcript).toContain("<saved_images>");
+            });
+
+            it("posts nothing in shadow mode", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, trace, settle } = await setup({ memoryStore, persona: inMind, reply: picksFirst, shadow: true });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(adapter.sentImages).toEqual([]);
+                expect(trace.ofKind("send.shadow").at(-1)?.detail?.text).toContain("猫猫瞪眼");
+            });
+
+            it("won't send a picture if its poster was forgotten meanwhile", async () => {
+                const memoryStore = new MemoryStore(":memory:");
+                memoryStore.saveImage(saved());
+                const { adapter, settle } = await setup({
+                    memoryStore,
+                    persona: inMind,
+                    reply: () => {
+                        memoryStore.forgetUser("cli:bob");
+                        return JSON.stringify({ messages: ["草"], image: 1 });
+                    },
+                });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(adapter.sent.map((s) => s.text)).toEqual(["草"]);
+                expect(adapter.sentImages).toEqual([]);
+            });
+
+            it("never says the record of a picture out loud", async () => {
+                const { adapter, settle } = await setup({ reply: () => "[sent a picture: 猫]\n好吧" });
+                adapter.say("alice", "hi");
+                await settle();
+                expect(adapter.sent.map((s) => s.text)).toEqual(["好吧"]);
             });
         });
 

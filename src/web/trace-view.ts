@@ -28,6 +28,7 @@ const SHOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
     "control.web": ["action", "minutes", "memory", "user", "level", "familiarity", "affinity"],
     "gate.repeat": ["repeat", "probability"],
     "image.judged": ["verdict", "appeal"],
+    "image.offered": ["ids"],
     "image.saved": ["id", "mime", "size", "trimmed"],
     "image.skipped": ["reason"],
     "gate.silent": ["result"],

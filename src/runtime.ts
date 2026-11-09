@@ -23,6 +23,7 @@ import { findRepeatChain } from "./gate/repeat.ts";
 import { downloadImage, type ImageFetcher } from "./images/download.ts";
 import { judgeImage } from "./images/keep.ts";
 import { flattenCaption, type ImageLook, imageLookSchema, LOOK_REQUEST, renderVisionInstructions } from "./images/look.ts";
+import { canUseHere, chooseOffers, type OfferedImage } from "./images/offer.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
@@ -42,10 +43,12 @@ import {
     clockIn,
     renderGroupEvent,
     renderLookup,
+    renderOwnImage,
     renderOwnReaction,
     renderPeople,
     renderReplyInstructions,
     renderReplyState,
+    renderSavedImages,
     renderTranscript,
     replySchema,
     timezoneNote,
@@ -199,6 +202,9 @@ const MAX_CAPTION_CHARS = 200;
 const MAX_USE_FOR_CHARS = 40;
 const MAX_IMAGES_KEPT_PER_PERSON_PER_DAY = 5;
 const DAY_MS = 86_400_000;
+/** Posting pictures back to back gets old fast, and so does the same picture twice in a week. */
+const IMAGE_COOLDOWN_MS = 15 * 60_000;
+const IMAGE_REUSE_AFTER_MS = 3 * DAY_MS;
 
 /** Wires adapters to perception, the body, the gate and the send guards. */
 export class Runtime {
@@ -210,6 +216,9 @@ export class Runtime {
     #pacingRng: Rng;
     #reactionRng: Rng;
     #searchRng: Rng;
+    #imageRng: Rng;
+    #lastImageSentAt = new Map<string, number>();
+    #sharing: ReadonlySet<string>;
     #options: RuntimeOptions;
     #adapters: ReadonlyMap<Platform, Adapter>;
     #channels = new Map<string, Channel>();
@@ -235,10 +244,12 @@ export class Runtime {
         this.#state = new ControlState({ clock: options.clock, store: options.controlStore, people: this.#people });
         this.#allowedChannels = new Set(options.control.groups.filter((group) => group.disclosed).map(channelKey));
         const sharing = new Set(options.control.groups.filter((group) => group.disclosed && group.shareMemory !== false).map(channelKey));
+        this.#sharing = sharing;
         if (this.#state.killed) this.body.goAway(KILL_REASON);
         this.#pacingRng = options.rng.fork("pacing");
         this.#reactionRng = options.rng.fork("reaction");
         this.#searchRng = options.rng.fork("search");
+        this.#imageRng = options.rng.fork("images");
         this.vitals = new Vitals({ clock: options.clock, persona: () => this.#persona, store: options.memoryStore });
         if (options.routine) {
             this.#routine = new Routine({
@@ -863,9 +874,10 @@ export class Runtime {
             ...(lookup ? ["You just looked this up online and only half get it."] : []),
         ];
         const technical = competence.mode !== "casual";
+        const offered = technical ? [] : await this.#offerImages(channel, newMessages, now);
         const result = await llm.generate(technical ? "technical" : "reply", {
             stable: renderReplyInstructions(persona),
-            transcript: `${renderPeople(people)}${memories}${lookup}${transcript}`,
+            transcript: `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}${transcript}`,
             volatile: renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation }),
             schema: replySchema,
             maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
@@ -879,7 +891,8 @@ export class Runtime {
         }
 
         const bursts = toBursts(result.data.messages, lowBattery ? 1 : undefined);
-        if (bursts.length === 0) {
+        const picked = offered.find(({ number }) => number === result.data?.image);
+        if (bursts.length === 0 && !picked) {
             perception.settle(seenSeq);
             trace.record("reply.chose_silence", { channel: key, ...idField });
             return;
@@ -926,6 +939,56 @@ export class Runtime {
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         }
+        if (picked) await this.#sendSavedImage(channel, picked, seenSeq, decision.addressed, lease);
+    }
+
+    /** The roll comes first, so most replies cost nothing extra. The model only picks among the few it's shown. */
+    async #offerImages(channel: Channel, newMessages: readonly ChatMessage[], now: number): Promise<OfferedImage[]> {
+        const key = channelKey(channel.ref);
+        const lastSent = this.#lastImageSentAt.get(key);
+        if (!channel.adapter.sendImage || (lastSent !== undefined && now - lastSent < IMAGE_COOLDOWN_MS)) return [];
+        if (!this.#imageRng.chance(this.#persona.savedImages.useRate)) return [];
+        const usable = this.memory.store
+            .savedImages()
+            .filter(
+                (image) => canUseHere(image, key, this.#sharing) && (image.lastSentAt === null || now - image.lastSentAt >= IMAGE_REUSE_AFTER_MS),
+            );
+        if (usable.length === 0) return [];
+        const query = await this.#options.embedder.embed(newMessages.map((message) => message.text).join(" "), "query");
+        const offered = chooseOffers(usable, query, this.#imageRng);
+        this.#options.trace.record("image.offered", { channel: key, detail: { ids: offered.map(({ id }) => id).join(",") } });
+        return offered;
+    }
+
+    async #sendSavedImage(channel: Channel, picked: OfferedImage, seenSeq: number, addressed: boolean, lease: Lease): Promise<void> {
+        const { clock, pacing, trace } = this.#options;
+        const { perception } = channel;
+        const key = channelKey(channel.ref);
+        // It may have been forgotten while the reply was being written.
+        const content = this.memory.store.savedImageContent(picked.id);
+        if (!content) return;
+        if (pacing && !(await this.#type(channel, typingDelay(pacing, "", this.#pacingRng, false), lease.signal))) return;
+        const overtakenBy = perception.newSince(seenSeq);
+        if (overtakenBy.length >= ABANDON_AFTER_NEW_MESSAGES && !addressed) {
+            perception.settle(seenSeq);
+            trace.record("reply.abandoned", { channel: key, detail: { overtakenBy: overtakenBy.length } });
+            return;
+        }
+        const outcome = await this.guard.sendImage(channel.adapter, channel.ref, content, picked.description, { signal: lease.signal });
+        if (outcome.kind === "blocked" && outcome.reason === "shadow") {
+            perception.settle(seenSeq);
+            this.vitals.spend(1);
+            return;
+        }
+        if (outcome.kind !== "sent") return;
+        perception.settle(seenSeq);
+        this.vitals.spend(1);
+        this.#lastImageSentAt.set(key, clock.now());
+        this.memory.store.noteImageSent(picked.id, clock.now());
+        // Written into its own view of the chat, or it would have no idea what it had posted.
+        const own = ownMessage(channel.ref, outcome.messageId, renderOwnImage(picked.description), clock.now(), this.#persona.name);
+        perception.recordOwn(own);
+        this.memory.recordOwn(own);
     }
 
     /** Goes by account, so a nickname alone never gets anyone treated as someone she knows. */
