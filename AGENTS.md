@@ -65,6 +65,7 @@ In the simulator, `/why [messageId]` shows every decision made about a message. 
 - **Failures are silent in chat.** API errors, refusals and truncation never produce text in a group. They alert the operator.
 - **The web UI is operator-only.** Every API route needs the bearer token. Chat text is hostile input, so `public/app.js` only creates text nodes (never `innerHTML`) and the CSP allows no inline or third-party content. The UI never posts in a chat or speaks as the persona. A person's data is forgotten through `Runtime.forgetPerson`, because live windows hold it too.
 - **Send safety.** Sends are at-most-once and never retried. Filter self-echo, dedupe by platform ID, and never reply to backlog after a reconnect.
+- **Pings are resolved in code.** The model only writes `@name`. `src/reply/mentions.ts` turns at most one per reply into a real mention, and only for a human in the working window. Adapters never let model text ping anyone else, least of all @everyone or @全体成员.
 
 ## Persona settings
 

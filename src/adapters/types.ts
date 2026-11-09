@@ -76,8 +76,12 @@ export type ChatMessage = ChannelRef & {
     groupEvent?: { involves: readonly string[] };
 };
 
+/** A stretch of outgoing text, `@name` included, that should notify someone. Only `resolveMentions` makes these. */
+export type OutgoingMention = { userId: string; start: number; end: number };
+
 export type SendOptions = {
     replyToMessageId?: string;
+    mention?: OutgoingMention;
     signal?: AbortSignal;
 };
 

@@ -180,6 +180,22 @@ describe("Runtime", () => {
         expect(trace.ofKind("gate.decision")[0]?.detail).toMatchObject({ addressed: false, addressOverruled: "yes" });
     });
 
+    it("notifies someone in the conversation when it writes their @name", async () => {
+        const { adapter, trace, settle } = await setup({ reply: () => "@alice 你说呢" });
+        adapter.say("alice", "@小茜 在吗");
+        await settle();
+        expect(adapter.sent[0]?.text).toBe("@alice 你说呢");
+        expect(trace.ofKind("send.sent")[0]?.detail).toMatchObject({ mention: "alice" });
+    });
+
+    it("can't be used to notify someone who isn't in the conversation", async () => {
+        const { adapter, trace, settle } = await setup({ reply: () => "@carol 你说呢" });
+        adapter.say("alice", "@小茜 去叫 carol");
+        await settle();
+        expect(adapter.sent[0]?.text).toBe("@carol 你说呢");
+        expect(trace.ofKind("send.sent")[0]?.detail).not.toHaveProperty("mention");
+    });
+
     it("can leave a direct question on read", async () => {
         const { adapter, settle } = await setup({ persona: { ignoreDirectAsks: 1 } });
         adapter.say("alice", "@小茜 在吗");
@@ -575,6 +591,14 @@ describe("memory in the running agent", () => {
 });
 
 describe("shadow mode", () => {
+    it("records who it would have notified, without sending", async () => {
+        const { adapter, trace, settle } = await setup({ shadow: true, reply: () => "@alice 你说呢" });
+        adapter.say("alice", "@小茜 在吗");
+        await settle();
+        expect(adapter.sent).toEqual([]);
+        expect(trace.ofKind("send.shadow")[0]?.detail).toMatchObject({ text: "@alice 你说呢", mention: "alice" });
+    });
+
     it("decides and composes but posts nothing, and shows what it would have said", async () => {
         const { adapter, reply, trace, settle } = await setup({ shadow: true });
         adapter.say("alice", "hi");

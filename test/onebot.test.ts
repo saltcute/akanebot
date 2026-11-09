@@ -1,4 +1,5 @@
 // biome-ignore-all lint/style/useNamingConvention: these names are OneBot's wire format
+
 import { describe, expect, it, vi } from "vitest";
 import {
     emojiFromId,
@@ -9,7 +10,7 @@ import {
     toQuotedMessage,
     toReactionEvents,
 } from "../src/adapters/onebot.ts";
-import type { ChatMessage, GroupEvent, ReactionEvent } from "../src/adapters/types.ts";
+import type { ChatMessage, GroupEvent, ReactionEvent, SendOptions } from "../src/adapters/types.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 
 const NOW = 1_800_000_000_000;
@@ -233,6 +234,32 @@ describe("OneBotAdapter", () => {
         });
         socket.reply({ message_id: 321 });
         expect(await sending).toEqual({ messageId: "321" });
+    });
+
+    const sendText = async (body: string, options: SendOptions) => {
+        const { adapter, socket } = await connected();
+        const sending = adapter.send({ platform: "qq", channelId: "181" }, body, options);
+        const message = socket.sent.at(-1)?.params.message;
+        socket.reply({ message_id: 321 });
+        await sending;
+        return message;
+    };
+
+    it("turns a resolved mention into an at segment", async () => {
+        await expect(sendText("喂 @bob 你看", { mention: { userId: "42", start: 2, end: 6 } })).resolves.toEqual([
+            { type: "text", data: { text: "喂 " } },
+            { type: "at", data: { qq: "42" } },
+            { type: "text", data: { text: " 你看" } },
+        ]);
+    });
+
+    it("leaves out empty text around a mention", async () => {
+        await expect(sendText("@bob", { mention: { userId: "42", start: 0, end: 4 } })).resolves.toEqual([{ type: "at", data: { qq: "42" } }]);
+    });
+
+    it("drops a mention the length limit would cut through", async () => {
+        const message = await sendText("x".repeat(5000), { mention: { userId: "42", start: 4500, end: 4504 } });
+        expect(message).toEqual([{ type: "text", data: { text: "x".repeat(4000) } }]);
     });
 
     it("quotes when asked, and treats replies to its messages as addressed", async () => {

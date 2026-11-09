@@ -102,16 +102,17 @@ export class SendGuard {
 
     async #deliver(adapter: Adapter, channel: ChannelRef, text: string, options: SendOptions): Promise<SendOutcome> {
         const key = channelKey(channel);
+        const mention = options.mention ? { mention: text.slice(options.mention.start + 1, options.mention.end) } : {};
         if (this.#shadow) {
             const replyTo = options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {};
-            this.#trace.record("send.shadow", { channel: key, detail: { text, ...replyTo } });
+            this.#trace.record("send.shadow", { channel: key, detail: { text, ...replyTo, ...mention } });
             return { kind: "blocked", reason: "shadow" };
         }
         try {
             const { messageId } = await adapter.send(channel, text, options);
             this.#remember(ownKey(channel, messageId));
             this.#recordSpeaker(key, "self");
-            this.#trace.record("send.sent", { channel: key, messageId, detail: { text } });
+            this.#trace.record("send.sent", { channel: key, messageId, detail: { text, ...mention } });
             return { kind: "sent", messageId };
         } catch (error) {
             const detail = String(error);

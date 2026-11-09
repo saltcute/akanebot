@@ -83,6 +83,12 @@ describe("SendGuard.send", () => {
         expect(trace.ofKind("send.sent")).toHaveLength(1);
     });
 
+    it("records who a send notifies", async () => {
+        const { guard, adapter, trace } = setup();
+        await guard.send(adapter, channel, "hi @bob", { mention: { userId: "42", start: 3, end: 7 } });
+        expect(trace.ofKind("send.sent")[0]?.detail).toMatchObject({ text: "hi @bob", mention: "bob" });
+    });
+
     it("never retries a failed send", async () => {
         const { clock, trace } = setup();
         const adapter = fakeAdapter(async () => {

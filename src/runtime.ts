@@ -24,6 +24,7 @@ import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTimi
 import { type Persona, reactionChoices } from "./persona/schema.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
+import { mentionablePeople, resolveMentions } from "./reply/mentions.ts";
 import {
     renderGroupEvent,
     renderLookup,
@@ -679,7 +680,7 @@ export class Runtime {
         }
 
         lease.setState("sending");
-        for (const [index, text] of bursts.entries()) {
+        for (const [index, { text, mention }] of resolveMentions(bursts, mentionablePeople(window)).entries()) {
             if (pacing && !(await this.#type(channel, typingDelay(pacing, text, this.#pacingRng, index === 0), lease.signal))) return;
             const overtakenBy = perception.newSince(seenSeq);
             if (overtakenBy.length >= ABANDON_AFTER_NEW_MESSAGES && !decision.addressed) {
@@ -693,6 +694,7 @@ export class Runtime {
             const outcome = await this.guard.send(channel.adapter, channel.ref, text, {
                 signal: lease.signal,
                 ...(quote ? { replyToMessageId: asker.messageId } : {}),
+                ...(mention ? { mention } : {}),
             });
             if (outcome.kind === "blocked" && outcome.reason === "shadow") {
                 perception.settle(seenSeq);

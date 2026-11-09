@@ -187,6 +187,12 @@ describe("DiscordAdapter.send", () => {
     }
     const channel = { platform: "discord", channelId: "c1" } as const;
 
+    it("notifies only the person code resolved", async () => {
+        const { sent, adapter } = setup();
+        await adapter.send(channel, "hi @bob @everyone", { mention: { userId: "42", start: 3, end: 7 } });
+        expect(sent[0]).toMatchObject({ content: "hi <@42> @everyone", allowedMentions: { parse: [], users: ["42"] } });
+    });
+
     it("never lets model output ping anyone", async () => {
         const { sent, adapter } = setup();
         await expect(adapter.send(channel, "@everyone 开饭了")).resolves.toEqual({ messageId: "new1" });

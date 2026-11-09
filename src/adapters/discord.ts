@@ -11,7 +11,18 @@ import {
     Partials,
     type User,
 } from "discord.js";
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, QuotedMessage, ReactionEvent, Sender, SendOptions } from "./types.ts";
+import type {
+    Adapter,
+    ChannelRef,
+    ChatMessage,
+    GroupEvent,
+    GroupEventKind,
+    OutgoingMention,
+    QuotedMessage,
+    ReactionEvent,
+    Sender,
+    SendOptions,
+} from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
@@ -153,6 +164,10 @@ export function readAuditEntry(entry: Pick<GuildAuditLogsEntry, "action" | "chan
     }
 }
 
+function withMention(text: string, mention: OutgoingMention | undefined): string {
+    return mention ? `${text.slice(0, mention.start)}<@${mention.userId}>${text.slice(mention.end)}` : text;
+}
+
 export function createDiscordClient(): Client {
     return new Client({
         intents: [
@@ -235,9 +250,9 @@ export class DiscordAdapter implements Adapter {
     async send(channel: ChannelRef, text: string, options: SendOptions = {}): Promise<{ messageId: string }> {
         const target = await this.#sendable(channel);
         const sent = await target.send({
-            content: text.slice(0, MAX_MESSAGE_CHARS),
-            // Model output must never ping anyone, least of all @everyone.
-            allowedMentions: { parse: [] },
+            content: withMention(text, options.mention).slice(0, MAX_MESSAGE_CHARS),
+            // Nothing the model typed can ping anyone, least of all @everyone. Only the person code resolved gets notified.
+            allowedMentions: { parse: [], ...(options.mention ? { users: [options.mention.userId] } : {}) },
             ...(options.replyToMessageId ? { reply: { messageReference: options.replyToMessageId, failIfNotExists: false } } : {}),
         });
         return { messageId: sent.id };

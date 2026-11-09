@@ -1,7 +1,18 @@
 // biome-ignore-all lint/style/useNamingConvention: these names are OneBot's wire format
 import { z } from "zod";
 import type { CancelTimer, Clock } from "../lib/clock.ts";
-import type { Adapter, ChannelRef, ChatMessage, GroupEvent, GroupEventKind, QuotedMessage, ReactionEvent, Sender, SendOptions } from "./types.ts";
+import type {
+    Adapter,
+    ChannelRef,
+    ChatMessage,
+    GroupEvent,
+    GroupEventKind,
+    OutgoingMention,
+    QuotedMessage,
+    ReactionEvent,
+    Sender,
+    SendOptions,
+} from "./types.ts";
 
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
@@ -136,6 +147,17 @@ function mentionedOthers(segments: readonly Segment[], selfId: string, names: Lo
         const target = asText(data.qq);
         return type === "at" && target !== "all" && target !== selfId ? [mentionedName(data, target, names)] : [];
     });
+}
+
+function textSegment(text: string): Segment[] {
+    return text === "" ? [] : [{ type: "text", data: { text } }];
+}
+
+/** A mention cut off by the length limit is dropped rather than sent half-formed. */
+function outgoingSegments(fullText: string, mention: OutgoingMention | undefined): Segment[] {
+    const text = fullText.slice(0, MAX_MESSAGE_CHARS);
+    if (!mention || mention.end > text.length) return textSegment(text);
+    return [...textSegment(text.slice(0, mention.start)), { type: "at", data: { qq: mention.userId } }, ...textSegment(text.slice(mention.end))];
 }
 
 function isDescribableImage({ type, data }: Segment): boolean {
@@ -307,7 +329,7 @@ export class OneBotAdapter implements Adapter {
         // Always the segment form, because in the plain string form model output could smuggle in a [CQ:at,qq=all].
         const message = [
             ...(options.replyToMessageId ? [{ type: "reply", data: { id: options.replyToMessageId } }] : []),
-            { type: "text", data: { text: text.slice(0, MAX_MESSAGE_CHARS) } },
+            ...outgoingSegments(text, options.mention),
         ];
         const result = (await this.#call("send_group_msg", { group_id: Number(channel.channelId), message })) as { message_id: number | string };
         const messageId = String(result.message_id);
