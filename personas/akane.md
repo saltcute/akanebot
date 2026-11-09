@@ -4,9 +4,9 @@ aliases: [akane, 茜, 茜茜] # other names people use for it; @-mentions of the
 timezone: America/Toronto # local time for schedule and chat; AKANEBOT_TIMEZONE in .env overrides it
 
 schedule:
-  sleep: { weekday: "01:30-08:40", weekend: "03:00-11:30" }
+  sleep: { weekday: "03:30-04:00", weekend: "04:00-04:30" }
   busy:
-    - { days: mon-fri, time: "10:00-16:30", checkPhoneEveryMin: [10, 50] } # lectures; phones come out a lot
+    - { days: mon-fri, time: "10:00-16:30", checkPhoneEveryMin: [0, 5] } # lectures; phones come out a lot
 
 talkativeness: 0.35 # 0 = lurker，1 = never shuts up
 stubbornness: 0.7 # how rarely it concedes on matters of taste
