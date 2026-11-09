@@ -2,7 +2,23 @@
 
 import { showDecisions, showPerson } from "./dialogs.js";
 import { peopleTab } from "./people.js";
-import { act, api, count, el, formatTime, hooks, openDialog, PAGE_SIZE, pill, renderEvents, SEARCH_DELAY_MS, session, toast } from "./ui.js";
+import { statusTab } from "./status.js";
+import {
+    act,
+    api,
+    BODY_STATES,
+    count,
+    el,
+    formatTime,
+    hooks,
+    openDialog,
+    PAGE_SIZE,
+    pill,
+    renderEvents,
+    SEARCH_DELAY_MS,
+    session,
+    toast,
+} from "./ui.js";
 
 const POLL_MS = 3000;
 const TAB_KEY = "akanebot.tab";
@@ -14,7 +30,6 @@ const MUTE_CHOICES = [
     [1440, "1 day"],
     [10080, "1 week"],
 ];
-const BODY_STATES = { idle: "Idle", reading: "Reading", composing: "Writing", sending: "Typing", away: "Away" };
 const MEMORY_STATES = { active: "Active", archived: "Archived", replaced: "Replaced" };
 const MEMORY_KINDS = { episode: "Episode", fact: "Fact", claim: "Claim", event: "Event" };
 const MEMORY_REACHES = { group: "This group only", shared: "Shared" };
@@ -91,7 +106,7 @@ async function signIn(token) {
 }
 
 async function refresh() {
-    const [status] = await Promise.all([api("/status"), TABS[ui.tab].live ? TABS[ui.tab].load() : undefined]);
+    const [status] = await Promise.all([api("/status"), TABS[ui.tab].live && !TABS[ui.tab].editing?.() ? TABS[ui.tab].load() : undefined]);
     ui.status = status;
 }
 
@@ -601,7 +616,7 @@ async function poll() {
         await refresh();
         updateChrome();
         // Redrawing only on change keeps text selection and open dropdowns intact.
-        if (tab.live && tab.live() !== previous) tab.render();
+        if (tab === TABS[ui.tab] && tab.live && tab.live() !== previous) tab.render();
     } catch {
         // The next poll tries again. A dropped connection shouldn't throw up an error every few seconds.
     }
@@ -617,6 +632,7 @@ const TABS = {
     },
     memories: { label: "Memories", load: refreshMemories, render: renderMemories },
     people: peopleTab,
+    status: statusTab,
 };
 
 function start() {

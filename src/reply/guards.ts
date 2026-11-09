@@ -51,6 +51,22 @@ export class SendGuard {
         this.#shadow = options.shadow ?? false;
     }
 
+    /** For the operator. Reading it refills nothing. */
+    snapshot(): { tokens: number; capacity: number; maxShare: number; channels: { channel: string; share: number; sample: number }[] } {
+        const { bucketCapacity: capacity, refillPerMinute, maxShare } = this.#limits;
+        const refilled = ((this.#clock.now() - this.#lastRefill) / 60_000) * refillPerMinute;
+        return {
+            tokens: Math.floor(Math.min(capacity, this.#tokens + refilled)),
+            capacity,
+            maxShare,
+            channels: [...this.#recent].map(([channel, recent]) => ({
+                channel,
+                share: recent.filter((speaker) => speaker === "self").length / recent.length,
+                sample: recent.length,
+            })),
+        };
+    }
+
     /** Classifies an incoming event. Only "new" messages may reach perception. */
     observe(message: ChatMessage): Observation {
         const id = idKey(message, message.messageId);

@@ -568,3 +568,32 @@ describe("web console people", () => {
         expect((await json("/api/people")).people).toEqual([]);
     });
 });
+
+describe("web console status", () => {
+    it("reports her body, day, limits and memory", async () => {
+        const { adapter, store, json } = await setup();
+        adapter.say("alice", "hi");
+        store.addMemory(draft());
+        store.addMemory(draft({ embedding: undefined, embeddingModel: null }));
+        const body = await json("/api/body");
+        expect(body).toMatchObject({
+            state: "idle",
+            battery: 1,
+            searchesToday: 0,
+            guard: { tokens: 10, capacity: 10, maxShare: 0.4 },
+            memory: { active: 2, archived: 0, replaced: 0, unindexed: 1, messages: 1 },
+            lastNight: {},
+        });
+        expect(body.activity).toMatch(/^(asleep|busy|free)$/);
+        expect(body.day.mood).toBeGreaterThanOrEqual(-1);
+        expect(body).not.toHaveProperty("present");
+    });
+
+    it("doesn't use up anything by being looked at", async () => {
+        const { json, clock } = await setup();
+        await clock.advance(1000);
+        const first = await json("/api/body");
+        const second = await json("/api/body");
+        expect(second.guard).toEqual(first.guard);
+    });
+});

@@ -234,6 +234,40 @@ dialog p {
     grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
 }
 
+.single {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    align-items: start;
+    gap: 12px;
+    padding: 14px;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.card p {
+    margin: 0;
+}
+
+.notes {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+}
+
 .pane {
     min-height: 0;
     min-width: 0;
@@ -515,6 +549,10 @@ label.field textarea {
 h3 {
     margin: 4px 0 0;
     font-size: 14px;
+}
+
+.card h3 {
+    margin: 0;
 }
 
 .source {

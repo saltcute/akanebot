@@ -2,6 +2,7 @@
 
 const TOKEN_KEY = "akanebot.token";
 const TOAST_MS = 3500;
+export const BODY_STATES = { idle: "Idle", reading: "Reading", composing: "Writing", sending: "Typing", away: "Away" };
 export const PAGE_SIZE = 50;
 export const SEARCH_DELAY_MS = 250;
 

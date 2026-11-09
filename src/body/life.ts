@@ -5,6 +5,8 @@ import { hoursAround, localTime } from "./schedule.ts";
 export type DayState = {
     /** Plain-language notes for the reply prompt. Written here, never from chat. */
     notes: string[];
+    /** From -1 (a bad day) to 1 (a good one). */
+    mood: number;
     /** Multiplies how likely it is to join a conversation. */
     joinFactor: number;
 };
@@ -33,5 +35,5 @@ export function dayState(persona: Persona, now: number): DayState {
         notes.push("You're getting sleepy.");
         joinFactor *= 0.7;
     }
-    return { notes, joinFactor };
+    return { notes, mood, joinFactor };
 }

@@ -280,6 +280,10 @@ export class MemorySystem {
         this.store.addMemory({ ...draft, embedding, embeddingModel: this.#embedder.modelId });
     }
 
+    get lastConsolidationDate(): string | undefined {
+        return this.store.getMeta(LAST_CONSOLIDATION_KEY);
+    }
+
     /** Removes everything derived from this person. Returns how many memories went. */
     forgetUser(user: string): number {
         const removed = this.store.forgetUser(user, this.#people);

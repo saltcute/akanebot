@@ -37,6 +37,11 @@ export class Routine {
         this.#arrive = options.arrive;
     }
 
+    /** False while asleep or busy and not glancing at the phone. */
+    get present(): boolean {
+        return this.#present;
+    }
+
     start(): void {
         this.#tick();
     }

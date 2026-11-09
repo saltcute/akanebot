@@ -57,6 +57,8 @@ export type MemoryQuery = {
 /** Where a memory came from. The message fields are null once the raw log has aged out. */
 export type MemorySource = { messageId: string; speaker: string; displayName: string | null; text: string | null; sentAt: number | null };
 
+export type MemoryStats = { active: number; archived: number; replaced: number; unindexed: number; messages: number };
+
 export type LoggedSpeaker = { userKey: string; displayName: string; messages: number; lastSeen: number };
 
 export type RelationshipRow = {
@@ -197,6 +199,22 @@ export class MemoryStore {
 
     markSegmented(channel: string, messageIds: readonly string[]): void {
         for (const id of messageIds) this.#run("UPDATE rawLog SET segmented = 1 WHERE channel = ? AND messageId = ?", channel, id);
+    }
+
+    stats(): MemoryStats {
+        const [memories] = this.#all<Omit<MemoryStats, "messages">>(
+            `SELECT COALESCE(SUM(${MEMORY_STATE_CLAUSES.active}), 0) AS active, COALESCE(SUM(${MEMORY_STATE_CLAUSES.archived}), 0) AS archived,
+             COALESCE(SUM(${MEMORY_STATE_CLAUSES.replaced}), 0) AS replaced,
+             COALESCE(SUM(${MEMORY_STATE_CLAUSES.active} AND embedding IS NULL), 0) AS unindexed FROM memories`,
+        );
+        const [log] = this.#all<{ messages: number }>("SELECT COUNT(*) AS messages FROM rawLog");
+        return {
+            active: memories?.active ?? 0,
+            archived: memories?.archived ?? 0,
+            replaced: memories?.replaced ?? 0,
+            unindexed: memories?.unindexed ?? 0,
+            messages: log?.messages ?? 0,
+        };
     }
 
     /** Which of these messages still exist, since someone may have opted out while extraction was running. */

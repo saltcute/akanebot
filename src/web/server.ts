@@ -22,6 +22,7 @@ const ASSETS: ReadonlyMap<string, { file: string; type: string }> = new Map([
     ["/ui.js", { file: "ui.js", type: "text/javascript; charset=utf-8" }],
     ["/dialogs.js", { file: "dialogs.js", type: "text/javascript; charset=utf-8" }],
     ["/people.js", { file: "people.js", type: "text/javascript; charset=utf-8" }],
+    ["/status.js", { file: "status.js", type: "text/javascript; charset=utf-8" }],
     ["/style.css", { file: "style.css", type: "text/css; charset=utf-8" }],
 ]);
 
@@ -330,6 +331,7 @@ function buildRoutes(runtime: Runtime): readonly Route[] {
             },
         },
 
+        { method: "GET", path: /^\/api\/body$/, handle: () => runtime.bodySnapshot() },
         { method: "GET", path: /^\/api\/people$/, handle: () => ({ people: runtime.roster() }) },
         {
             method: "GET",

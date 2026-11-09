@@ -1,7 +1,7 @@
 import type { Adapter, ChannelRef, ChatMessage, GroupEvent, Platform, QuotedMessage, ReactionEvent } from "./adapters/types.ts";
 import { channelKey } from "./adapters/types.ts";
 import { type Attend, BodyActor, type BodyState, type Lease } from "./body/actor.ts";
-import { dayState } from "./body/life.ts";
+import { type DayState, dayState } from "./body/life.ts";
 import {
     correctStanding,
     currentRelationship,
@@ -11,6 +11,7 @@ import {
     updateRelationship,
 } from "./body/relationships.ts";
 import { Routine } from "./body/routine.ts";
+import { busyPeriod, isAsleep } from "./body/schedule.ts";
 import { Vitals } from "./body/vitals.ts";
 import { MAX_MUTE_MINUTES, runCommand } from "./control/admin.ts";
 import { NO_LINKS, type People } from "./control/people.ts";
@@ -26,7 +27,7 @@ import type { DecisionTrace, TraceEvent } from "./lib/trace.ts";
 import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
-import type { MemoryStore } from "./memory/store.ts";
+import type { MemoryStats, MemoryStore } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import { ADDRESSED_PRIORITY, ChannelPerception, isAddressed, type PerceptionTiming, withoutForwarded, withoutQuote } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
@@ -140,6 +141,24 @@ export type RuntimeStatus = {
     battery: number;
     searchesToday: number;
     cost: ReturnType<CostMeter["summary"]>;
+};
+
+/** Everything about how she is right now, for the operator. */
+export type BodySnapshot = {
+    state: BodyState;
+    attending: { channel: string; name: string } | undefined;
+    awayReasons: readonly string[];
+    activity: "asleep" | "busy" | "free";
+    /** Undefined when this run doesn't follow the schedule. */
+    present: boolean | undefined;
+    day: DayState;
+    battery: number;
+    searchesToday: number;
+    searchCap: number;
+    guard: ReturnType<SendGuard["snapshot"]> & { channels: { channel: string; name: string; share: number; sample: number }[] };
+    cost: ReturnType<CostMeter["summary"]>;
+    memory: MemoryStats;
+    lastNight: { date: string | undefined; finishedAt: number | undefined; report: Record<string, unknown> | undefined };
 };
 
 const KILL_REASON = "kill";
@@ -339,6 +358,32 @@ export class Runtime {
             battery: this.vitals.battery(),
             searchesToday: this.vitals.searchesToday(),
             cost: this.#options.cost.summary(),
+        };
+    }
+
+    bodySnapshot(): BodySnapshot {
+        const now = this.#options.clock.now();
+        const persona = this.#persona;
+        const attending = this.body.attending;
+        const guard = this.guard.snapshot();
+        const lastRun = this.#options.trace.ofKind("memory.consolidated").at(-1);
+        return {
+            state: this.body.state,
+            attending: attending ? { channel: attending, name: this.channelName(attending) ?? attending } : undefined,
+            awayReasons: this.body.awayReasons,
+            activity: isAsleep(persona, now) ? "asleep" : busyPeriod(persona, now) ? "busy" : "free",
+            present: this.#routine?.present,
+            day: dayState(persona, now),
+            battery: this.vitals.battery(),
+            searchesToday: this.vitals.searchesToday(),
+            searchCap: persona.search.dailyCap,
+            guard: {
+                ...guard,
+                channels: guard.channels.map((channel) => ({ ...channel, name: this.channelName(channel.channel) ?? channel.channel })),
+            },
+            cost: this.#options.cost.summary(),
+            memory: this.memory.store.stats(),
+            lastNight: { date: this.memory.lastConsolidationDate, finishedAt: lastRun?.at, report: lastRun?.detail },
         };
     }
 
