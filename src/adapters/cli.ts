@@ -2,6 +2,8 @@ import type { Clock } from "../lib/clock.ts";
 import type { Adapter, ChannelRef, ChatMessage, GroupEvent, QuotedMessage, ReactionEvent, SendOptions } from "./types.ts";
 
 const SELF_ID = "akanebot";
+/** Platforms mark a mention as one unit, so whole tokens are read here too and `@akane2` isn't `@akane`. */
+const MENTION_TOKEN = /(?<!\S)@([^\s,.!?，。！？:：]+)/gu;
 
 /** A simulated group chat, driven by the simulator and by tests. */
 export class CliAdapter implements Adapter {
@@ -12,7 +14,7 @@ export class CliAdapter implements Adapter {
     readonly #selfName: string;
     /** Keeps IDs unique across simulator runs that share a database. */
     readonly #idPrefix: string;
-    readonly #mentions: readonly string[];
+    readonly #ownNames: ReadonlySet<string>;
     readonly #print: (line: string) => void;
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #onReaction: ((event: ReactionEvent) => void) | undefined;
@@ -23,7 +25,7 @@ export class CliAdapter implements Adapter {
         this.#clock = options.clock;
         this.#selfName = options.selfName;
         this.#idPrefix = options.idPrefix ?? "";
-        this.#mentions = [options.selfName, ...(options.aliases ?? [])].map((name) => `@${name.toLowerCase()}`);
+        this.#ownNames = new Set([options.selfName, ...(options.aliases ?? [])].map((name) => name.toLowerCase()));
         this.#print = options.print ?? (() => {});
     }
 
@@ -47,8 +49,8 @@ export class CliAdapter implements Adapter {
         // "[img:https://...]" stands in for attaching a picture.
         const images = [...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : []));
         const text = rawText.replace(/\[img:\S+?\]/g, "[image]");
-        const lowered = text.toLowerCase();
-        const mentionsSelf = this.#mentions.some((mention) => lowered.includes(mention));
+        const mentioned = [...text.matchAll(MENTION_TOKEN)].flatMap((match) => (match[1] ? [match[1]] : []));
+        const mentionsSelf = mentioned.some((name) => this.#ownNames.has(name.toLowerCase()));
         this.#onMessage?.({
             platform: this.platform,
             channelId,

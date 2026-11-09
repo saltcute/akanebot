@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CliAdapter } from "../src/adapters/cli.ts";
+import type { ChatMessage } from "../src/adapters/types.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import type { GateFeatures } from "../src/gate/features.ts";
 import { ManualClock } from "../src/lib/clock.ts";
@@ -1408,5 +1409,24 @@ describe("group events", () => {
         adapter.say("carol", "嗯");
         await settle();
         expect(chatLines(reply.calls.at(-1)?.transcript).filter((line) => line.startsWith("[alice"))).toEqual(["[alice muted dan]"]);
+    });
+});
+
+describe("CliAdapter mentions", () => {
+    async function said(text: string) {
+        const adapter = new CliAdapter({ clock: new ManualClock(0), selfName: "小茜", aliases: ["akane"] });
+        const received: ChatMessage[] = [];
+        await adapter.start((message) => received.push(message));
+        adapter.say("alice", text);
+        return received[0];
+    }
+
+    it("counts its own name and aliases as a whole token", async () => {
+        expect((await said("@小茜 在吗"))?.mentionsSelf).toBe(true);
+        expect((await said("在吗 @AKANE!"))?.mentionsSelf).toBe(true);
+    });
+
+    it("doesn't count a longer name that merely starts the same", async () => {
+        expect((await said("@akane2 在吗"))?.mentionsSelf).toBe(false);
     });
 });
