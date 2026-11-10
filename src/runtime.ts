@@ -178,6 +178,8 @@ export type PersonSummary = {
     accounts: readonly string[];
     note: string | undefined;
     aliases: readonly string[];
+    /** What each group calls them, most recently used first. */
+    groupNames: { name: string; groups: string[] }[];
     timezone: string | undefined;
     messages: number;
     lastSeen: number | undefined;
@@ -537,6 +539,7 @@ export class Runtime {
         const now = this.#options.clock.now();
         const speakers = new Map(store.loggedSpeakers().map((speaker) => [speaker.userKey, speaker]));
         const relationships = store.allRelationships();
+        const groupNames = store.groupNames();
         const accounts = [
             ...this.#people.entries().flatMap((entry) => entry.ids),
             ...speakers.keys(),
@@ -550,10 +553,17 @@ export class Runtime {
                 const rows = relationships.filter((row) => linked.includes(row.userKey));
                 return {
                     key,
-                    name: this.#people.nameOf(key) ?? seen[0]?.displayName ?? key,
+                    // A name from one group would be wrong in every other, so the account's own name comes first.
+                    name: this.#people.nameOf(key) ?? seen.find((speaker) => speaker.accountName)?.accountName ?? seen[0]?.displayName ?? key,
                     accounts: linked,
                     note: this.#people.noteOf(key),
                     aliases: this.#people.aliasesOf(key),
+                    groupNames: [
+                        ...Map.groupBy(
+                            groupNames.filter((row) => linked.includes(row.userKey)),
+                            (row) => row.displayName,
+                        ),
+                    ].map(([name, rows]) => ({ name, groups: rows.map((row) => this.channelName(row.channel) ?? row.channel) })),
                     timezone: this.#people.timezoneOf(key),
                     messages: seen.reduce((total, speaker) => total + speaker.messages, 0),
                     lastSeen: seen[0]?.lastSeen,
@@ -600,7 +610,7 @@ export class Runtime {
             images: images.map((image) => ({
                 ...image,
                 scopeName: this.channelName(image.scope) ?? image.scope,
-                posterName: this.#people.nameOf(image.userKey) ?? store.displayNameOf(image.userKey) ?? image.userKey,
+                posterName: this.#people.nameOf(image.userKey) ?? store.stableNameOf(image.userKey) ?? image.userKey,
             })),
             total,
             scopes: store.savedImageScopes().map((key) => ({ key, name: this.channelName(key) ?? key })),

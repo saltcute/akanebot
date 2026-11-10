@@ -160,6 +160,7 @@ export function toChatMessage(message: Message, selfId: string): ChatMessage | u
         sender: {
             id: message.author.id,
             displayName: message.member?.displayName ?? message.author.displayName,
+            accountName: message.author.username,
             isBot: message.author.bot,
         },
         text,

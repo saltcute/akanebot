@@ -84,7 +84,7 @@ export class CliAdapter implements Adapter {
             platform: this.platform,
             channelId,
             messageId,
-            sender: { id: speaker, displayName: this.#displayNames.get(speaker) ?? speaker, isBot: false },
+            sender: { id: speaker, displayName: this.#displayNames.get(speaker) ?? speaker, accountName: speaker, isBot: false },
             text,
             ...(images.length > 0 ? { images } : {}),
             sentAt: this.#clock.now(),

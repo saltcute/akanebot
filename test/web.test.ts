@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { CliAdapter } from "../src/adapters/cli.ts";
+import type { ChatMessage } from "../src/adapters/types.ts";
 import { currentRelationship } from "../src/body/relationships.ts";
 import { loadConfig } from "../src/config.ts";
 import { People } from "../src/control/people.ts";
@@ -469,6 +470,41 @@ describe("web console people", () => {
         });
         expect(alice.groups).toHaveLength(1);
         expect(people.find((person: { name: string }) => person.name === "bob").aliases).toEqual([]);
+    });
+
+    const logged = (messageId: string, channelId: string, displayName: string, accountName?: string): ChatMessage => ({
+        platform: "cli",
+        channelId,
+        messageId,
+        sender: { id: "bob", displayName, ...(accountName ? { accountName } : {}), isBot: false },
+        text: "hi",
+        sentAt: Number(messageId),
+        mentionsSelf: false,
+        repliesToSelf: false,
+        isSelf: false,
+        isBacklog: false,
+    });
+
+    it("names someone by their account, and lists what each group calls them", async () => {
+        const { store, json } = await setup();
+        store.logMessage(logged("1", "group", "小明", "bob"), "cli:bob", false);
+        store.logMessage(logged("2", "other", "ming", "bob"), "cli:bob", false);
+        store.logMessage(logged("3", "third", "ming", "bob"), "cli:bob", false);
+        const { people } = await json("/api/people");
+        expect(people).toHaveLength(1);
+        expect(people[0].name).toBe("bob");
+        expect(people[0].groupNames).toEqual([
+            { name: "ming", groups: ["cli:third", "cli:other"] },
+            { name: "小明", groups: [expect.any(String)] },
+        ]);
+    });
+
+    it("falls back to the last name used when the log predates account names", async () => {
+        const { store, json } = await setup();
+        store.logMessage(logged("1", "group", "old"), "cli:bob", false);
+        store.logMessage(logged("2", "other", "new"), "cli:bob", false);
+        const { people } = await json("/api/people");
+        expect(people[0].name).toBe("new");
     });
 
     it("includes someone the config declares before they have said anything", async () => {

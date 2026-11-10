@@ -261,7 +261,7 @@ function buildRoutes(runtime: Runtime, configView: (() => unknown) | undefined):
         if (!store.savedImage(id)) throw new HttpError(404, "No such picture");
         return id;
     };
-    const describeKey = (key: string | null): string | null => (key ? (store.displayNameOf(key) ?? key.replace(/^name:/, "")) : null);
+    const describeKey = (key: string | null): string | null => (key ? (store.stableNameOf(key) ?? key.replace(/^name:/, "")) : null);
     const present = (memory: MemoryView) => ({
         ...memory,
         scopeName: runtime.channelName(memory.scope) ?? memory.scope,
@@ -479,7 +479,7 @@ function buildRoutes(runtime: Runtime, configView: (() => unknown) | undefined):
             path: /^\/api\/people\/([^/]+)$/,
             handle: (request) => {
                 const key = personKey(request);
-                return { key, displayName: store.displayNameOf(key) ?? key, ...runtime.memory.forgetImpact(key) };
+                return { key, displayName: store.stableNameOf(key) ?? key, ...runtime.memory.forgetImpact(key) };
             },
         },
         {

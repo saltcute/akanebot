@@ -117,7 +117,7 @@ describe("OneBot message mapping", () => {
             platform: "qq",
             channelId: "181",
             messageId: "55",
-            sender: { id: "7", displayName: "card", isBot: false },
+            sender: { id: "7", displayName: "card", accountName: "nick", isBot: false },
             text: "hello",
             sentAt: NOW,
             mentionsSelf: false,
@@ -129,6 +129,16 @@ describe("OneBot message mapping", () => {
 
     it("falls back to the nickname when there's no card", () => {
         expect(map([text("x")], { sender: { nickname: "nick", card: "" } })?.sender.displayName).toBe("nick");
+    });
+
+    it("keeps the nickname apart from the card, and leaves it out when QQ sends none", () => {
+        expect(map([text("x")], { sender: { nickname: "nick", card: "card" } })?.sender).toEqual({
+            id: "7",
+            displayName: "card",
+            accountName: "nick",
+            isBot: false,
+        });
+        expect(map([text("x")], { sender: { card: "card" } })?.sender).toEqual({ id: "7", displayName: "card", isBot: false });
     });
 
     it("notices being @-mentioned, but not @all", () => {

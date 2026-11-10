@@ -8,6 +8,8 @@ export type ChannelRef = {
 export type Sender = {
     id: string;
     displayName: string;
+    /** The name on the account itself, the same in every group: a QQ nickname or a Discord username. `displayName` is what this group shows. */
+    accountName?: string;
     isBot: boolean;
 };
 

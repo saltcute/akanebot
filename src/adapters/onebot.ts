@@ -256,7 +256,12 @@ export function toChatMessage(
         platform: "qq",
         channelId: event.group_id,
         messageId: event.message_id,
-        sender: { id: event.user_id, displayName: displayName(event), isBot: false },
+        sender: {
+            id: event.user_id,
+            displayName: displayName(event),
+            ...(event.sender.nickname ? { accountName: event.sender.nickname } : {}),
+            isBot: false,
+        },
         text,
         ...(images.length > 0 ? { images } : {}),
         sentAt,

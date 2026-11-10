@@ -108,7 +108,10 @@ export type SavedImageQuery = { scope?: string | undefined; users?: readonly str
 
 export type MemoryStats = { active: number; archived: number; replaced: number; unindexed: number; messages: number };
 
-export type LoggedSpeaker = { userKey: string; displayName: string; messages: number; lastSeen: number };
+export type LoggedSpeaker = { userKey: string; displayName: string; accountName: string | undefined; messages: number; lastSeen: number };
+
+/** The name one account currently goes by in one group. */
+export type GroupName = { userKey: string; channel: string; displayName: string };
 
 export type RelationshipRow = {
     channel: string;
@@ -127,6 +130,7 @@ type LoggedRow = {
     messageId: string;
     userKey: string;
     displayName: string;
+    accountName: string | null;
     isSelf: number;
     text: string;
     sentAt: number;
@@ -153,7 +157,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS rawLog (
     channel TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL, displayName TEXT NOT NULL,
     isSelf INTEGER NOT NULL, text TEXT NOT NULL, sentAt INTEGER NOT NULL,
-    attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT, replyTo TEXT,
+    attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT, replyTo TEXT, accountName TEXT,
     PRIMARY KEY (channel, messageId)
 );
 CREATE INDEX IF NOT EXISTS rawLogOpen ON rawLog (channel, attended, segmented, sentAt);
@@ -203,7 +207,7 @@ export class MemoryStore {
 
     logMessage(message: ChatMessage, userKey: string, attended: boolean): void {
         this.#run(
-            "INSERT OR IGNORE INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended, replyTo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended, replyTo, accountName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             channelKey(message),
             message.messageId,
             userKey,
@@ -213,6 +217,7 @@ export class MemoryStore {
             message.sentAt,
             attended ? 1 : 0,
             message.replyTo ? JSON.stringify(message.replyTo) : null,
+            message.sender.accountName ?? null,
         );
     }
 
@@ -221,6 +226,7 @@ export class MemoryStore {
         const columns = this.#all<{ name: string }>("PRAGMA table_info(rawLog)").map((column) => column.name);
         if (!columns.includes("reactions")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN reactions TEXT");
         if (!columns.includes("replyTo")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN replyTo TEXT");
+        if (!columns.includes("accountName")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN accountName TEXT");
         // Everything remembered before sharing existed stays in its own group.
         const memoryColumns = this.#all<{ name: string }>("PRAGMA table_info(memories)").map((column) => column.name);
         if (!memoryColumns.includes("reach")) this.#db.exec("ALTER TABLE memories ADD COLUMN reach TEXT NOT NULL DEFAULT 'group'");
@@ -526,9 +532,11 @@ export class MemoryStore {
         const names = new Set(configuredName ? [configuredName] : []);
         for (const account of people.accountsOf(user)) {
             // Things others said about this person are stored under their display name, so those go too.
-            for (const { displayName } of this.#all<{ displayName: string }>("SELECT DISTINCT displayName FROM rawLog WHERE userKey = ?", account)) {
-                names.add(displayName);
-            }
+            const used = this.#all<{ name: string }>(
+                "SELECT displayName AS name FROM rawLog WHERE userKey = ?1 UNION SELECT accountName FROM rawLog WHERE userKey = ?1 AND accountName IS NOT NULL",
+                account,
+            );
+            for (const { name } of used) names.add(name);
             const derived = this.#all<{ id: number }>(
                 `SELECT id FROM memories WHERE subject = ?1 OR attributedTo = ?1
                  UNION SELECT memoryId AS id FROM memorySources WHERE speaker = ?1`,
@@ -555,9 +563,19 @@ export class MemoryStore {
         }
     }
 
+    /** The last name they spoke under, in whichever group that was. */
     displayNameOf(user: string): string | undefined {
         return this.#all<{ displayName: string }>("SELECT displayName FROM rawLog WHERE userKey = ? ORDER BY sentAt DESC LIMIT 1", user)[0]
             ?.displayName;
+    }
+
+    /** For the operator: the name on the account, which no group changes. Messages logged before that was kept only have the group's name. */
+    stableNameOf(user: string): string | undefined {
+        const named = this.#all<{ accountName: string }>(
+            "SELECT accountName FROM rawLog WHERE userKey = ? AND accountName IS NOT NULL ORDER BY sentAt DESC LIMIT 1",
+            user,
+        );
+        return named[0]?.accountName ?? this.displayNameOf(user);
     }
 
     writesSince(speaker: string, since: number): number {
@@ -588,9 +606,22 @@ export class MemoryStore {
 
     /** Everyone with a logged message, under the name they used most recently. Group events and her own lines aren't anyone. */
     loggedSpeakers(): LoggedSpeaker[] {
-        return this.#all<LoggedSpeaker>(
-            "SELECT userKey, displayName, COUNT(*) AS messages, MAX(sentAt) AS lastSeen FROM rawLog WHERE isSelf = 0 AND userKey NOT LIKE '%:event' GROUP BY userKey",
+        // With a single MAX, SQLite takes the other columns from the row that holds it.
+        const accountNames = new Map(
+            this.#all<{ userKey: string; accountName: string }>(
+                "SELECT userKey, accountName, MAX(sentAt) FROM rawLog WHERE isSelf = 0 AND accountName IS NOT NULL GROUP BY userKey",
+            ).map((row) => [row.userKey, row.accountName]),
         );
+        return this.#all<Omit<LoggedSpeaker, "accountName">>(
+            "SELECT userKey, displayName, COUNT(*) AS messages, MAX(sentAt) AS lastSeen FROM rawLog WHERE isSelf = 0 AND userKey NOT LIKE '%:event' GROUP BY userKey",
+        ).map((speaker) => ({ ...speaker, accountName: accountNames.get(speaker.userKey) }));
+    }
+
+    /** What each account is called in each group right now. One person can go by a different name in every group. */
+    groupNames(): GroupName[] {
+        return this.#all<GroupName & { lastSeen: number }>(
+            "SELECT userKey, channel, displayName, MAX(sentAt) AS lastSeen FROM rawLog WHERE isSelf = 0 AND userKey NOT LIKE '%:event' GROUP BY userKey, channel ORDER BY lastSeen DESC",
+        ).map(({ userKey, channel, displayName }) => ({ userKey, channel, displayName }));
     }
 
     deleteRelationships(accounts: readonly string[]): void {
@@ -794,7 +825,12 @@ function toChatMessage(row: LoggedRow): ChatMessage {
         platform: row.channel.slice(0, separator) as Platform,
         channelId: row.channel.slice(separator + 1),
         messageId: row.messageId,
-        sender: { id: row.userKey.slice(row.userKey.indexOf(":") + 1), displayName: row.displayName, isBot: false },
+        sender: {
+            id: row.userKey.slice(row.userKey.indexOf(":") + 1),
+            displayName: row.displayName,
+            ...(row.accountName ? { accountName: row.accountName } : {}),
+            isBot: false,
+        },
         text: row.text,
         ...(row.reactions ? { reactions: JSON.parse(row.reactions) as MessageReaction[] } : {}),
         sentAt: row.sentAt,
