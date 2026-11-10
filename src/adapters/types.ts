@@ -27,8 +27,6 @@ export type GroupEventKind =
     | "muted_all"
     | "unmuted_all"
     | "kicked"
-    | "banned"
-    | "unbanned"
     | "left"
     | "joined"
     | "admin_added"

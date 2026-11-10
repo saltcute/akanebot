@@ -164,8 +164,6 @@ export function renderGroupEvent(event: GroupEvent, pinned?: ChatMessage): strin
             return done("muted", event.durationMs && event.durationMs > 0 ? ` for ${renderDuration(event.durationMs)}` : "");
         case "unmuted":
         case "kicked":
-        case "banned":
-        case "unbanned":
         case "poked":
             return done(event.kind);
         case "muted_all":

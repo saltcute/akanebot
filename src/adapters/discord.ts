@@ -1,11 +1,8 @@
 import {
-    AuditLogEvent,
     Client,
     cleanContent,
     Events,
     GatewayIntentBits,
-    type Guild,
-    type GuildAuditLogsEntry,
     type Message,
     type MessageReaction,
     MessageReferenceType,
@@ -22,13 +19,11 @@ import type {
     ChatMessage,
     ForwardedLine,
     GroupEvent,
-    GroupEventKind,
     LateImages,
     OutgoingImage,
     OutgoingMention,
     QuotedMessage,
     ReactionEvent,
-    Sender,
     SendOptions,
 } from "./types.ts";
 
@@ -201,31 +196,6 @@ export function toSystemGroupEvent(message: Message, selfId: string): GroupEvent
     return undefined;
 }
 
-type AuditFacts = { kind: GroupEventKind; durationMs?: number; channelId?: string; messageId?: string };
-
-/** Timeouts arrive as a generic member update, told apart by which field changed. Returns undefined for everything else in the log. */
-export function readAuditEntry(entry: Pick<GuildAuditLogsEntry, "action" | "changes" | "extra" | "createdTimestamp">): AuditFacts | undefined {
-    switch (entry.action) {
-        case AuditLogEvent.MemberKick:
-            return { kind: "kicked" };
-        case AuditLogEvent.MemberBanAdd:
-            return { kind: "banned" };
-        case AuditLogEvent.MemberBanRemove:
-            return { kind: "unbanned" };
-        case AuditLogEvent.MessageUnpin: {
-            const { channel, messageId } = entry.extra as { channel: { id: string }; messageId: string };
-            return { kind: "unpinned", channelId: channel.id, messageId };
-        }
-        case AuditLogEvent.MemberUpdate: {
-            const timeout = entry.changes.find((change) => change.key === "communication_disabled_until");
-            if (!timeout) return undefined;
-            return timeout.new ? { kind: "muted", durationMs: Date.parse(String(timeout.new)) - entry.createdTimestamp } : { kind: "unmuted" };
-        }
-        default:
-            return undefined;
-    }
-}
-
 function withMention(text: string, mention: OutgoingMention | undefined): string {
     return mention ? `${text.slice(0, mention.start)}<@${mention.userId}>${text.slice(mention.end)}` : text;
 }
@@ -237,8 +207,6 @@ export function createDiscordClient(): Client {
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.MessageContent,
             GatewayIntentBits.GuildMessageReactions,
-            // Delivers audit log entries. Unlike GuildMembers it isn't privileged, but the bot needs View Audit Log in the server.
-            GatewayIntentBits.GuildModeration,
         ],
         // Without these, reactions on messages sent before the bot started are never delivered.
         partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
@@ -284,9 +252,6 @@ export class DiscordAdapter implements Adapter {
         };
         client.on(Events.MessageReactionAdd, (reaction, user) => void handleReaction(reaction, user as User, false));
         client.on(Events.MessageReactionRemove, (reaction, user) => void handleReaction(reaction, user as User, true));
-        client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => {
-            void this.#onAuditEntry(entry, guild, onGroupEvent).catch((error) => this.#onStatus("group_event_failed", String(error)));
-        });
         client.on(Events.MessageCreate, (message) => {
             try {
                 const selfId = client.user?.id;
@@ -354,36 +319,6 @@ export class DiscordAdapter implements Adapter {
         const channel = this.#client.channels.cache.get(channelId);
         if (!channel || !("name" in channel) || !channel.name) return undefined;
         return "guild" in channel ? `${channel.guild.name} #${channel.name}` : `#${channel.name}`;
-    }
-
-    /** Most of these are server-wide, so every channel gets one and the runtime keeps those on the allowlist. */
-    async #onAuditEntry(entry: GuildAuditLogsEntry, guild: Guild, onGroupEvent?: (event: GroupEvent) => void): Promise<void> {
-        const facts = readAuditEntry(entry);
-        if (!facts) return;
-        const targetId = facts.kind === "unpinned" ? null : entry.targetId;
-        const [actor, target] = await Promise.all([this.#person(guild, entry.executorId), this.#person(guild, targetId)]);
-        const channelIds = facts.channelId ? [facts.channelId] : guild.channels.cache.filter((channel) => channel.isTextBased()).map(({ id }) => id);
-        for (const channelId of channelIds) {
-            onGroupEvent?.({
-                platform: "discord",
-                channelId,
-                kind: facts.kind,
-                actor,
-                target,
-                targetIsSelf: targetId !== null && targetId === this.#client.user?.id,
-                durationMs: facts.durationMs,
-                messageId: facts.messageId,
-                at: entry.createdTimestamp,
-            });
-        }
-    }
-
-    /** Someone who was just kicked or banned is no longer a member, but is still a user. */
-    async #person(guild: Guild, id: string | null): Promise<Sender | undefined> {
-        if (!id) return undefined;
-        const member = await guild.members.fetch(id).catch(() => undefined);
-        const user = member?.user ?? (await this.#client.users.fetch(id).catch(() => undefined));
-        return { id, displayName: member?.displayName ?? user?.displayName ?? id, isBot: Boolean(user?.bot) };
     }
 
     async #sendable(channel: ChannelRef) {
