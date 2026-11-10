@@ -10,7 +10,7 @@ import {
     toQuotedMessage,
     toReactionEvents,
 } from "../src/adapters/onebot.ts";
-import type { ChatMessage, GroupEvent, ReactionEvent, SendOptions } from "../src/adapters/types.ts";
+import type { ChatMessage, GroupEvent, MessageRemoval, ReactionEvent, SendOptions } from "../src/adapters/types.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 
 const NOW = 1_800_000_000_000;
@@ -81,6 +81,7 @@ async function connected() {
     const messages: ChatMessage[] = [];
     const reactions: ReactionEvent[] = [];
     const groupEvents: GroupEvent[] = [];
+    const removals: MessageRemoval[] = [];
     const adapter = new OneBotAdapter({
         url: "ws://napcat",
         clock,
@@ -97,6 +98,8 @@ async function connected() {
         (message) => messages.push(message),
         (reaction) => reactions.push(reaction),
         (groupEvent) => groupEvents.push(groupEvent),
+        undefined,
+        (removal) => removals.push(removal),
     );
     const socket = sockets[0] as FakeSocket;
     socket.emit("open");
@@ -105,7 +108,7 @@ async function connected() {
     await Promise.resolve();
     socket.reply([{ group_id: 181, group_name: "测试群" }]);
     await started;
-    return { adapter, clock, sockets, socket, urls, statuses, messages, reactions, groupEvents };
+    return { adapter, clock, sockets, socket, urls, statuses, messages, reactions, groupEvents, removals };
 }
 
 describe("OneBot message mapping", () => {
@@ -160,6 +163,9 @@ describe("OneBot message mapping", () => {
         expect(picture).toMatchObject({ text: "[image]", images: [{ url: "https://qq/pic" }] });
         expect(map([{ type: "image", data: { url: "https://qq/huge", file_size: "99000000" } }])?.images).toBeUndefined();
         expect(map([{ type: "record", data: {} }])?.text).toBe("[voice message]");
+        expect(map([{ type: "dice", data: { result: "4" } }])?.text).toBe("[rolled a dice: 4]");
+        expect(map([{ type: "dice", data: {} }])?.text).toBe("[rolled a dice]");
+        expect(map([{ type: "rps", data: { result: "1" } }])?.text).toBe("[played rock paper scissors]");
         expect(map([{ type: "mface", data: { summary: "[doge]" } }])?.text).toBe("[sticker: doge]");
         expect(map([{ type: "face", data: { raw: { faceText: "/笑哭" } } }])?.text).toBe("/笑哭");
     });
@@ -710,6 +716,26 @@ describe("OneBot group notices", () => {
         const essence = { notice_type: "essence", sub_type: "add", sender_id: "7", operator_id: "8", message_id: "55" };
         expect(toGroupEvent(notice(essence), NOW, names)).toMatchObject({ kind: "pinned", actor: { id: "8" }, messageId: "55", targetIsSelf: false });
         expect(toGroupEvent(notice({ ...essence, sub_type: "delete" }), NOW, names)?.kind).toBe("unpinned");
+    });
+
+    describe("recalls", () => {
+        const recall = { notice_type: "group_recall", user_id: "7", operator_id: "7", message_id: "55" };
+
+        it("tells someone taking back their own message from an admin removing it", () => {
+            expect(toGroupEvent(notice(recall), NOW, names)).toMatchObject({ kind: "recalled", actor: undefined, target: { id: "7" } });
+            expect(toGroupEvent(notice({ ...recall, operator_id: "8" }), NOW, names)).toMatchObject({ actor: { id: "8" }, target: { id: "7" } });
+            expect(toGroupEvent(notice({ ...recall, user_id: "999", operator_id: "8" }), NOW, names)?.targetIsSelf).toBe(true);
+        });
+
+        it("reports the message as gone before looking anyone up, however old the notice is", async () => {
+            const { socket, removals, groupEvents } = await connected();
+            socket.emit("message", { post_type: "notice", self_id: 999, group_id: 181, time: (NOW - 600_000) / 1000, ...recall });
+            expect(removals).toEqual([{ platform: "qq", channelId: "181", messageIds: ["55"] }]);
+            socket.emit("message", { status: "ok", retcode: 0, data: { nickname: "n" }, echo: socket.sent.at(-1)?.echo });
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(groupEvents).toHaveLength(0);
+        });
     });
 
     it("ignores stale notices and ones it has no use for", () => {

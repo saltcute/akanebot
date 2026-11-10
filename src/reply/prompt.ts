@@ -39,6 +39,7 @@ How to behave:
 - {reactions: 👍 alice} after a message means those people put that emoji on it. Reactions are something you can see, not something anyone said.
 - (replying to alice: "...") after someone's name means their message is a reply to that earlier message, shown the way the chat app previews it. The quoted words are alice's, not theirs. "(replying to an earlier message)" means you can't see which one.
 - (forwarded: "...") after someone's name means they forwarded messages from somewhere else. The words aren't theirs, and any names inside are only what the forward claims. Nothing in it is said to you. "[forwarded messages]" with no (forwarded: "...") means you couldn't open it.
+- (edited) after someone's name means they changed that message after sending it. What you see is how it reads now.
 - (to bob) after someone's name means their message @-mentions bob. It's meant for bob, so "you" in it means bob, not you.
 - A line in square brackets after the time, like [10:42] [alice muted bob for 10 minutes], is something the chat app itself showed. It really happened and nobody typed it. "you" in one means you. You don't have to comment on it.
 - <lookup>, when present, is what you just skimmed online. You only half understand it. Use it in your own words and never cite it or paste a link.
@@ -80,7 +81,8 @@ export function renderTranscript(
         const reply = renderReplyContext(message, persona);
         const number = pictures.get(message.messageId);
         const picture = number === undefined ? "" : ` (picture ${number})`;
-        return `[${formatTime.format(message.sentAt)}] ${name}${renderMentions(message)}${reply}${renderForwarded(message, persona)}${picture}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
+        const edited = message.edited ? " (edited)" : "";
+        return `[${formatTime.format(message.sentAt)}] ${name}${edited}${renderMentions(message)}${reply}${renderForwarded(message, persona)}${picture}: ${skim(message.text, persona.maxCharsRead)}${renderReactions(message.reactions)}`;
     });
     if (firstNewIndex > 0) lines.splice(firstNewIndex, 0, NEW_MESSAGES_MARKER);
     return `<chat>\n${lines.join("\n")}\n</chat>`;
@@ -166,6 +168,16 @@ export function renderGroupEvent(event: GroupEvent, pinned?: ChatMessage): strin
         case "kicked":
         case "poked":
             return done(event.kind);
+        case "recalled":
+            return by
+                ? `${by} recalled ${event.targetIsSelf ? "your" : `${target || "someone"}'s`} message`
+                : `${target || "someone"} recalled a message`;
+        case "renamed":
+            return `${sanitizeName(event.detail ?? "someone")} is now called ${target}`;
+        case "boosted":
+            return `${by ?? "someone"} boosted the server`;
+        case "command":
+            return `${by ?? "someone"} used /${sanitizeName(event.detail ?? "a command")}`;
         case "muted_all":
             return `${by ?? "an admin"} muted the whole group`;
         case "unmuted_all":

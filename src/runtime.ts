@@ -6,6 +6,8 @@ import type {
     ForwardedLine,
     GroupEvent,
     LateImages,
+    MessageRemoval,
+    MessageRevision,
     Platform,
     QuotedMessage,
     ReactionEvent,
@@ -224,7 +226,8 @@ export type BodySnapshot = {
 const KILL_REASON = "kill";
 const ROUTINE_REASON = "routine";
 
-type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
+/** `names` is what each person here was last called, by user key. */
+type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception; names: Map<string, string> };
 type FetchedImage = { animated: boolean; inline?: InlineImage };
 type LookedAt = { message: ChatMessage; image: ChatImage; look: ImageLook };
 
@@ -354,6 +357,8 @@ export class Runtime {
                     (event) => this.#onReaction(event),
                     (event) => this.#onGroupEvent(event),
                     (event) => this.#onLateImages(event),
+                    (event) => this.#onRemoved(event),
+                    (event) => this.#onRevised(event),
                 ),
             ),
         );
@@ -395,7 +400,20 @@ export class Runtime {
             return;
         }
 
+        this.#noticeRename(channel, message);
         this.#admit(channel, this.#withoutOptedOut(message));
+    }
+
+    /** No chat app announces a new name. She notices the way anyone does, when someone she knows next speaks under one. */
+    #noticeRename(channel: Channel, message: ChatMessage): void {
+        const { sender, isSelf } = message;
+        // Bots that speak for other people change their name with every message.
+        if (isSelf || sender.isBot) return;
+        const user = userKey(message);
+        const known = channel.names.get(user);
+        channel.names.set(user, sender.displayName);
+        if (known === undefined || known === sender.displayName) return;
+        this.#onGroupEvent({ ...channel.ref, kind: "renamed", target: sender, targetIsSelf: false, detail: known, at: message.sentAt });
     }
 
     /** The chat app would show them the quote or the forward, but an opt-out means she doesn't get to read this person at all. */
@@ -419,6 +437,7 @@ export class Runtime {
                 channel.perception.purge((message) => userKey(message) === account || Boolean(message.groupEvent?.involves.includes(account)));
                 channel.perception.purgeReactionsBy(account);
                 channel.perception.purgeQuotesBy(account);
+                channel.names.delete(account);
             }
         }
         return removed;
@@ -659,11 +678,16 @@ export class Runtime {
     /** Removes it from the log and from what she can see. False if it wasn't logged. */
     deleteMessage(channel: string, messageId: string): boolean {
         if (!this.memory.store.deleteLogged(channel, messageId)) return false;
-        const perception = this.#channels.get(channel)?.perception;
-        perception?.purge((message) => message.messageId === messageId);
-        perception?.purgeQuotesOf(messageId);
+        this.#unsee(channel, messageId);
         this.#options.trace.record("control.web", { channel, messageId, detail: { action: "delete_message" } });
         return true;
+    }
+
+    /** Also drops what shows part of it: the preview above a reply, and the line saying it was pinned. */
+    #unsee(channel: string, messageId: string): void {
+        const perception = this.#channels.get(channel)?.perception;
+        perception?.purge((message) => message.messageId === messageId || message.groupEvent?.quotes === messageId);
+        perception?.purgeQuotesOf(messageId);
     }
 
     setBattery(level: number): void {
@@ -783,6 +807,33 @@ export class Runtime {
         this.#channels.get(channelKey(event))?.perception.addImages(event.messageId, event.images);
     }
 
+    /**
+     * Someone took a message back, so it leaves the log and what she can see, whoever wrote it and whether or not she's awake.
+     * A memory she already formed from it stays, as it would for anyone who read it first.
+     */
+    #onRemoved(event: MessageRemoval): void {
+        const key = channelKey(event);
+        if (!this.#allowedChannels.has(key)) return;
+        for (const messageId of event.messageIds) {
+            const logged = this.memory.store.deleteLogged(key, messageId);
+            this.#unsee(key, messageId);
+            this.#options.trace.record("message.removed", { channel: key, messageId, detail: { logged } });
+        }
+    }
+
+    /** Only rewrites a message she can already see, so it never wakes her and anyone opted out stays out. */
+    #onRevised({ message, edited }: MessageRevision): void {
+        const key = channelKey(message);
+        const perception = this.#channels.get(key)?.perception;
+        const current = perception?.window().find((candidate) => candidate.messageId === message.messageId);
+        if (!perception || !current || current.isSelf || current.groupEvent || current.text === message.text) return;
+        // What she saw in a picture is written into the text, and the new version would lose it.
+        if (current.images?.length || message.text.includes(IMAGE_PLACEHOLDER)) return;
+        perception.revise(message.messageId, message.text, message.mentions, edited);
+        this.memory.store.updateText(key, message.messageId, message.text);
+        this.#options.trace.record("message.revised", { channel: key, messageId: message.messageId, detail: { edited } });
+    }
+
     /** Also only context, kept to the live window: it never wakes the agent or becomes a memory. */
     #onGroupEvent(event: GroupEvent): void {
         const key = channelKey(event);
@@ -803,7 +854,7 @@ export class Runtime {
             repliesToSelf: false,
             isSelf: false,
             isBacklog: false,
-            groupEvent: { involves: [...people, ...(pinned ? [userKey(pinned)] : [])] },
+            groupEvent: { involves: [...people, ...(pinned ? [userKey(pinned)] : [])], ...(pinned ? { quotes: pinned.messageId } : {}) },
         });
         this.#options.trace.record("group_event.seen", { channel: key, messageId, detail: { kind: event.kind } });
     }
@@ -820,8 +871,11 @@ export class Runtime {
             timing: this.#options.timing,
             onReady: (candidate) => this.body.offer(candidate),
         });
-        const channel: Channel = { ref: { platform: ref.platform, channelId: ref.channelId }, adapter, perception };
-        for (const message of this.memory.restoreWindow(key, this.#options.timing.windowSize)) perception.recordSeen(message);
+        const channel: Channel = { ref: { platform: ref.platform, channelId: ref.channelId }, adapter, perception, names: new Map() };
+        for (const message of this.memory.restoreWindow(key, this.#options.timing.windowSize)) {
+            perception.recordSeen(message);
+            if (!message.isSelf && !message.sender.isBot) channel.names.set(userKey(message), message.sender.displayName);
+        }
         this.#channels.set(key, channel);
         return channel;
     }

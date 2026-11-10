@@ -38,6 +38,8 @@ const SHOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
     "memory.extracted": ["written", "messages", "importance", "candidates"],
     "memory.forget_user": ["user", "removed"],
     "message.observed": ["observation"],
+    "message.removed": ["logged"],
+    "message.revised": ["edited"],
     "reaction.seen": ["noted", "removed"],
     "reply.abandoned": ["overtakenBy", "repeat"],
     "reply.pictures": ["shown", "result"],

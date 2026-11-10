@@ -6,6 +6,8 @@ import type {
     ForwardedLine,
     GroupEvent,
     LateImages,
+    MessageRemoval,
+    MessageRevision,
     OutgoingImage,
     QuotedMessage,
     ReactionEvent,
@@ -32,6 +34,10 @@ export class CliAdapter implements Adapter {
     #onReaction: ((event: ReactionEvent) => void) | undefined;
     #onGroupEvent: ((event: GroupEvent) => void) | undefined;
     #onLateImages: ((event: LateImages) => void) | undefined;
+    #onRemoved: ((event: MessageRemoval) => void) | undefined;
+    #onRevised: ((event: MessageRevision) => void) | undefined;
+    #said = new Map<string, ChatMessage>();
+    #displayNames = new Map<string, string>();
     #nextId = 1;
 
     constructor(options: { clock: Clock; selfName: string; aliases?: readonly string[]; print?: (line: string) => void; idPrefix?: string }) {
@@ -47,11 +53,15 @@ export class CliAdapter implements Adapter {
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
         onLateImages?: (event: LateImages) => void,
+        onRemoved?: (event: MessageRemoval) => void,
+        onRevised?: (event: MessageRevision) => void,
     ): Promise<void> {
         this.#onMessage = onMessage;
         this.#onReaction = onReaction;
         this.#onGroupEvent = onGroupEvent;
         this.#onLateImages = onLateImages;
+        this.#onRemoved = onRemoved;
+        this.#onRevised = onRevised;
     }
 
     async stop(): Promise<void> {
@@ -70,11 +80,11 @@ export class CliAdapter implements Adapter {
         const mentioned = [...text.matchAll(MENTION_TOKEN)].flatMap((match) => (match[1] ? [match[1]] : []));
         const mentionsSelf = mentioned.some((name) => this.#ownNames.has(name.toLowerCase()));
         const mentions = mentioned.filter((name) => !this.#ownNames.has(name.toLowerCase()));
-        this.#onMessage?.({
+        const message: ChatMessage = {
             platform: this.platform,
             channelId,
             messageId,
-            sender: { id: speaker, displayName: speaker, isBot: false },
+            sender: { id: speaker, displayName: this.#displayNames.get(speaker) ?? speaker, isBot: false },
             text,
             ...(images.length > 0 ? { images } : {}),
             sentAt: this.#clock.now(),
@@ -85,8 +95,26 @@ export class CliAdapter implements Adapter {
             ...(forwarded ? { forwarded } : {}),
             isSelf: false,
             isBacklog: false,
-        });
+        };
+        this.#said.set(messageId, message);
+        this.#onMessage?.(message);
         return messageId;
+    }
+
+    /** Someone changes the name they go by. Nothing shows until they next speak. */
+    rename(speaker: string, displayName: string): void {
+        this.#displayNames.set(speaker, displayName);
+    }
+
+    /** Someone deletes messages, theirs or as a moderator. */
+    remove(messageIds: readonly string[], channelId = "group"): void {
+        this.#onRemoved?.({ platform: this.platform, channelId, messageIds });
+    }
+
+    /** A message's text changes after it was sent. `edited` is false for something the platform filled in, such as a link's preview. */
+    revise(messageId: string, text: string, edited = true): void {
+        const message = this.#said.get(messageId);
+        if (message) this.#onRevised?.({ message: { ...message, text }, edited });
     }
 
     /** The platform works out a message's picture after delivering it. */

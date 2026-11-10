@@ -98,6 +98,15 @@ export class ChannelPerception {
         }
     }
 
+    /** For an edit, or something the platform filled in after delivery. Who it's addressed to stays as it was when it arrived. */
+    revise(messageId: string, text: string, mentions: ChatMessage["mentions"], edited: boolean): void {
+        for (const entry of this.#window) {
+            if (entry.message.messageId !== messageId) continue;
+            const { mentions: _mentions, ...message } = entry.message;
+            entry.message = { ...message, text, ...(mentions?.length ? { mentions } : {}), ...(edited ? { edited } : {}) };
+        }
+    }
+
     /** For pictures that can't be looked at again, such as ones whose link has expired. Their descriptions stay. */
     forgetSeenImages(messageIds: readonly string[]): void {
         for (const entry of this.#window) {

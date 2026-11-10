@@ -1,7 +1,10 @@
+import { EventEmitter } from "node:events";
 import {
     type Client,
     Collection,
+    Events,
     GatewayIntentBits,
+    InteractionType,
     type Message,
     type MessageReaction,
     MessageReferenceType,
@@ -10,7 +13,16 @@ import {
     type User,
 } from "discord.js";
 import { describe, expect, it } from "vitest";
-import { createDiscordClient, DiscordAdapter, toChatMessage, toLateImages, toReactionEvent, toSystemGroupEvent } from "../src/adapters/discord.ts";
+import {
+    createDiscordClient,
+    DiscordAdapter,
+    toChatMessage,
+    toCommandEvent,
+    toLateImages,
+    toReactionEvent,
+    toRevision,
+    toSystemGroupEvent,
+} from "../src/adapters/discord.ts";
 
 const SELF = "999";
 
@@ -366,6 +378,104 @@ describe("toSystemGroupEvent", () => {
 
     it("ignores ordinary messages and other system messages", () => {
         expect(toSystemGroupEvent(discordMessage(), SELF)).toBeUndefined();
-        expect(toSystemGroupEvent(discordMessage({ system: true, type: MessageType.GuildBoost }), SELF)).toBeUndefined();
+        expect(toSystemGroupEvent(discordMessage({ system: true, type: MessageType.ThreadCreated }), SELF)).toBeUndefined();
+    });
+
+    it("maps a boost, whatever level it took the server to", () => {
+        for (const type of [MessageType.GuildBoost, MessageType.GuildBoostTier2]) {
+            expect(toSystemGroupEvent(discordMessage({ system: true, type }), SELF)).toMatchObject({ kind: "boosted", actor: { id: "u1" } });
+        }
+    });
+});
+
+describe("toCommandEvent", () => {
+    const user = { id: "u2", bot: false, displayName: "alice" };
+
+    it("says who used which command above a bot's answer", () => {
+        const answer = discordMessage({ interaction: { type: InteractionType.ApplicationCommand, commandName: "roll", user } });
+        expect(toCommandEvent(answer)).toMatchObject({ kind: "command", actor: { id: "u2", displayName: "alice" }, detail: "roll", at: 1234 });
+    });
+
+    it("ignores ordinary messages and button presses", () => {
+        expect(toCommandEvent(discordMessage())).toBeUndefined();
+        expect(toCommandEvent(discordMessage({ interaction: { type: InteractionType.MessageComponent, commandName: "", user } }))).toBeUndefined();
+    });
+});
+
+describe("cards", () => {
+    const card = { title: "标题", description: "第一行\n第二行", fields: [], author: null };
+
+    it("reads the card under a link", () => {
+        expect(toChatMessage(discordMessage({ cleanContent: "https://example.com", embeds: [card] }), SELF)?.text).toBe(
+            "https://example.com [card: 标题 · 第一行 第二行]",
+        );
+    });
+
+    it("reads a bot's message that is only a card, fields included", () => {
+        const embeds = [{ title: null, description: null, author: { name: "骰子" }, fields: [{ name: "结果", value: "4" }] }];
+        expect(toChatMessage(discordMessage({ cleanContent: "", embeds }), SELF)?.text).toBe("[card: 骰子 · 结果: 4]");
+    });
+
+    it("skips a card with nothing to read, and still drops a message that is empty without one", () => {
+        const embeds = [{ title: null, description: null, fields: [], author: null }];
+        expect(toChatMessage(discordMessage({ cleanContent: "", embeds }), SELF)).toBeUndefined();
+    });
+
+    it("keeps a long card short and stops it closing its own bracket", () => {
+        const text = toChatMessage(discordMessage({ cleanContent: "", embeds: [{ ...card, description: `a] [b ${"x".repeat(1000)}` }] }), SELF)?.text;
+        expect(text?.startsWith("[card: 标题 · a b x")).toBe(true);
+        expect(text?.length).toBeLessThan(320);
+        expect(text?.match(/[[\]]/g)).toHaveLength(2);
+    });
+});
+
+describe("toRevision", () => {
+    it("reads an edit as the message is now", () => {
+        const updated = discordMessage({ cleanContent: "后天见", partial: false, editedTimestamp: 2000 });
+        expect(toRevision({ editedTimestamp: null }, updated, SELF)).toMatchObject({ edited: true, message: { messageId: "m1", text: "后天见" } });
+    });
+
+    it("doesn't call a card arriving late an edit, on a message never edited or one edited before", () => {
+        const embeds = [{ title: "标题", description: null, fields: [], author: null }];
+        const late = (editedTimestamp: number | null) =>
+            toRevision({ editedTimestamp }, discordMessage({ cleanContent: "https://example.com", embeds, partial: false, editedTimestamp }), SELF);
+        expect(late(null)).toMatchObject({ edited: false, message: { text: "https://example.com [card: 标题]" } });
+        expect(late(2000)?.edited).toBe(false);
+    });
+
+    it("ignores its own messages and ones it can't read", () => {
+        expect(toRevision({ editedTimestamp: null }, discordMessage({ partial: true }), SELF)).toBeUndefined();
+        const own = discordMessage({ partial: false, editedTimestamp: 2000, author: { id: SELF, bot: true, displayName: "bot" } });
+        expect(toRevision({ editedTimestamp: null }, own, SELF)).toBeUndefined();
+    });
+});
+
+describe("deleted messages", () => {
+    it("reports single and bulk deletions by ID, cached or not", async () => {
+        const client = new EventEmitter() as EventEmitter & { login?: unknown; user?: unknown };
+        client.user = { id: SELF };
+        client.login = async () => client.emit(Events.ClientReady);
+        const removals: unknown[] = [];
+        const adapter = new DiscordAdapter({ token: "t", client: client as unknown as Client });
+        await adapter.start(
+            () => {},
+            undefined,
+            undefined,
+            undefined,
+            (removal) => removals.push(removal),
+        );
+        client.emit(Events.MessageDelete, { id: "m1", channelId: "c1", partial: true });
+        client.emit(
+            Events.MessageBulkDelete,
+            new Collection([
+                ["m2", {}],
+                ["m3", {}],
+            ]),
+            { id: "c1" },
+        );
+        expect(removals).toEqual([
+            { platform: "discord", channelId: "c1", messageIds: ["m1"] },
+            { platform: "discord", channelId: "c1", messageIds: ["m2", "m3"] },
+        ]);
     });
 });

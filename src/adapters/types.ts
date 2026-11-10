@@ -33,7 +33,11 @@ export type GroupEventKind =
     | "admin_removed"
     | "pinned"
     | "unpinned"
-    | "poked";
+    | "poked"
+    | "recalled"
+    | "renamed"
+    | "boosted"
+    | "command";
 
 /** Something the platform itself reports happening in a group, as opposed to anything someone said. */
 export type GroupEvent = ChannelRef & {
@@ -45,6 +49,8 @@ export type GroupEvent = ChannelRef & {
     durationMs?: number | undefined;
     /** The message that was pinned or unpinned. */
     messageId?: string | undefined;
+    /** The name someone had before a rename, or the command someone used. Typed by a person, so it's data. */
+    detail?: string | undefined;
     at: number;
 };
 
@@ -67,6 +73,12 @@ export type ChatImage = { url: string; link?: string };
 
 /** A picture the platform only worked out after delivering the message. */
 export type LateImages = ChannelRef & { messageId: string; images: readonly ChatImage[] };
+
+/** Messages their author took back or a moderator removed. Nothing derived from them may outlive this. */
+export type MessageRemoval = ChannelRef & { messageIds: readonly string[] };
+
+/** A message as it reads now. `edited` is false when the platform only filled something in, such as a link's preview. */
+export type MessageRevision = { message: ChatMessage; edited: boolean };
 
 export type ChatMessage = ChannelRef & {
     messageId: string;
@@ -92,8 +104,10 @@ export type ChatMessage = ChannelRef & {
     isSelf: boolean;
     /** Delivered as history (for example after a reconnect) rather than live. */
     isBacklog: boolean;
-    /** This line is a platform event rather than something someone said. `involves` is who it's about, as user keys. */
-    groupEvent?: { involves: readonly string[] };
+    /** Its author changed it after sending. Never set by an adapter. */
+    edited?: boolean;
+    /** This line is a platform event rather than something someone said. `involves` is who it's about, as user keys, and `quotes` is the message it shows part of. */
+    groupEvent?: { involves: readonly string[]; quotes?: string };
 };
 
 /** A stretch of outgoing text, `@name` included, that should notify someone. Only `resolveMentions` makes these. */
@@ -115,6 +129,8 @@ export interface Adapter {
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
         onLateImages?: (event: LateImages) => void,
+        onRemoved?: (event: MessageRemoval) => void,
+        onRevised?: (event: MessageRevision) => void,
     ): Promise<void>;
     stop(): Promise<void>;
     send(channel: ChannelRef, text: string, options?: SendOptions): Promise<{ messageId: string }>;

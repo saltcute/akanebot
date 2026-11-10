@@ -8,6 +8,8 @@ import type {
     ForwardedLine,
     GroupEvent,
     GroupEventKind,
+    LateImages,
+    MessageRemoval,
     OutgoingImage,
     OutgoingMention,
     QuotedMessage,
@@ -50,6 +52,7 @@ const NOTICE_KINDS: Readonly<Record<string, GroupEventKind>> = {
     "essence/add": "pinned",
     "essence/delete": "unpinned",
     "notify/poke": "poked",
+    "group_recall/": "recalled",
 };
 
 const idSchema = z.union([z.number(), z.string()]).transform(String);
@@ -136,6 +139,13 @@ function describeSegment({ type, data }: Segment, selfId: string, { selfName, na
         }
         case "mface":
             return `[sticker: ${asText(data.summary).replace(/[[\]]/g, "") || "表情包"}]`;
+        case "dice": {
+            const rolled = Number(data.result);
+            return Number.isInteger(rolled) && rolled >= 1 && rolled <= 6 ? `[rolled a dice: ${rolled}]` : "[rolled a dice]";
+        }
+        // The server numbers the three outcomes without saying which is which, so only the throw itself is shown.
+        case "rps":
+            return "[played rock paper scissors]";
         case "record":
             return "[voice message]";
         case "video":
@@ -305,7 +315,7 @@ export function toReactionEvents(event: ReactionNotice, names: ReadonlyMap<strin
 }
 
 function noticeKey(notice: { notice_type?: unknown; sub_type?: unknown }): string {
-    return `${String(notice.notice_type)}/${String(notice.sub_type)}`;
+    return `${String(notice.notice_type)}/${String(notice.sub_type ?? "")}`;
 }
 
 /** A poke in a private chat arrives the same way as one in a group, just with no group to parse. */
@@ -324,12 +334,14 @@ export function toGroupEvent(notice: GroupNotice, now: number, names: ReadonlyMa
     const kind = wholeGroup ? (individual === "muted" ? "muted_all" : "unmuted_all") : individual;
     // In a poke `user_id` is who did it, where every other notice has that person being acted on.
     const [actorId, targetId] = kind === "poked" ? [notice.user_id, notice.target_id] : [notice.operator_id, notice.user_id];
+    // QQ words it differently when an admin takes down someone else's message.
+    const ownRecall = kind === "recalled" && actorId === targetId;
     return {
         platform: "qq",
         channelId: notice.group_id,
         kind,
         // On a join or a departure this is whoever approved it, or the person themselves, which nobody in the chat sees.
-        actor: kind === "left" || kind === "joined" ? undefined : person(actorId),
+        actor: kind === "left" || kind === "joined" || ownRecall ? undefined : person(actorId),
         target: person(targetId),
         targetIsSelf: targetId === notice.self_id,
         durationMs: kind === "muted" ? notice.duration * 1000 : undefined,
@@ -350,6 +362,7 @@ export class OneBotAdapter implements Adapter {
     #onMessage: ((message: ChatMessage) => void) | undefined;
     #onReaction: ((event: ReactionEvent) => void) | undefined;
     #onGroupEvent: ((event: GroupEvent) => void) | undefined;
+    #onRemoved: ((event: MessageRemoval) => void) | undefined;
     #pending = new Map<string, Pending>();
     #nextEcho = 1;
     #retryMs = FIRST_RETRY_MS;
@@ -380,8 +393,11 @@ export class OneBotAdapter implements Adapter {
         onMessage: (message: ChatMessage) => void,
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
+        _onLateImages?: (event: LateImages) => void,
+        onRemoved?: (event: MessageRemoval) => void,
     ): Promise<void> {
         this.#stopped = false;
+        this.#onRemoved = onRemoved;
         this.#onMessage = onMessage;
         this.#onReaction = onReaction;
         this.#onGroupEvent = onGroupEvent;
@@ -503,6 +519,10 @@ export class OneBotAdapter implements Adapter {
     }
 
     async #onGroupNotice(notice: GroupNotice): Promise<void> {
+        // Before any lookup, and however old the notice is: a recalled message goes at once.
+        if (notice.notice_type === "group_recall" && notice.message_id !== undefined) {
+            this.#onRemoved?.({ platform: "qq", channelId: notice.group_id, messageIds: [notice.message_id] });
+        }
         await Promise.all([notice.user_id, notice.operator_id, notice.target_id].map((id) => this.#learnName(notice.group_id, id)));
         const event = toGroupEvent(notice, this.#clock.now(), this.#names);
         if (event) this.#onGroupEvent?.(event);

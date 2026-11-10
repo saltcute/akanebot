@@ -1,8 +1,10 @@
 import {
     Client,
     cleanContent,
+    type Embed,
     Events,
     GatewayIntentBits,
+    InteractionType,
     type Message,
     type MessageReaction,
     MessageReferenceType,
@@ -20,6 +22,8 @@ import type {
     ForwardedLine,
     GroupEvent,
     LateImages,
+    MessageRemoval,
+    MessageRevision,
     OutgoingImage,
     OutgoingMention,
     QuotedMessage,
@@ -29,6 +33,14 @@ import type {
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
+const MAX_EMBEDS_READ = 2;
+const MAX_EMBED_CHARS = 300;
+const BOOSTS: readonly MessageType[] = [
+    MessageType.GuildBoost,
+    MessageType.GuildBoostTier1,
+    MessageType.GuildBoostTier2,
+    MessageType.GuildBoostTier3,
+];
 /** What the GIF picker posts: only a link, which Discord plays by itself. */
 const GIF_LINK =
     /^https:\/\/(?:(?:www\.)?tenor\.com\/(?:[a-z]{2}(?:-[A-Za-z]{2})?\/)?view\/|media\d*\.tenor\.com\/|(?:www\.)?giphy\.com\/gifs\/|media\d*\.giphy\.com\/)\S+$/;
@@ -42,6 +54,23 @@ function mediaPlaceholders(message: Pick<Message, "attachments" | "stickers">): 
         ...message.attachments.map((attachment) => (attachment.contentType?.startsWith("image/") ? "[image]" : "[file]")),
         ...message.stickers.map((sticker) => (sticker.name ? `[sticker: ${sticker.name}]` : "[sticker]")),
     ];
+}
+
+/**
+ * The card under a link, or what a bot posts in place of text. A card that's only a picture or a video has nothing to read.
+ * Flattened and stripped of brackets, so nothing in a card can close the placeholder it sits in.
+ */
+function embedCards(message: { embeds?: readonly Pick<Embed, "title" | "description" | "fields" | "author">[] }): string[] {
+    return (message.embeds ?? []).slice(0, MAX_EMBEDS_READ).flatMap((embed) => {
+        const parts = [embed.author?.name, embed.title, embed.description, ...(embed.fields ?? []).map(({ name, value }) => `${name}: ${value}`)];
+        const text = parts
+            .filter(Boolean)
+            .join(" · ")
+            .replace(/[[\]\s]+/g, " ")
+            .trim()
+            .slice(0, MAX_EMBED_CHARS);
+        return text === "" ? [] : [`[card: ${text}]`];
+    });
 }
 
 function isForward(message: Message): boolean {
@@ -74,7 +103,7 @@ function readableText(message: Message): string {
         return snapshot && describableImages(snapshot).length > 0 ? "[forwarded messages] [image]" : "[forwarded messages]";
     }
     if (isGifLink(message)) return "[image]";
-    return [message.cleanContent, ...mediaPlaceholders(message)].filter(Boolean).join(" ");
+    return [message.cleanContent, ...mediaPlaceholders(message), ...embedCards(message)].filter(Boolean).join(" ");
 }
 
 /** Names resolve against this channel's server, since the source channel may be one the bot can't see. Anyone not found there has no name to show. */
@@ -84,7 +113,7 @@ function forwardedLines(message: Message): ForwardedLine[] {
     const content = cleanContent(snapshot.content, message.channel)
         .replace(/<@[!&]?\d+>/g, "@someone")
         .replace(/<#\d+>/g, "#some-channel");
-    const text = [content, ...mediaPlaceholders(snapshot)].filter(Boolean).join(" ");
+    const text = [content, ...mediaPlaceholders(snapshot), ...embedCards(snapshot)].filter(Boolean).join(" ");
     return text === "" ? [] : [{ text }];
 }
 
@@ -156,6 +185,21 @@ export function toLateImages(message: Message | PartialMessage, selfId: string):
     return gif ? { platform: "discord", channelId: message.channelId, messageId: message.id, images: [gif] } : undefined;
 }
 
+/**
+ * An edit, or Discord adding a link's card a moment after delivery. Pins and other updates come through here too and change nothing she reads.
+ * Returns undefined when there's nothing left to read.
+ */
+export function toRevision(
+    old: Pick<Message | PartialMessage, "editedTimestamp">,
+    updated: Message | PartialMessage,
+    selfId: string,
+): MessageRevision | undefined {
+    if (updated.partial) return undefined;
+    const message = toChatMessage(updated, selfId);
+    if (!message || message.isSelf) return undefined;
+    return { message, edited: updated.editedTimestamp !== null && updated.editedTimestamp !== old.editedTimestamp };
+}
+
 /** Works on partial objects: a reaction may be on a message the client has never cached. */
 export function toReactionEvent(
     reaction: Pick<MessageReaction, "emoji" | "message">,
@@ -180,7 +224,7 @@ export function toReactionEvent(
     };
 }
 
-/** Discord posts pins and joins in the channel as system messages. Returns undefined for any other system message. */
+/** Discord posts pins, joins and boosts in the channel as system messages. Returns undefined for any other system message. */
 export function toSystemGroupEvent(message: Message, selfId: string): GroupEvent | undefined {
     if (!message.inGuild() || !message.system) return undefined;
     const author = {
@@ -193,7 +237,28 @@ export function toSystemGroupEvent(message: Message, selfId: string): GroupEvent
         return { ...base, kind: "pinned", actor: author, targetIsSelf: false, messageId: message.reference?.messageId };
     }
     if (message.type === MessageType.UserJoin) return { ...base, kind: "joined", target: author, targetIsSelf: author.id === selfId };
+    if (BOOSTS.includes(message.type)) return { ...base, kind: "boosted", actor: author, targetIsSelf: false };
     return undefined;
+}
+
+/** The "alice used /roll" Discord shows above a bot's answer to a command. Returns undefined for every other message. */
+export function toCommandEvent(message: Message): GroupEvent | undefined {
+    // The newer field doesn't carry the command's name.
+    const used = message.interaction;
+    if (!message.inGuild() || !used || used.type !== InteractionType.ApplicationCommand) return undefined;
+    return {
+        platform: "discord",
+        channelId: message.channelId,
+        kind: "command",
+        actor: {
+            id: used.user.id,
+            displayName: message.guild?.members.cache.get(used.user.id)?.displayName ?? used.user.displayName,
+            isBot: Boolean(used.user.bot),
+        },
+        targetIsSelf: false,
+        detail: used.commandName,
+        at: message.createdTimestamp,
+    };
 }
 
 function withMention(text: string, mention: OutgoingMention | undefined): string {
@@ -234,6 +299,8 @@ export class DiscordAdapter implements Adapter {
         onReaction?: (event: ReactionEvent) => void,
         onGroupEvent?: (event: GroupEvent) => void,
         onLateImages?: (event: LateImages) => void,
+        onRemoved?: (event: MessageRemoval) => void,
+        onRevised?: (event: MessageRevision) => void,
     ): Promise<void> {
         const client = this.#client;
         const handleReaction = async (
@@ -255,7 +322,7 @@ export class DiscordAdapter implements Adapter {
         client.on(Events.MessageCreate, (message) => {
             try {
                 const selfId = client.user?.id;
-                const event = selfId ? toSystemGroupEvent(message, selfId) : undefined;
+                const event = selfId ? (toSystemGroupEvent(message, selfId) ?? toCommandEvent(message)) : undefined;
                 if (event) onGroupEvent?.(event);
                 const mapped = selfId ? toChatMessage(message, selfId) : undefined;
                 if (mapped) onMessage(mapped);
@@ -263,14 +330,21 @@ export class DiscordAdapter implements Adapter {
                 this.#onStatus("message_failed", String(error));
             }
         });
-        client.on(Events.MessageUpdate, (_old, updated) => {
+        client.on(Events.MessageUpdate, (old, updated) => {
             try {
                 const selfId = client.user?.id;
                 const event = selfId ? toLateImages(updated as Message | PartialMessage, selfId) : undefined;
                 if (event) onLateImages?.(event);
+                const revision = selfId ? toRevision(old, updated, selfId) : undefined;
+                if (revision) onRevised?.(revision);
             } catch (error) {
                 this.#onStatus("message_failed", String(error));
             }
+        });
+        // Deleting leaves no trace in the channel, so there's nothing to show, only something to stop seeing.
+        client.on(Events.MessageDelete, ({ id, channelId }) => onRemoved?.({ platform: "discord", channelId, messageIds: [id] }));
+        client.on(Events.MessageBulkDelete, (messages, channel) => {
+            onRemoved?.({ platform: "discord", channelId: channel.id, messageIds: [...messages.keys()] });
         });
         client.on(Events.Error, (error) => this.#onStatus("error", error.message));
         client.on(Events.ShardDisconnect, (event) => this.#onStatus("disconnected", String(event.code)));
