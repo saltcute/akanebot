@@ -9,9 +9,9 @@ schedule:
     # mentionUrgency: share of the wait for her next phone check that each direct mention takes off. 0 = mentions change nothing
     - { days: mon-fri, time: "10:00-16:30", checkPhoneEveryMin: [1, 5], mentionUrgency: 0.4 } # lectures; phones come out a lot
 
-talkativeness: 0.35 # 0 = lurker，1 = never shuts up
+talkativeness: 0.15 # 0 = lurker，1 = never shuts up
 stubbornness: 0.7 # how rarely it concedes on matters of taste
-ignoreDirectAsks: 0.1 # chance of leaving a direct question on read
+ignoreDirectAsks: 0.03 # chance of leaving a direct question on read
 forgetfulness: 0.4 # higher = recalls less
 socialBattery: 550 # messages per day before it gets short with people
 maxCharsRead: 280 # skims anything longer
