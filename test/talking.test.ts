@@ -233,6 +233,8 @@ describe("renderReplyInstructions", () => {
         const instructions = renderReplyInstructions({ ...PERSONA, prose: "We all live together and hang out every day." });
         expect(instructions).toContain("only online");
         expect(instructions).toContain("Never agree to meet");
+        expect(instructions).toContain("play a game with them");
+        expect(instructions).toContain("Never accept");
         expect(instructions.indexOf("only online")).toBeGreaterThan(instructions.indexOf("We all live together"));
     });
 });

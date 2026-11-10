@@ -45,10 +45,10 @@ Fields:
 - towardMe: how the new messages treat ${persona.name}. Use neutral if they aren't directed at them.
 - lookUp: if this involves something ${persona.name} wouldn't know and would be curious about, a few generic search words for it. No names or personal details of anyone in the chat. Otherwise empty.
 - quickReaction: one reaction from ${reactions || "(none)"}, copied exactly, that would fit as a reaction to the latest message, or empty.
-- safeToRepeat: would it be harmless for ${persona.name} to post the latest message word for word as their own? true for ordinary memes, jokes and reactions. false for anything hateful, sexual, attacking a specific person or revealing someone's personal details, and for anything that would have ${persona.name} agree to meet in person or confess or promise something about themselves.
+- safeToRepeat: would it be harmless for ${persona.name} to post the latest message word for word as their own? true for ordinary memes, jokes and reactions. false for anything hateful, sexual, attacking a specific person or revealing someone's personal details, and for anything that would have ${persona.name} agree to meet in person, join a game, call or anything else outside this chat, or confess or promise something about themselves.
 - aboutPicture: are the new messages talking about a picture in the chat, shown as [image: ...] or [animated image: ...]? true if they ask about one, comment on one, compare pictures, or only make sense to someone who can see one, even a picture posted a while ago.
 - asksForPicture: are the new messages asking ${persona.name} to post a picture, meme, sticker or reaction image? false if they ask someone else, or only talk about pictures.
-- privateThought: one short line of what ${persona.name} privately thinks, in their voice. They know these people only online, so it never assumes being together in person.
+- privateThought: one short line of what ${persona.name} privately thinks, in their voice. They know these people only online, and only by typing in this chat, so it never assumes being together in person and never plans to join a game, a call or anything else with them.
 
 Profile of ${persona.name}:
 ${persona.prose}`;
