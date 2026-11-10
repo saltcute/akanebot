@@ -31,7 +31,7 @@ import { NO_LINKS, type People } from "./control/people.ts";
 import { ControlState, type ControlStore, userKey } from "./control/state.ts";
 import { assessCompetence } from "./gate/competence.ts";
 import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from "./gate/features.ts";
-import { allAimedElsewhere, decideToRepeat, decideToSpeak, overruleMisaddress } from "./gate/policy.ts";
+import { allAimedElsewhere, decideToRepeat, decideToSpeak, findFollowUp, findNamer, overruleMisaddress } from "./gate/policy.ts";
 import { findRepeatChain } from "./gate/repeat.ts";
 import { type DownloadResult, downloadImage, type ImageFetcher, linkedImage } from "./images/download.ts";
 import { judgeImage } from "./images/keep.ts";
@@ -942,7 +942,9 @@ export class Runtime {
         const features: GateFeatures = overruleMisaddress(gate.data, newMessages, persona);
         const now = clock.now();
         const newest = newMessages.at(-1);
-        const asker = newMessages.findLast(isAddressed) ?? newest;
+        const namer = findNamer(newMessages, persona);
+        const followedUp = findFollowUp(window, firstNewIndex, persona);
+        const asker = newMessages.findLast(isAddressed) ?? namer ?? followedUp ?? newest;
         const askerKey = asker ? userKey(asker) : undefined;
         const store = this.memory.store;
         const mentioned = lease.candidate.priority >= ADDRESSED_PRIORITY;
@@ -958,8 +960,12 @@ export class Runtime {
             forceAnswer: this.vitals.wasRecentlyIgnored(ignoreKey),
             outOfDepth: competence.mode === "out_of_depth",
             aimedElsewhere: allAimedElsewhere(newMessages, persona),
+            named: namer !== undefined,
+            followUp: followedUp !== undefined,
         };
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, speakContext);
+        // Answering her counts as talking to her, but only a direct ask gets chased up when she ignores it.
+        const talkedTo = decision.addressed || decision.followUp;
         const overruled = features === gate.data ? {} : { addressOverruled: gate.data.addressedToMe };
         trace.record("gate.decision", { channel: key, ...idField, detail: { ...decision, ...competence, battery, features, ...overruled } });
         for (const speaker of new Set(newMessages.map(userKey))) {
@@ -968,7 +974,7 @@ export class Runtime {
                 key,
                 speaker,
                 speaker === askerKey ? features.towardMe : "neutral",
-                decision.addressed && speaker === askerKey,
+                talkedTo && speaker === askerKey,
                 now,
                 this.#people,
             );
@@ -993,7 +999,7 @@ export class Runtime {
             perception.recordOwn(own);
             this.memory.recordOwn(own);
         };
-        const chain = decision.addressed ? undefined : findRepeatChain(window);
+        const chain = talkedTo ? undefined : findRepeatChain(window);
         if (chain !== undefined) {
             const repeat = decideToRepeat(features, persona, this.#gateRng, speakContext);
             trace.record("gate.repeat", { channel: key, ...idField, detail: { ...repeat } });
@@ -1039,14 +1045,14 @@ export class Runtime {
             ...day.notes,
             timezoneNote(channel.ref.platform, now),
             ...(lowBattery ? ["You've been chatting all day and are running out of energy for it. Keep it very short."] : []),
-            ...lateReplyNote(asker && decision.addressed ? now - asker.sentAt : 0),
+            ...lateReplyNote(asker && talkedTo ? now - asker.sentAt : 0),
             ...(lookup ? ["You just looked this up online and only half get it."] : []),
             ...(requested && !technical ? [pictureRequestNote(declined)] : []),
         ];
         const role = technical ? "technical" : "reply";
         const pictures = llm.canSee(role) ? choosePictures(window, firstNewIndex, features.aboutPicture, this.#options.picturesPerReply ?? 0) : [];
         const context = `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}`;
-        const volatile = renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation });
+        const volatile = renderReplyState({ now, persona, features, competence, addressed: talkedTo, situation });
         const fetched = await Promise.all(pictures.map(({ image }) => this.#fetched(channel.ref.platform, image)));
         const write = (shown: readonly ShownPicture[]) => {
             const numbers = new Map(shown.map((picture) => [picture.messageId, picture.number]));

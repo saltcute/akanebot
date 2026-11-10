@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ChatMessage } from "../src/adapters/types.ts";
 import { appConfigSchema, resolveGroups } from "../src/config.ts";
 import { assessCompetence } from "../src/gate/competence.ts";
-import { allAimedElsewhere, decideToSpeak, NEUTRAL_CONTEXT, overruleMisaddress } from "../src/gate/policy.ts";
+import { allAimedElsewhere, decideToSpeak, findFollowUp, findNamer, NEUTRAL_CONTEXT, overruleMisaddress } from "../src/gate/policy.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -111,6 +111,31 @@ describe("decideToSpeak", () => {
         expect(decideToSpeak(features({ interest: 1 }), { ...PERSONA, talkativeness: 0 }, false, rng()).speak).toBe(false);
     });
 
+    it("rarely joins chatter it barely cares about", () => {
+        expect(decideToSpeak(features({ interest: 0.2 }), PERSONA, false, rng()).probability).toBeLessThan(0.05);
+    });
+
+    it("answers being named as if asked, whatever the model thought", () => {
+        const decision = decideToSpeak(features({ addressedToMe: "no" }), { ...PERSONA, ignoreDirectAsks: 0 }, false, rng(), {
+            ...NEUTRAL_CONTEXT,
+            named: true,
+        });
+        expect(decision).toMatchObject({ speak: true, addressed: true, followUp: false });
+    });
+
+    it("usually picks up someone answering it, but less surely than a direct ask", () => {
+        const persona = { ...PERSONA, ignoreDirectAsks: 0 };
+        const followUp = decideToSpeak(features({ interest: 0 }), persona, false, rng(), { ...NEUTRAL_CONTEXT, followUp: true });
+        expect(followUp).toMatchObject({ addressed: false, followUp: true });
+        expect(followUp.probability).toBeGreaterThan(0.5);
+        expect(followUp.probability).toBeLessThan(decideToSpeak(features(), persona, true, rng()).probability);
+    });
+
+    it("doesn't force a follow-up just because the last one went unanswered", () => {
+        const context = { ...NEUTRAL_CONTEXT, followUp: true, forceAnswer: true };
+        expect(decideToSpeak(features(), PERSONA, false, rng(), context).probability).toBeLessThan(1);
+    });
+
     it("clamps out-of-range interest from the model", () => {
         expect(decideToSpeak(features({ interest: 50 }), PERSONA, false, rng()).probability).toBeLessThanOrEqual(1);
     });
@@ -176,6 +201,64 @@ describe("overruleMisaddress", () => {
     it("doesn't apply with no mentions or no messages", () => {
         expect(overruleMisaddress(yes, [said("你吃了吗")], persona)).toBe(yes);
         expect(overruleMisaddress(yes, [], persona)).toBe(yes);
+    });
+});
+
+describe("noticing it's being talked to", () => {
+    const persona = { ...PERSONA, aliases: ["akane", "茜", "茜茜"] };
+    let at = 0;
+    const line = (sender: string, text: string, overrides: Partial<ChatMessage> = {}): ChatMessage => {
+        at += 10_000;
+        return {
+            platform: "cli",
+            channelId: "g",
+            messageId: `m${at}`,
+            sender: { id: sender, displayName: sender, isBot: false },
+            text,
+            sentAt: at,
+            mentionsSelf: false,
+            repliesToSelf: false,
+            isSelf: false,
+            isBacklog: false,
+            ...overrides,
+        };
+    };
+    const own = (text: string) => line("self", text, { isSelf: true });
+
+    it("notices its name or a long alias, but not one character inside another word", () => {
+        expect(findNamer([line("a", "小茜你看这是什么")], persona)?.text).toBe("小茜你看这是什么");
+        expect(findNamer([line("a", "@小茜 我伤心了")], persona)).toBeDefined();
+        expect(findNamer([line("a", "AKANE come here")], persona)).toBeDefined();
+        expect(findNamer([line("a", "网友小顺茜")], persona)).toBeUndefined();
+    });
+
+    it("doesn't count a name that's only inside an @ to someone else, or a bot", () => {
+        expect(findNamer([line("a", "@茜茜酱 在吗", { mentions: ["茜茜酱"] })], persona)).toBeUndefined();
+        expect(findNamer([line("bot", "小茜", { sender: { id: "bot", displayName: "bot", isBot: true } })], persona)).toBeUndefined();
+    });
+
+    it("takes the next line from someone else as an answer to it", () => {
+        const window = [line("a", "图是假的"), own("庞佐错觉呗"), line("a", "不对吧")];
+        expect(findFollowUp(window, 2, persona)?.text).toBe("不对吧");
+    });
+
+    it("looks past the same person's earlier lines and app notices", () => {
+        const window = [own("那你安分点"), line("a", "嘿嘿"), line("event", "[a was muted]", { groupEvent: { involves: [] } }), line("a", "好的")];
+        expect(findFollowUp(window, 3, persona)?.text).toBe("好的");
+    });
+
+    it("isn't fooled when someone else spoke in between, or the line is aimed elsewhere", () => {
+        expect(findFollowUp([own("拉啊"), line("b", "我现在就把你拉到最低"), line("a", "呃呃呃")], 2, persona)).toBeUndefined();
+        expect(findFollowUp([own("拉啊"), line("a", "@bob 你看她", { mentions: ["bob"] })], 1, persona)).toBeUndefined();
+        expect(findFollowUp([own("我超"), line("a", "我超")], 1, persona)).toBeUndefined();
+        const quote = { messageId: "x", byUser: "cli:b", by: "b", text: "hi", isSelf: false };
+        expect(findFollowUp([own("拉啊"), line("a", "对", { replyTo: quote })], 1, persona)).toBeUndefined();
+    });
+
+    it("lets the moment pass after a few minutes", () => {
+        const slept = own("睡了");
+        const window = [slept, line("a", "晚安", { sentAt: slept.sentAt + 6 * 60_000 })];
+        expect(findFollowUp(window, 1, persona)).toBeUndefined();
     });
 });
 
