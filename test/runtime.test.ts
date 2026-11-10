@@ -1713,6 +1713,36 @@ describe("senses", () => {
                     }
                 });
 
+                it("knows a GIF moves and that she only sees its first frame", async () => {
+                    const frame = (background: string) =>
+                        sharp({ create: { width: 20, height: 20, channels: 3, background } })
+                            .png()
+                            .toBuffer();
+                    const frames = await Promise.all(["#f00", "#00f"].map(frame));
+                    const gif = await sharp(frames, { join: { animated: true } })
+                        .gif()
+                        .toBuffer();
+                    const { adapter, gate, reply, vision, settle } = await setup({
+                        picturesPerReply: 3,
+                        pictureMaxEdge: 100,
+                        fetchImage: async () => gif,
+                    });
+                    adapter.say("alice", `[img:${url}]`);
+                    await settle();
+                    expect(vision.calls[0]?.transcript).toContain("only its first frame");
+                    expect(gate.calls[0]?.transcript).toContain("alice: [animated image: 一只橘猫]");
+                    expect(reply.calls[0]?.images?.[0]?.label).toBe("Picture 1 (the first frame of an animated GIF, which is all you can see):");
+                    expect(chatLines(reply.calls[0]?.transcript)).toEqual(["alice (picture 1): [animated image: 一只橘猫]"]);
+                });
+
+                it("takes a GIF from the picker for animated without fetching it", async () => {
+                    const refuses: ImageFetcher = async () => Promise.reject(new Error("never fetched"));
+                    const { adapter, gate, settle } = await setup({ fetchImage: refuses });
+                    adapter.say("alice", "[gif:https://tenor.com/view/x]");
+                    await settle();
+                    expect(gate.calls[0]?.transcript).toContain("alice: [animated image: 一只橘猫]");
+                });
+
                 it("sends the link as it is when shrinking is off", async () => {
                     const { adapter, reply, settle } = await setup({ picturesPerReply: 3, pictureMaxEdge: 0, fetchImage: async () => large() });
                     adapter.say("alice", `[img:${url}]`);

@@ -33,9 +33,17 @@ import { allAimedElsewhere, decideToRepeat, decideToSpeak, overruleMisaddress } 
 import { findRepeatChain } from "./gate/repeat.ts";
 import { type DownloadResult, downloadImage, type ImageFetcher, linkedImage } from "./images/download.ts";
 import { judgeImage } from "./images/keep.ts";
-import { flattenCaption, type ImageLook, imageLookSchema, LOOK_REQUEST, renderVisionInstructions } from "./images/look.ts";
+import {
+    ANIMATION_LOOK_REQUEST,
+    flattenCaption,
+    type ImageLook,
+    imageLookSchema,
+    LOOK_REQUEST,
+    renderCaption,
+    renderVisionInstructions,
+} from "./images/look.ts";
 import { canUseHere, chooseOffers, type OfferedImage } from "./images/offer.ts";
-import { type InlineImage, shrinkImage } from "./images/shrink.ts";
+import { type InlineImage, isAnimated, shrinkImage } from "./images/shrink.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
@@ -217,6 +225,7 @@ const KILL_REASON = "kill";
 const ROUTINE_REASON = "routine";
 
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception };
+type FetchedImage = { animated: boolean; inline?: InlineImage };
 type LookedAt = { message: ChatMessage; image: ChatImage; look: ImageLook };
 
 const GATE_MAX_OUTPUT = 600;
@@ -255,7 +264,7 @@ export class Runtime {
     #reactionRng: Rng;
     #searchRng: Rng;
     #imageRng: Rng;
-    #smallImages = new WeakMap<ChatImage, Promise<InlineImage | undefined>>();
+    #fetchedImages = new WeakMap<ChatImage, Promise<FetchedImage>>();
     #lastImageSentAt = new Map<string, number>();
     #sharing: ReadonlySet<string>;
     #options: RuntimeOptions;
@@ -964,12 +973,12 @@ export class Runtime {
         const pictures = llm.canSee(role) ? choosePictures(window, firstNewIndex, features.aboutPicture, this.#options.picturesPerReply ?? 0) : [];
         const context = `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}`;
         const volatile = renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation });
-        const small = await Promise.all(pictures.map(({ image }) => this.#shrunk(channel.ref.platform, image)));
+        const fetched = await Promise.all(pictures.map(({ image }) => this.#fetched(channel.ref.platform, image)));
         const write = (shown: readonly ShownPicture[]) => {
             const numbers = new Map(shown.map((picture) => [picture.messageId, picture.number]));
             const images = shown.map(({ image, number }, index) => {
-                const inline = small[index];
-                return { url: image.url, label: pictureLabel(number), ...(inline ? { inline } : {}) };
+                const { inline, animated = false } = fetched[index] ?? {};
+                return { url: image.url, label: pictureLabel(number, animated), ...(inline ? { inline } : {}) };
             });
             return llm.generate(role, {
                 stable: renderReplyInstructions(persona),
@@ -1151,9 +1160,10 @@ export class Runtime {
         for (const message of withImages) {
             const [image] = message.images ?? [];
             if (!image) continue;
-            const look = await this.#lookAt(image, persona, signal);
+            const { animated } = await this.#fetched(message.platform, image);
+            const look = await this.#lookAt(image, animated, persona, signal);
             if (!look) continue;
-            const text = message.text.replace(IMAGE_PLACEHOLDER, `[image: ${look.description}]`);
+            const text = message.text.replace(IMAGE_PLACEHOLDER, () => renderCaption(look.description, animated));
             // An explicit one is never looked at again. She keeps only the description, which says nothing.
             perception.annotate(message.messageId, text, look.explicit ? undefined : image);
             this.memory.store.updateText(key, message.messageId, text);
@@ -1162,19 +1172,20 @@ export class Runtime {
         // Pictures someone posted come first, and the newest forward gets what's left. Never saved and never kept, like the rest of a forward.
         const inForwards = unread
             .toReversed()
-            .flatMap(({ messageId, forwarded }) => forwardedImages(forwarded ?? []).map((image) => ({ messageId, image })))
+            .flatMap(({ messageId, platform, forwarded }) => forwardedImages(forwarded ?? []).map((image) => ({ messageId, platform, image })))
             .slice(0, MAX_IMAGES_PER_ATTEND - withImages.length);
-        for (const { messageId, image } of inForwards) {
-            const look = await this.#lookAt(image, persona, signal);
-            if (look) perception.describeForwardedImage(messageId, image, `[image: ${look.description}]`);
+        for (const { messageId, platform, image } of inForwards) {
+            const { animated } = await this.#fetched(platform, image);
+            const look = await this.#lookAt(image, animated, persona, signal);
+            if (look) perception.describeForwardedImage(messageId, image, renderCaption(look.description, animated));
         }
         return looked;
     }
 
-    async #lookAt(image: ChatImage, persona: Persona, signal: AbortSignal): Promise<ImageLook | undefined> {
+    async #lookAt(image: ChatImage, animated: boolean, persona: Persona, signal: AbortSignal): Promise<ImageLook | undefined> {
         const result = await this.#options.llm.generate("vision", {
             stable: renderVisionInstructions(persona),
-            transcript: LOOK_REQUEST,
+            transcript: animated ? ANIMATION_LOOK_REQUEST : LOOK_REQUEST,
             volatile: "",
             images: [image],
             schema: imageLookSchema,
@@ -1188,19 +1199,24 @@ export class Runtime {
     }
 
     /**
-     * A picture small enough to be cheap to look at again. Kept against the picture itself, so it goes when its message leaves the window.
-     * One that can't be fetched or decoded is shown by its link instead.
+     * What the picture's own file says: whether it moves, and a copy small enough to be cheap to look at again. Kept against the
+     * picture itself, so it goes when its message leaves the window. One that can't be fetched or decoded is taken for a still
+     * picture and shown by its link.
      */
-    #shrunk(platform: Platform, image: ChatImage): Promise<InlineImage | undefined> {
+    #fetched(platform: Platform, image: ChatImage): Promise<FetchedImage> {
         const { fetchImage, clock, pictureMaxEdge = 0 } = this.#options;
-        if (!fetchImage || pictureMaxEdge <= 0) return Promise.resolve(undefined);
-        const existing = this.#smallImages.get(image);
+        // Discord's picker only posts GIFs, and there's no file of theirs to fetch.
+        if (image.link) return Promise.resolve({ animated: true });
+        if (!fetchImage) return Promise.resolve({ animated: false });
+        const existing = this.#fetchedImages.get(image);
         if (existing) return existing;
-        const small = downloadImage(fetchImage, platform, image.url, clock).then((download) =>
-            download.kind === "ok" ? shrinkImage(download.bytes, pictureMaxEdge) : undefined,
-        );
-        this.#smallImages.set(image, small);
-        return small;
+        const fetched = downloadImage(fetchImage, platform, image.url, clock).then(async (download): Promise<FetchedImage> => {
+            if (download.kind !== "ok") return { animated: false };
+            const inline = pictureMaxEdge > 0 ? await shrinkImage(download.bytes, pictureMaxEdge) : undefined;
+            return { animated: await isAnimated(download.bytes), ...(inline ? { inline } : {}) };
+        });
+        this.#fetchedImages.set(image, fetched);
+        return fetched;
     }
 
     /** Runs once she has really read them, so a picture that was only glanced at before a failure is never kept. */

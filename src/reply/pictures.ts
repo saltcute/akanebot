@@ -26,6 +26,6 @@ export function choosePictures(window: readonly ChatMessage[], firstNewIndex: nu
 }
 
 /** Written just before each attached picture. */
-export function pictureLabel(number: number): string {
-    return `Picture ${number}:`;
+export function pictureLabel(number: number, animated = false): string {
+    return animated ? `Picture ${number} (the first frame of an animated GIF, which is all you can see):` : `Picture ${number}:`;
 }

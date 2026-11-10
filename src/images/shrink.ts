@@ -5,6 +5,15 @@ export type InlineImage = { data: string; mediaType: string };
 
 const WEBP_QUALITY = 80;
 
+/** Goes by the file itself. False for anything that can't be read. */
+export async function isAnimated(bytes: Uint8Array): Promise<boolean> {
+    try {
+        return ((await sharp(bytes).metadata()).pages ?? 1) > 1;
+    } catch {
+        return false;
+    }
+}
+
 /**
  * A model charges for a picture by its area, and a phone screenshot is several times larger than it needs to be to read.
  * Never enlarges. An animation becomes its first frame. Returns undefined for anything that can't be decoded.

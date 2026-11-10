@@ -14,6 +14,14 @@ export const imageLookSchema = z.object({
 export type ImageLook = z.infer<typeof imageLookSchema>;
 
 export const LOOK_REQUEST = "Look at this picture.";
+/** A model only ever gets the first frame, so it's told, or it describes a moving picture as a still one. */
+export const ANIMATION_LOOK_REQUEST =
+    "Look at this picture. It's an animated GIF and this is only its first frame. Describe what this frame shows, and don't guess what happens next.";
+
+/** How a picture she looked at reads in the chat. Code writes the word "animated", from the file itself. */
+export function renderCaption(description: string, animated: boolean): string {
+    return `[${animated ? "animated image" : "image"}: ${description}]`;
+}
 
 export function renderVisionInstructions(persona: Persona): string {
     const taste = persona.savedImages.taste || "anything that makes them laugh";
