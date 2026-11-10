@@ -10,7 +10,7 @@ const personSchema = z.strictObject({
     note: z.string().min(1).optional(),
     /** Other names people call them by. Two characters at least, since one would turn up inside unrelated words. */
     aliases: z.array(z.string().trim().min(2)).optional(),
-    /** Their IANA zone, so their local time is worked out in code. Shown to her only while they are talking, like the note. */
+    /** Their IANA zone, so their local time is worked out in code. Shown to her while they're in the conversation or someone there names them. */
     timezone: z.string().refine(isTimeZone, "Unknown time zone").optional(),
 });
 

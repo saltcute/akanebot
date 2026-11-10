@@ -68,13 +68,12 @@ import {
     withoutQuote,
 } from "./perception/channel.ts";
 import { type Persona, reactionChoices } from "./persona/schema.ts";
-import { explainAliases } from "./reply/aliases.ts";
+import { explainAliases, explainClocks, timeThere } from "./reply/aliases.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
 import { mentionablePeople, resolveMentions } from "./reply/mentions.ts";
 import { choosePictures, pictureLabel, type ShownPicture } from "./reply/pictures.ts";
 import {
-    clockIn,
     renderGroupEvent,
     renderLookup,
     renderOwnImage,
@@ -1034,7 +1033,8 @@ export class Runtime {
             const description = this.#describePerson(user, name, now);
             return description ? [{ name, description }] : [];
         });
-        people.push(...explainAliases(this.#people, window, recalled));
+        const talking = new Set(newMessages.map(userKey));
+        people.push(...explainAliases(this.#people, window, recalled), ...explainClocks(this.#people, window, talking, now));
         const lowBattery = battery < LOW_BATTERY;
         const technical = competence.mode !== "casual";
         // Only a request made to her counts. Someone asking the room, or another member, is ordinary chat.
@@ -1209,7 +1209,7 @@ export class Runtime {
         const parts = [
             knownAs !== undefined && knownAs !== shownAs ? `this is ${knownAs}` : undefined,
             note,
-            timezone === undefined ? undefined : `their time zone is ${timezone}, where it's ${clockIn(timezone, now)}`,
+            timezone === undefined ? undefined : timeThere(timezone, now),
             describeRelationship(currentRelationship(this.memory.store, user, now, this.#people), note !== undefined),
         ].filter((part) => part !== undefined);
         return parts.length > 0 ? parts.join("; ") : undefined;

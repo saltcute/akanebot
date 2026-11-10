@@ -962,7 +962,7 @@ describe("living like a person", () => {
             expect(reply.calls[0]?.transcript).not.toContain("关系很好的网友");
         });
 
-        it("works out a listed person's local time only while they are talking", async () => {
+        it("works out a listed person's local time only while they're in the conversation", async () => {
             const zoned = new People([{ name: "土豆", ids: ["cli:potato"], timezone: "Asia/Tokyo" }]);
             const talking = await setup({ people: zoned, startAt: Date.UTC(2026, 0, 15, 3, 0) });
             talking.adapter.say("potato", "在吗");

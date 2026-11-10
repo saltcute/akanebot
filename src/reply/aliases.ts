@@ -3,6 +3,7 @@ import type { People } from "../control/people.ts";
 import { userKey } from "../control/state.ts";
 import type { Recalled } from "../memory/recall.ts";
 import { runsTogether } from "./mentions.ts";
+import { clockIn } from "./prompt.ts";
 
 function appearsIn(text: string, alias: string): boolean {
     for (let at = text.indexOf(alias); at !== -1; at = text.indexOf(alias, at + 1)) {
@@ -60,4 +61,33 @@ export function explainAliases(
         .filter(({ name }) => !taken.has(name.toLowerCase()) && isMentioned(name))
         .map(({ name, description }) => ({ name, description }));
     return [...configured, ...observed];
+}
+
+export function timeThere(timezone: string, now: number): string {
+    return `their time zone is ${timezone}, where it's ${clockIn(timezone, now)}`;
+}
+
+/**
+ * The local time of listed people who aren't in the new messages but are in the conversation: either earlier in the window, or named by someone in it.
+ * Goes by account for someone present. A name someone else here is wearing is left out, so the line can't be read as being about them.
+ */
+export function explainClocks(
+    people: People,
+    window: readonly ChatMessage[],
+    talking: ReadonlySet<string>,
+    now: number,
+): { name: string; description: string }[] {
+    const heard = window.filter(({ groupEvent, isSelf }) => !groupEvent && !isSelf);
+    const texts = heard.map(({ text }) => text.toLowerCase());
+    return people.entries().flatMap((entry) => {
+        if (entry.timezone === undefined || entry.ids.some((id) => talking.has(id))) return [];
+        const description = timeThere(entry.timezone, now);
+        const present = heard.findLast((message) => entry.ids.includes(userKey(message)));
+        if (present) return [{ name: present.sender.displayName, description }];
+        const worn = new Set(heard.map(({ sender }) => sender.displayName.toLowerCase()));
+        if (worn.has(entry.name.toLowerCase())) return [];
+        const names = [entry.name, ...(entry.aliases ?? [])].map((name) => name.toLowerCase()).filter((name) => !worn.has(name));
+        const named = names.some((name) => texts.some((text) => appearsIn(text, name)));
+        return named ? [{ name: entry.name, description }] : [];
+    });
 }

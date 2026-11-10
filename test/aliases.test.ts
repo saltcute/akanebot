@@ -3,7 +3,7 @@ import type { ChatMessage } from "../src/adapters/types.ts";
 import { People } from "../src/control/people.ts";
 import type { Recalled } from "../src/memory/recall.ts";
 import type { Memory } from "../src/memory/store.ts";
-import { explainAliases } from "../src/reply/aliases.ts";
+import { explainAliases, explainClocks } from "../src/reply/aliases.ts";
 
 const said = (id: string, displayName: string, text: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({
     platform: "cli",
@@ -98,5 +98,33 @@ describe("explainAliases", () => {
         it("ignores people who aren't in the window", () => {
             expect(explainAliases(PEOPLE, [said("alice", "alice", "mingming 在吗")], [])).toEqual([]);
         });
+    });
+});
+
+describe("explainClocks", () => {
+    const Zoned = new People([{ name: "土豆", ids: ["cli:potato"], aliases: ["薯仔"], timezone: "Asia/Tokyo" }]);
+    const now = Date.UTC(2026, 0, 15, 3, 0);
+    const Tokyo = "their time zone is Asia/Tokyo, where it's Thursday 12:00";
+
+    it("gives the time of someone who spoke earlier in the window", () => {
+        expect(explainClocks(Zoned, [said("potato", "土豆君", "晚安"), said("alice", "alice", "hi")], new Set(["cli:alice"]), now)).toEqual([
+            { name: "土豆君", description: Tokyo },
+        ]);
+    });
+
+    it("gives the time of someone named by name or nickname", () => {
+        expect(explainClocks(Zoned, [said("alice", "alice", "土豆那边几点了")], new Set(["cli:alice"]), now)).toEqual([
+            { name: "土豆", description: Tokyo },
+        ]);
+        expect(explainClocks(Zoned, [said("alice", "alice", "薯仔睡了吗")], new Set(["cli:alice"]), now)).toEqual([
+            { name: "土豆", description: Tokyo },
+        ]);
+    });
+
+    it("leaves out someone already described, unmentioned, or whose name someone else is wearing", () => {
+        expect(explainClocks(Zoned, [said("potato", "土豆", "hi")], new Set(["cli:potato"]), now)).toEqual([]);
+        expect(explainClocks(Zoned, [said("alice", "alice", "今天吃什么")], new Set(["cli:alice"]), now)).toEqual([]);
+        expect(explainClocks(Zoned, [said("bob", "土豆", "hi"), said("alice", "alice", "土豆几点了")], new Set(["cli:alice"]), now)).toEqual([]);
+        expect(explainClocks(Zoned, [said("bob", "薯仔", "hi"), said("alice", "alice", "薯仔几点了")], new Set(["cli:alice"]), now)).toEqual([]);
     });
 });
