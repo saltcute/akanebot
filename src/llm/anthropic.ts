@@ -38,9 +38,9 @@ export class AnthropicBackend implements LlmBackend {
         };
         const content = request.images?.length
             ? [
-                  ...request.images.flatMap(({ url, label }) => [
+                  ...request.images.flatMap(({ url, label, inline }) => [
                       ...(label ? [{ type: "text", text: label }] : []),
-                      { type: "image", source: { type: "url", url } },
+                      { type: "image", source: inline ? { type: "base64", media_type: inline.mediaType, data: inline.data } : { type: "url", url } },
                   ]),
                   { type: "text", text: request.transcript },
               ]

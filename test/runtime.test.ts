@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { CliAdapter } from "../src/adapters/cli.ts";
 import type { ChatMessage } from "../src/adapters/types.ts";
@@ -45,6 +46,7 @@ type Setup = {
     vision?: FakeResponder;
     fetchImage?: ImageFetcher;
     picturesPerReply?: number;
+    pictureMaxEdge?: number;
     replyIsBlind?: boolean;
 };
 
@@ -147,6 +149,7 @@ async function setup(options: Setup) {
         ...(options.people ? { people: options.people } : {}),
         ...(options.fetchImage ? { fetchImage: options.fetchImage } : {}),
         ...(options.picturesPerReply === undefined ? {} : { picturesPerReply: options.picturesPerReply }),
+        ...(options.pictureMaxEdge === undefined ? {} : { pictureMaxEdge: options.pictureMaxEdge }),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -1656,6 +1659,66 @@ describe("senses", () => {
                 adapter.say("alice", `[img:${url}]`);
                 await settle();
                 expect(reply.calls).toHaveLength(1);
+            });
+
+            describe("shrunk first", () => {
+                const large = () =>
+                    sharp({ create: { width: 400, height: 200, channels: 3, background: "#f80" } })
+                        .png()
+                        .toBuffer();
+                const sizeOf = async (inline: { data: string } | undefined) => {
+                    const { width, height, format } = await sharp(Buffer.from(inline?.data ?? "", "base64")).metadata();
+                    return { width, height, format };
+                };
+
+                it("downloads the picture and shows a smaller copy instead of the link", async () => {
+                    const bytes = await large();
+                    const { adapter, reply, settle } = await setup({ picturesPerReply: 3, pictureMaxEdge: 100, fetchImage: async () => bytes });
+                    adapter.say("alice", `[img:${url}]`);
+                    await settle();
+                    const [shown] = reply.calls[0]?.images ?? [];
+                    expect(shown).toMatchObject({ url, label: "Picture 1:", inline: { mediaType: "image/webp" } });
+                    expect(await sizeOf(shown?.inline)).toEqual({ width: 100, height: 50, format: "webp" });
+                });
+
+                it("downloads a picture once however often she looks again", async () => {
+                    const bytes = await large();
+                    let fetched = 0;
+                    const fetchImage: ImageFetcher = async () => {
+                        fetched++;
+                        return bytes;
+                    };
+                    const { adapter, reply, settle } = await setup({
+                        picturesPerReply: 3,
+                        pictureMaxEdge: 100,
+                        fetchImage,
+                        gates: [{}, { aboutPicture: true }],
+                    });
+                    adapter.say("alice", `[img:${url}]`);
+                    await settle();
+                    adapter.say("bob", "这是什么品种");
+                    await settle();
+                    expect(reply.calls[1]?.images?.[0]?.inline).toBeDefined();
+                    expect(fetched).toBe(1);
+                });
+
+                it("falls back to the link when the picture can't be fetched or read", async () => {
+                    const refuses: ImageFetcher = async () => Promise.reject(new Error("nope"));
+                    const garbage: ImageFetcher = async () => Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 1, 2, 3);
+                    for (const fetchImage of [refuses, garbage]) {
+                        const { adapter, reply, settle } = await setup({ picturesPerReply: 3, pictureMaxEdge: 100, fetchImage });
+                        adapter.say("alice", `[img:${url}]`);
+                        await settle();
+                        expect(reply.calls[0]?.images).toEqual([{ url, label: "Picture 1:" }]);
+                    }
+                });
+
+                it("sends the link as it is when shrinking is off", async () => {
+                    const { adapter, reply, settle } = await setup({ picturesPerReply: 3, pictureMaxEdge: 0, fetchImage: async () => large() });
+                    adapter.say("alice", `[img:${url}]`);
+                    await settle();
+                    expect(reply.calls[0]?.images).toEqual([{ url, label: "Picture 1:" }]);
+                });
             });
 
             it("shows the technical model pictures too", async () => {

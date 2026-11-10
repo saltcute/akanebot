@@ -1,7 +1,9 @@
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { People } from "../src/control/people.ts";
 import { downloadImage, type ImageFetcher, isImageSource, MAX_IMAGE_BYTES, sniffImageType } from "../src/images/download.ts";
 import { canUseHere } from "../src/images/offer.ts";
+import { shrinkImage } from "../src/images/shrink.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import type { SavedImage } from "../src/memory/store.ts";
 import { MemoryStore, type SavedImageDraft } from "../src/memory/store.ts";
@@ -135,5 +137,31 @@ describe("downloading", () => {
         const download = downloadImage(hanging, "cli", "https://x.test/a", clock);
         await clock.advance(60_000);
         await expect(download).resolves.toMatchObject({ kind: "failed" });
+    });
+});
+
+describe("shrinkImage", () => {
+    const picture = (width: number, height: number) =>
+        sharp({ create: { width, height, channels: 4, background: "#0af8" } })
+            .png()
+            .toBuffer();
+    const sizeOf = async (data: string | undefined) => {
+        const { width, height, format, hasAlpha } = await sharp(Buffer.from(data ?? "", "base64")).metadata();
+        return { width, height, format, hasAlpha };
+    };
+
+    it("fits a large picture inside the limit, keeping its shape and transparency", async () => {
+        const small = await shrinkImage(await picture(600, 1200), 300);
+        expect(small?.mediaType).toBe("image/webp");
+        expect(await sizeOf(small?.data)).toEqual({ width: 150, height: 300, format: "webp", hasAlpha: true });
+    });
+
+    it("never enlarges a small one", async () => {
+        const small = await shrinkImage(await picture(40, 20), 300);
+        expect(await sizeOf(small?.data)).toMatchObject({ width: 40, height: 20 });
+    });
+
+    it("gives up on bytes that aren't a picture", async () => {
+        await expect(shrinkImage(Uint8Array.of(1, 2, 3), 300)).resolves.toBeUndefined();
     });
 });

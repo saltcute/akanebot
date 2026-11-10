@@ -24,7 +24,13 @@ export const appConfigSchema = z.strictObject({
         .prefault({}),
     pacing: pacingSchema.prefault({}),
     /** The most pictures from the chat she looks at again while writing one reply. They cost far more than text. 0 leaves her with descriptions only. */
-    pictures: z.strictObject({ perReply: z.number().int().min(0).max(10).default(3) }).prefault({}),
+    pictures: z
+        .strictObject({
+            perReply: z.number().int().min(0).max(10).default(3),
+            /** They're downloaded and shrunk to fit this many pixels on the long edge before she looks again. 0 sends them as they are. */
+            maxEdge: z.number().int().min(0).default(1024),
+        })
+        .prefault({}),
     limits: z
         .strictObject({
             bucketCapacity: z.number().positive().default(10),

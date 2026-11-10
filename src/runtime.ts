@@ -35,6 +35,7 @@ import { type DownloadResult, downloadImage, type ImageFetcher, linkedImage } fr
 import { judgeImage } from "./images/keep.ts";
 import { flattenCaption, type ImageLook, imageLookSchema, LOOK_REQUEST, renderVisionInstructions } from "./images/look.ts";
 import { canUseHere, chooseOffers, type OfferedImage } from "./images/offer.ts";
+import { type InlineImage, shrinkImage } from "./images/shrink.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
@@ -109,6 +110,8 @@ export type RuntimeOptions = {
     people?: People;
     /** The most pictures from the chat shown to the reply model at once. Without it she only reads their descriptions. */
     picturesPerReply?: number;
+    /** Shrink those pictures to this many pixels on the long edge. Needs `fetchImage`. Without it they're sent as links, at full size. */
+    pictureMaxEdge?: number;
     /** Without it she can't download pictures, so she only collects ones that are just links. */
     fetchImage?: ImageFetcher;
 };
@@ -252,6 +255,7 @@ export class Runtime {
     #reactionRng: Rng;
     #searchRng: Rng;
     #imageRng: Rng;
+    #smallImages = new WeakMap<ChatImage, Promise<InlineImage | undefined>>();
     #lastImageSentAt = new Map<string, number>();
     #sharing: ReadonlySet<string>;
     #options: RuntimeOptions;
@@ -960,13 +964,18 @@ export class Runtime {
         const pictures = llm.canSee(role) ? choosePictures(window, firstNewIndex, features.aboutPicture, this.#options.picturesPerReply ?? 0) : [];
         const context = `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}`;
         const volatile = renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation });
+        const small = await Promise.all(pictures.map(({ image }) => this.#shrunk(channel.ref.platform, image)));
         const write = (shown: readonly ShownPicture[]) => {
             const numbers = new Map(shown.map((picture) => [picture.messageId, picture.number]));
+            const images = shown.map(({ image, number }, index) => {
+                const inline = small[index];
+                return { url: image.url, label: pictureLabel(number), ...(inline ? { inline } : {}) };
+            });
             return llm.generate(role, {
                 stable: renderReplyInstructions(persona),
                 transcript: `${context}${shown.length > 0 ? renderTranscript(window, persona, firstNewIndex, numbers) : transcript}`,
                 volatile,
-                ...(shown.length > 0 ? { images: shown.map(({ image, number }) => ({ url: image.url, label: pictureLabel(number) })) } : {}),
+                ...(images.length > 0 ? { images } : {}),
                 schema: replySchema,
                 maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
                 signal: lease.signal,
@@ -1176,6 +1185,22 @@ export class Runtime {
         const description = flattenCaption(result.data.description, MAX_CAPTION_CHARS);
         if (description === "") return undefined;
         return { ...result.data, description, useFor: flattenCaption(result.data.useFor, MAX_USE_FOR_CHARS) };
+    }
+
+    /**
+     * A picture small enough to be cheap to look at again. Kept against the picture itself, so it goes when its message leaves the window.
+     * One that can't be fetched or decoded is shown by its link instead.
+     */
+    #shrunk(platform: Platform, image: ChatImage): Promise<InlineImage | undefined> {
+        const { fetchImage, clock, pictureMaxEdge = 0 } = this.#options;
+        if (!fetchImage || pictureMaxEdge <= 0) return Promise.resolve(undefined);
+        const existing = this.#smallImages.get(image);
+        if (existing) return existing;
+        const small = downloadImage(fetchImage, platform, image.url, clock).then((download) =>
+            download.kind === "ok" ? shrinkImage(download.bytes, pictureMaxEdge) : undefined,
+        );
+        this.#smallImages.set(image, small);
+        return small;
     }
 
     /** Runs once she has really read them, so a picture that was only glanced at before a failure is never kept. */

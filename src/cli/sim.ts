@@ -113,6 +113,7 @@ const runtime = new Runtime({
         ? {}
         : {
               picturesPerReply: config.pictures.perReply,
+              pictureMaxEdge: config.pictures.maxEdge,
               search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
               fetchImage: fetchOverHttp,
           }),

@@ -556,6 +556,13 @@ describe("AnthropicBackend", () => {
         ]);
     });
 
+    it("sends a picture's own bytes instead of its link when it has them", async () => {
+        const { llm, calls } = backend(text("一只猫"));
+        await llm.generate({ ...request, images: [{ url: "https://x/a.png", inline: { data: "AAAA", mediaType: "image/webp" } }] });
+        const first = (calls[0]?.messages as { content: unknown[] }[] | undefined)?.[0];
+        expect(first?.content[0]).toEqual({ type: "image", source: { type: "base64", media_type: "image/webp", data: "AAAA" } });
+    });
+
     it("turns unexpected exceptions into a result instead of throwing", async () => {
         const client = { messages: { create: async () => Promise.reject(new Error("boom")) } } as unknown as Anthropic;
         await expect(new AnthropicBackend(client, "m").generate(request)).resolves.toMatchObject({ kind: "error", retryable: false });
