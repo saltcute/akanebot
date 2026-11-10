@@ -63,4 +63,40 @@ describe("explainAliases", () => {
         const window = [said("self", "小茜", "薯仔", { isSelf: true }), said("x", "x", "薯仔 joined", { groupEvent: { involves: [] } })];
         expect(explainAliases(PEOPLE, window, [])).toEqual([]);
     });
+
+    describe("the name on someone's account", () => {
+        const named = (id: string, displayName: string, accountName: string, text: string): ChatMessage => ({
+            ...said(id, displayName, text),
+            sender: { id, displayName, accountName, isBot: false },
+        });
+
+        it("is explained when the group shows a different one", () => {
+            const window = [named("bob", "群里的小明", "mingming", "hi"), said("alice", "alice", "mingming 在吗")];
+            expect(explainAliases(PEOPLE, window, [])).toEqual([{ name: "mingming", description: "another name for 群里的小明" }]);
+        });
+
+        it("uses the name the operator gave them", () => {
+            const window = [named("potato", "群里的土豆", "tudou", "hi"), said("alice", "alice", "tudou 在吗")];
+            expect(explainAliases(PEOPLE, window, [])).toEqual([{ name: "tudou", description: "another name for 土豆" }]);
+        });
+
+        it("says nothing when nobody uses it, or it's the name already showing", () => {
+            expect(explainAliases(PEOPLE, [named("bob", "小明", "mingming", "hi")], [])).toEqual([]);
+            expect(explainAliases(PEOPLE, [named("bob", "mingming", "mingming", "hi"), said("alice", "alice", "mingming?")], [])).toEqual([]);
+        });
+
+        it("leaves out a name someone else here goes by", () => {
+            const window = [named("bob", "小明", "alice", "hi"), said("alice", "alice", "alice 在吗")];
+            expect(explainAliases(PEOPLE, window, [])).toEqual([]);
+        });
+
+        it("can't take over a name the operator wrote down", () => {
+            const window = [named("bob", "小明", "薯仔", "hi"), said("alice", "alice", "薯仔 在吗")];
+            expect(explainAliases(PEOPLE, window, [])).toEqual([NICKNAME]);
+        });
+
+        it("ignores people who aren't in the window", () => {
+            expect(explainAliases(PEOPLE, [said("alice", "alice", "mingming 在吗")], [])).toEqual([]);
+        });
+    });
 });
