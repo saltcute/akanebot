@@ -21,8 +21,8 @@ export type LlmRequest<T> = {
     transcript: string;
     /** Time, mood, recalled memories: changes on every call. */
     volatile: string;
-    /** Images to look at, passed alongside the transcript. */
-    images?: readonly { url: string }[];
+    /** Images to look at, passed alongside the transcript. A `label` is written just before its image, so the transcript can refer to it. */
+    images?: readonly { url: string; label?: string }[];
     schema?: ZodType<T>;
     maxOutput: number;
     /** Vendor-specific settings from config. Only the backend reads these. */

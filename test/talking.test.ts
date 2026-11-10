@@ -544,6 +544,18 @@ describe("AnthropicBackend", () => {
         });
     });
 
+    it("writes a label just before the image it names", async () => {
+        const { llm, calls } = backend(text("一只猫"));
+        await llm.generate({ ...request, images: [{ url: "https://x/a.png", label: "Picture 1:" }, { url: "https://x/b.png" }] });
+        const first = (calls[0]?.messages as { content: unknown }[] | undefined)?.[0];
+        expect(first?.content).toEqual([
+            { type: "text", text: "Picture 1:" },
+            { type: "image", source: { type: "url", url: "https://x/a.png" } },
+            { type: "image", source: { type: "url", url: "https://x/b.png" } },
+            { type: "text", text: "chat" },
+        ]);
+    });
+
     it("turns unexpected exceptions into a result instead of throwing", async () => {
         const client = { messages: { create: async () => Promise.reject(new Error("boom")) } } as unknown as Anthropic;
         await expect(new AnthropicBackend(client, "m").generate(request)).resolves.toMatchObject({ kind: "error", retryable: false });

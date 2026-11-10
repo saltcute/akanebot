@@ -37,7 +37,13 @@ export class AnthropicBackend implements LlmBackend {
             ...(request.schema ? { format: zodOutputFormat(request.schema as never) } : {}),
         };
         const content = request.images?.length
-            ? [...request.images.map(({ url }) => ({ type: "image", source: { type: "url", url } })), { type: "text", text: request.transcript }]
+            ? [
+                  ...request.images.flatMap(({ url, label }) => [
+                      ...(label ? [{ type: "text", text: label }] : []),
+                      { type: "image", source: { type: "url", url } },
+                  ]),
+                  { type: "text", text: request.transcript },
+              ]
             : request.transcript;
         const messages: unknown[] = [{ role: "user", content }];
         // A trailing system message carries the changing state without disturbing the cached prefix.

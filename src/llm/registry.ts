@@ -76,6 +76,13 @@ export class LlmRegistry {
         return this.#call(role, target.fallback, request);
     }
 
+    /** Whether a role can be shown pictures, whichever of its models ends up answering. */
+    canSee(role: string): boolean {
+        const target = this.#config.roles[role];
+        if (!target) return false;
+        return [target, ...(target.fallback ? [target.fallback] : [])].every((each) => this.#backend(each).capabilities.vision);
+    }
+
     async #call<T>(role: string, target: RoleTarget, request: RoleRequest<T>): Promise<LlmResult<T>> {
         const result = await this.#backend(target).generate({ ...request, options: target.options });
         if (result.kind !== "error") this.#onUsage?.(result.usage, role, target.model);

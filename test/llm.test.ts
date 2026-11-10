@@ -81,6 +81,21 @@ describe("LlmRegistry", () => {
         expect(backends.secondary.calls).toHaveLength(0);
     });
 
+    it("says a role can see only if every model that might answer can", () => {
+        const blind = () => new FakeBackend(() => "x", { vision: false });
+        const sighted = () => new FakeBackend(() => "x");
+        const roles = {
+            both: { backend: "a", model: "m", fallback: { backend: "a", model: "m" } },
+            fallbackBlind: { backend: "a", model: "m", fallback: { backend: "b", model: "m" } },
+            blind: { backend: "b", model: "m" },
+        };
+        const llm = new LlmRegistry(llmConfigSchema.parse({ backends: { a: { type: "sighted" }, b: { type: "blind" } }, roles }), { sighted, blind });
+        expect(llm.canSee("both")).toBe(true);
+        expect(llm.canSee("fallbackBlind")).toBe(false);
+        expect(llm.canSee("blind")).toBe(false);
+        expect(llm.canSee("missing")).toBe(false);
+    });
+
     it("reuses one backend instance per backend and model", async () => {
         let created = 0;
         const llm = new LlmRegistry(llmConfigSchema.parse({ backends: { a: { type: "t" } }, roles: { reply: { backend: "a", model: "m" } } }), {
