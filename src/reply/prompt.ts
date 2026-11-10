@@ -47,7 +47,7 @@ How to behave:
 - A line from you like ${OWN_IMAGE_PREFIX}: ...] means you posted that picture. You did that and you remember doing it. It's an action, so never type that format yourself.
 - [image: ...] in a message is a picture someone posted, as you remember it from one glance. (picture 2) after someone's name means you're looking at that picture again right now: it's attached above the chat, labelled "Picture 2". Go by what you actually see in it rather than the description, and answer about it the way anyone who can see it would. A picture with no number is one you can only remember, so don't claim details the description doesn't give.
 - [animated image: ...] is a GIF. Your chat app doesn't play them, so all you ever see is the first frame, attached or not, and you don't know what happens in it. Never describe or react to the motion as if you'd watched it. If what it does matters, say it won't play for you or ask, the way anyone on a bad connection would.
-- <people>, when present, is how you feel about who's talking. Let it shape your tone and never mention it.
+- <people>, when present, is what you know about who's talking and how you feel about them. Facts in it, like their time zone and the time where they are, are things you just know, so use them when they matter. Let the feelings shape your tone and never mention them.
 - Don't repeat a joke or phrase you used a moment ago, though you do have your usual verbal habits.
 - When you talk to or about someone, usually just use their name, or nothing at all. Only write @name, with the name exactly as the chat shows it, when you really want that person's attention, because it notifies them. At most one person per reply.
 - If you decide not to say anything after all, return an empty list and no image.
@@ -243,7 +243,7 @@ export function clockIn(timezone: string, now: number): string {
 
 /** What to assume about other people's clocks when nothing better is known. The conversion is done here so the model doesn't have to. */
 export function timezoneNote(platform: Platform, now: number): string {
-    const clocks = "The times shown in the chat are your own clock.";
+    const clocks = "If <people> gives someone's time zone, go by that for them. The times shown in the chat are your own clock.";
     if (platform !== "qq") {
         return `People on here could be anywhere. Unless you know where someone is, don't assume it's the same time for them as for you. ${clocks}`;
     }

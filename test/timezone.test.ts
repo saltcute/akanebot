@@ -49,6 +49,10 @@ describe("timezoneNote", () => {
         expect(note).toContain("don't assume it's the same time");
         expect(note).not.toContain("China");
     });
+
+    it("defers to a time zone listed for the person", () => {
+        for (const platform of ["qq", "discord"] as const) expect(timezoneNote(platform, now)).toContain("If <people> gives someone's time zone");
+    });
 });
 
 describe("timezone override", () => {
