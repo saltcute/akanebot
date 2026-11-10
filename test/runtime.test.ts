@@ -6,7 +6,7 @@ import { People } from "../src/control/people.ts";
 import { MemoryControlStore } from "../src/control/state.ts";
 import type { GateFeatures } from "../src/gate/features.ts";
 import type { ImageFetcher } from "../src/images/download.ts";
-import type { ImageLook } from "../src/images/look.ts";
+import { type ImageLook, REFUSED_LOOK } from "../src/images/look.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
@@ -1618,6 +1618,19 @@ describe("senses", () => {
                 await settle();
                 expect(reply.calls).toHaveLength(1);
                 expect(reply.calls[0]?.images).toBeUndefined();
+            });
+
+            it("knows a picture was inappropriate when the vision model refuses it, and never looks again", async () => {
+                const { adapter, gate, reply, memoryStore, settle } = await setup({
+                    picturesPerReply: 3,
+                    vision: () => ({ kind: "refused", usage: USAGE }),
+                });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(gate.calls[0]?.transcript).toContain(`[image: ${REFUSED_LOOK.description}]`);
+                expect(reply.calls[0]?.transcript).toContain("[image: something inappropriate");
+                expect(reply.calls[0]?.images).toBeUndefined();
+                expect(memoryStore.savedImages()).toEqual([]);
             });
 
             it("only looks at pictures it already looked at when reading", async () => {

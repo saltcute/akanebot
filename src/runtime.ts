@@ -41,6 +41,7 @@ import {
     type ImageLook,
     imageLookSchema,
     LOOK_REQUEST,
+    REFUSED_LOOK,
     renderCaption,
     renderVisionInstructions,
 } from "./images/look.ts";
@@ -1276,6 +1277,8 @@ export class Runtime {
             maxOutput: VISION_MAX_OUTPUT,
             signal,
         });
+        // A refusal is about what the picture shows. Any other failure says nothing about it, so it stays an unread picture.
+        if (result.kind === "refused") return REFUSED_LOOK;
         if (result.kind !== "ok" || !result.data) return undefined;
         const description = flattenCaption(result.data.description, MAX_CAPTION_CHARS);
         if (description === "") return undefined;
