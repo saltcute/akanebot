@@ -37,6 +37,7 @@ const CANNED_GATE = JSON.stringify({
     quickReaction: "",
     safeToRepeat: true,
     aboutPicture: false,
+    asksForPicture: false,
     privateThought: "(fake backend)",
 });
 

@@ -57,6 +57,7 @@ export const personaSettingsSchema = z.strictObject({
             taste: z.string().default(""),
             pickiness: unit.default(0.7),
             useRate: unit.default(0),
+            requestRate: unit.default(0),
             maxKept: z.number().int().positive().default(200),
         })
         .prefault({}),

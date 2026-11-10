@@ -23,6 +23,7 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `repeatRate` | Chance of joining in each time it reads people repeating the same line word for word | Active |
 | `savedImages.taste` | What it likes enough to keep, shown only to the model judging pictures | Prompt only |
 | `savedImages.pickiness` | How much it has to like a reaction image before saving it | Active |
-| `savedImages.useRate` | Chance a casual reply has its saved pictures to choose from. It still sends one only if one fits | Active |
+| `savedImages.useRate` | Chance a casual reply has its saved pictures to choose from, on an ordinary day with someone it's neutral about. A good mood and liking the person raise it, a bad mood, a grudge or a low battery lower it. It still sends one only if one fits | Active |
+| `savedImages.requestRate` | The same chance when someone asks it for a picture, moved by the same things. A request skips the wait between pictures | Active |
 | `savedImages.maxKept` | How many it holds at most. Past this, what it has never sent and likes least is deleted | Active |
 | `reactions` | The only reactions it uses, per platform. `discord` lists emoji; `qq` maps each name to a QQ `emoji_id`, either a face ID or a decimal code point | Active |

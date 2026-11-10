@@ -19,7 +19,7 @@ export const PERSONA: Persona = {
     lowEffort: 0,
     repeatRate: 0,
     reactions: { discord: ["👍", "😭"], qq: { thumbs: 76, "👍": 128077 } },
-    savedImages: { taste: "", pickiness: 0.7, useRate: 0, maxKept: 200 },
+    savedImages: { taste: "", pickiness: 0.7, useRate: 0, requestRate: 0, maxKept: 200 },
     dailyLife: [],
     prose: "# Who I am\n小茜",
 };
@@ -40,6 +40,7 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         quickReaction: "",
         safeToRepeat: true,
         aboutPicture: false,
+        asksForPicture: false,
         privateThought: "嗯",
         ...overrides,
     };

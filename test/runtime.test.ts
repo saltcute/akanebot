@@ -2021,6 +2021,82 @@ describe("senses", () => {
                 expect(adapter.sentImages).toHaveLength(1);
             });
 
+            describe("when asked for one", () => {
+                const onRequest = (requestRate: number) => ({ savedImages: { ...PERSONA.savedImages, requestRate } });
+                const asks = { asksForPicture: true };
+
+                it("has her pictures in mind, though she'd rarely think of them unprompted", async () => {
+                    const memoryStore = new MemoryStore(":memory:");
+                    memoryStore.saveImage(saved());
+                    const { adapter, reply, trace, settle } = await setup({ memoryStore, persona: onRequest(1), gate: asks, reply: picksFirst });
+                    adapter.say("alice", "小茜 发张猫图");
+                    await settle();
+                    expect(reply.calls[0]?.transcript).toContain("<saved_images>");
+                    expect(reply.calls[0]?.volatile).toContain("You were asked for a picture, and the ones in <saved_images> came to mind.");
+                    expect(adapter.sentImages).toHaveLength(1);
+                    expect(trace.ofKind("image.offered").at(-1)?.detail).toMatchObject({ requested: true, chance: 1 });
+                });
+
+                it("sends another straight after one", async () => {
+                    const memoryStore = new MemoryStore(":memory:");
+                    memoryStore.saveImage(saved());
+                    memoryStore.saveImage(saved({ sha256: "b", description: "狗狗歪头" }));
+                    const { adapter, reply, settle } = await setup({ memoryStore, persona: onRequest(1), gate: asks, reply: picksFirst });
+                    adapter.say("alice", "小茜 发张图");
+                    await settle();
+                    adapter.say("alice", "再来一张");
+                    await settle();
+                    expect(reply.calls[1]?.transcript).toContain("<saved_images>");
+                    expect(adapter.sentImages).toHaveLength(2);
+                });
+
+                it("knows she isn't sending one when she can't be bothered", async () => {
+                    const memoryStore = new MemoryStore(":memory:");
+                    memoryStore.saveImage(saved());
+                    const { adapter, reply, trace, settle } = await setup({ memoryStore, persona: onRequest(0), gate: asks, reply: picksFirst });
+                    adapter.say("alice", "小茜 发张猫图");
+                    await settle();
+                    expect(reply.calls[0]?.transcript).not.toContain("<saved_images>");
+                    expect(reply.calls[0]?.volatile).toContain("you can't be bothered to dig one up");
+                    expect(adapter.sentImages).toEqual([]);
+                    expect(trace.ofKind("image.declined").at(-1)?.detail).toMatchObject({ reason: "unwilling" });
+                });
+
+                it("knows she has nothing to send when nothing is saved", async () => {
+                    const { adapter, reply, settle } = await setup({ persona: onRequest(1), gate: asks });
+                    adapter.say("alice", "小茜 发张猫图");
+                    await settle();
+                    expect(reply.calls[0]?.volatile).toContain("you have nothing saved that you could post here");
+                });
+
+                it("is less up for it when she's running out of energy", async () => {
+                    const memoryStore = new MemoryStore(":memory:");
+                    memoryStore.saveImage(saved());
+                    const { adapter, runtime, trace, settle } = await setup({ memoryStore, persona: onRequest(1), gate: asks });
+                    runtime.vitals.setBattery(0.16);
+                    adapter.say("alice", "小茜 发张猫图");
+                    await settle();
+                    const rolled = [...trace.ofKind("image.offered"), ...trace.ofKind("image.declined")];
+                    expect(rolled).toHaveLength(1);
+                    expect(rolled[0]?.detail?.chance).toBeCloseTo(0.5, 1);
+                });
+
+                it("doesn't take a request made to someone else as hers", async () => {
+                    const memoryStore = new MemoryStore(":memory:");
+                    memoryStore.saveImage(saved());
+                    const { adapter, reply, settle } = await setup({
+                        memoryStore,
+                        persona: { ...onRequest(1), talkativeness: 1 },
+                        gate: { ...asks, addressedToMe: "no", interest: 1 },
+                    });
+                    adapter.say("alice", "bob 发张猫图");
+                    await settle();
+                    expect(reply.calls).toHaveLength(1);
+                    expect(reply.calls[0]?.transcript).not.toContain("<saved_images>");
+                    expect(reply.calls[0]?.volatile).not.toContain("asked for a picture");
+                });
+            });
+
             it("keeps a walled-off group's pictures in that group", async () => {
                 const memoryStore = new MemoryStore(":memory:");
                 memoryStore.saveImage(saved({ scope: "cli:walled" }));

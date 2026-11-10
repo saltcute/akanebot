@@ -2,7 +2,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { People } from "../src/control/people.ts";
 import { downloadImage, type ImageFetcher, isImageSource, MAX_IMAGE_BYTES, sniffImageType } from "../src/images/download.ts";
-import { canUseHere } from "../src/images/offer.ts";
+import { canUseHere, offerChance } from "../src/images/offer.ts";
 import { shrinkImage } from "../src/images/shrink.ts";
 import { ManualClock } from "../src/lib/clock.ts";
 import type { SavedImage } from "../src/memory/store.ts";
@@ -84,6 +84,44 @@ describe("where a picture can go", () => {
         const gif = image({ link: "https://tenor.com/view/a" });
         expect(canUseHere(gif, "discord:b", sharing)).toBe(true);
         expect(canUseHere(gif, "qq:c", sharing)).toBe(false);
+    });
+});
+
+describe("whether her pictures come to mind", () => {
+    const rates = { useRate: 0.15, requestRate: 0.7 };
+    const ordinary = { requested: false, mood: 0, affinity: 0, battery: 1 };
+    const asked = { ...ordinary, requested: true };
+
+    it("uses the persona's rates on an ordinary day with someone she's neutral about", () => {
+        expect(offerChance(rates, ordinary)).toBeCloseTo(0.15);
+        expect(offerChance(rates, asked)).toBeCloseTo(0.7);
+    });
+
+    it("posts more on a good day and less on a bad one", () => {
+        expect(offerChance(rates, { ...ordinary, mood: 1 })).toBeGreaterThan(0.25);
+        expect(offerChance(rates, { ...ordinary, mood: -1 })).toBeLessThan(0.08);
+    });
+
+    it("posts more around people she likes", () => {
+        expect(offerChance(rates, { ...ordinary, affinity: 0.5 })).toBeGreaterThan(offerChance(rates, ordinary));
+        expect(offerChance(rates, { ...ordinary, affinity: -0.5 })).toBeLessThan(offerChance(rates, ordinary));
+    });
+
+    it("rarely turns down a friend who asks, and mostly turns down someone who's annoyed her", () => {
+        expect(offerChance(rates, { ...asked, affinity: 0.5 })).toBeGreaterThan(0.8);
+        expect(offerChance(rates, { ...asked, affinity: -0.5 })).toBeLessThan(0.5);
+        expect(offerChance(rates, { ...asked, affinity: -1 })).toBeLessThan(0.25);
+    });
+
+    it("runs out of energy for it", () => {
+        expect(offerChance(rates, { ...asked, battery: 0.15 })).toBeCloseTo(0.35);
+        expect(offerChance(rates, { ...asked, battery: 0 })).toBe(0);
+    });
+
+    it("leaves a rate of never or always alone", () => {
+        const bad = { requested: false, mood: -1, affinity: -1, battery: 1 };
+        expect(offerChance({ useRate: 1, requestRate: 1 }, bad)).toBe(1);
+        expect(offerChance({ useRate: 0, requestRate: 0 }, { ...bad, mood: 1, affinity: 1 })).toBe(0);
     });
 });
 

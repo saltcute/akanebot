@@ -12,6 +12,7 @@ const GATE_FEATURE_KEYS = [
     "towardMe",
     "safeToRepeat",
     "aboutPicture",
+    "asksForPicture",
 ];
 const RECALL_KEYS = ["id", "score", "detailed", "fromGroup"];
 
@@ -29,7 +30,8 @@ const SHOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
     "control.web": ["action", "minutes", "memory", "image", "user", "level", "familiarity", "affinity"],
     "gate.repeat": ["repeat", "probability"],
     "image.judged": ["verdict", "appeal"],
-    "image.offered": ["ids"],
+    "image.declined": ["reason", "chance"],
+    "image.offered": ["ids", "requested", "chance"],
     "image.saved": ["id", "mime", "size", "trimmed"],
     "image.skipped": ["reason"],
     "gate.silent": ["result"],

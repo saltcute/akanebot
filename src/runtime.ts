@@ -44,7 +44,7 @@ import {
     renderCaption,
     renderVisionInstructions,
 } from "./images/look.ts";
-import { canUseHere, chooseOffers, type OfferedImage } from "./images/offer.ts";
+import { canUseHere, chooseOffers, type OfferedImage, type OfferState, offerChance } from "./images/offer.ts";
 import { type InlineImage, isAnimated, shrinkImage } from "./images/shrink.ts";
 import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
@@ -232,6 +232,11 @@ const ROUTINE_REASON = "routine";
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception; names: Map<string, string> };
 type FetchedImage = { animated: boolean; inline?: InlineImage };
 type LookedAt = { message: ChatMessage; image: ChatImage; look: ImageLook };
+
+/** Why someone who asked for a picture isn't getting one: she doesn't feel like it, or has none she could post here. */
+type Declined = "unwilling" | "nothing";
+type ImageOffer = { offered: OfferedImage[]; declined?: Declined };
+const NO_OFFER: ImageOffer = { offered: [] };
 
 const GATE_MAX_OUTPUT = 600;
 const REPLY_MAX_OUTPUT = 2000;
@@ -1024,15 +1029,19 @@ export class Runtime {
         });
         people.push(...explainAliases(this.#people, window, recalled));
         const lowBattery = battery < LOW_BATTERY;
+        const technical = competence.mode !== "casual";
+        // Only a request made to her counts. Someone asking the room, or another member, is ordinary chat.
+        const requested = features.asksForPicture && decision.addressed;
+        const offerState = { requested, mood: day.mood, affinity: speakContext.affinity, battery };
+        const { offered, declined } = technical ? NO_OFFER : await this.#offerImages(channel, newMessages, now, offerState);
         const situation = [
             ...day.notes,
             timezoneNote(channel.ref.platform, now),
             ...(lowBattery ? ["You've been chatting all day and are running out of energy for it. Keep it very short."] : []),
             ...lateReplyNote(asker && decision.addressed ? now - asker.sentAt : 0),
             ...(lookup ? ["You just looked this up online and only half get it."] : []),
+            ...(requested && !technical ? [pictureRequestNote(declined)] : []),
         ];
-        const technical = competence.mode !== "casual";
-        const offered = technical ? [] : await this.#offerImages(channel, newMessages, now);
         const role = technical ? "technical" : "reply";
         const pictures = llm.canSee(role) ? choosePictures(window, firstNewIndex, features.aboutPicture, this.#options.picturesPerReply ?? 0) : [];
         const context = `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}`;
@@ -1123,22 +1132,33 @@ export class Runtime {
         if (picked) await this.#sendSavedImage(channel, picked, seenSeq, decision.addressed, lease);
     }
 
-    /** The roll comes first, so most replies cost nothing extra. The model only picks among the few it's shown. */
-    async #offerImages(channel: Channel, newMessages: readonly ChatMessage[], now: number): Promise<OfferedImage[]> {
+    /**
+     * The roll comes first, so most replies cost nothing extra. The model only picks among the few it's shown.
+     * Being asked skips the wait between pictures, since the battery and the send guards already stop her being farmed for them.
+     */
+    async #offerImages(channel: Channel, newMessages: readonly ChatMessage[], now: number, state: OfferState): Promise<ImageOffer> {
+        const { trace } = this.#options;
         const key = channelKey(channel.ref);
         const lastSent = this.#lastImageSentAt.get(key);
-        if (!channel.adapter.sendImage || (lastSent !== undefined && now - lastSent < IMAGE_COOLDOWN_MS)) return [];
-        if (!this.#imageRng.chance(this.#persona.savedImages.useRate)) return [];
+        const decline = (reason: Declined, chance?: number): ImageOffer => {
+            if (state.requested) trace.record("image.declined", { channel: key, detail: { reason, ...(chance === undefined ? {} : { chance }) } });
+            return { offered: [], declined: reason };
+        };
+        if (!channel.adapter.sendImage) return decline("nothing");
+        if (!state.requested && lastSent !== undefined && now - lastSent < IMAGE_COOLDOWN_MS) return NO_OFFER;
+        const chance = offerChance(this.#persona.savedImages, state);
+        if (!this.#imageRng.chance(chance)) return decline("unwilling", chance);
         const usable = this.memory.store
             .savedImages()
             .filter(
                 (image) => canUseHere(image, key, this.#sharing) && (image.lastSentAt === null || now - image.lastSentAt >= IMAGE_REUSE_AFTER_MS),
             );
-        if (usable.length === 0) return [];
+        if (usable.length === 0) return decline("nothing", chance);
         const query = await this.#options.embedder.embed(newMessages.map((message) => message.text).join(" "), "query");
         const offered = chooseOffers(usable, query, this.#imageRng);
-        this.#options.trace.record("image.offered", { channel: key, detail: { ids: offered.map(({ id }) => id).join(",") } });
-        return offered;
+        const detail = { ids: offered.map(({ id }) => id).join(","), requested: state.requested, chance };
+        trace.record("image.offered", { channel: key, detail });
+        return { offered };
     }
 
     async #sendSavedImage(channel: Channel, picked: OfferedImage, seenSeq: number, addressed: boolean, lease: Lease): Promise<void> {
@@ -1417,6 +1437,17 @@ function isSpoken(message: ChatMessage): boolean {
 
 function lateReplyNote(ageMs: number): string[] {
     return ageMs > LATE_REPLY_MS ? [`You're only just seeing this, about ${Math.round(ageMs / 60_000)} minutes after it was sent.`] : [];
+}
+
+/** She has to be told when none are coming, or she'd promise a picture she has no way to post. */
+function pictureRequestNote(declined: Declined | undefined): string {
+    if (declined === "unwilling") {
+        return "You were asked for a picture, but you can't be bothered to dig one up right now. You aren't sending one, so don't act as if you did.";
+    }
+    if (declined === "nothing") {
+        return "You were asked for a picture, but you have nothing saved that you could post here right now. You aren't sending one, so don't act as if you did.";
+    }
+    return "You were asked for a picture, and the ones in <saved_images> came to mind. Send one if it's close to what they asked for.";
 }
 
 function describeFailure(result: { kind: string; detail?: string }): Record<string, unknown> {
