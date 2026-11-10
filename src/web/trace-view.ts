@@ -11,6 +11,7 @@ const GATE_FEATURE_KEYS = [
     "highStakes",
     "towardMe",
     "safeToRepeat",
+    "aboutPicture",
 ];
 const RECALL_KEYS = ["id", "score", "detailed", "fromGroup"];
 
@@ -39,6 +40,7 @@ const SHOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
     "message.observed": ["observation"],
     "reaction.seen": ["noted", "removed"],
     "reply.abandoned": ["overtakenBy", "repeat"],
+    "reply.pictures": ["shown", "result"],
     "reply.silent": ["result"],
     "routine.change": ["activity", "present"],
     "send.blocked": ["reason"],

@@ -10,6 +10,11 @@ shadow: true
 # The bot goes silent for the rest of the UTC day once it has spent this much.
 dailyBudgetUsd: 2
 
+# How many pictures from the chat she looks at again while writing one reply, so she can answer about them and compare them.
+# Each costs about as much as a few thousand characters of text. 0 leaves her with one-line descriptions only.
+pictures:
+  perReply: 3
+
 # Runs on the CPU. The score band is specific to this model, so re-measure it if you change the model.
 embedder:
   type: transformers

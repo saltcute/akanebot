@@ -18,6 +18,7 @@ export const gateFeaturesSchema = z.object({
     lookUp: z.string(),
     quickReaction: z.string(),
     safeToRepeat: z.boolean(),
+    aboutPicture: z.boolean(),
     privateThought: z.string(),
 });
 
@@ -44,6 +45,7 @@ Fields:
 - lookUp: if this involves something ${persona.name} wouldn't know and would be curious about, a few generic search words for it. No names or personal details of anyone in the chat. Otherwise empty.
 - quickReaction: one reaction from ${reactions || "(none)"}, copied exactly, that would fit as a reaction to the latest message, or empty.
 - safeToRepeat: would it be harmless for ${persona.name} to post the latest message word for word as their own? true for ordinary memes, jokes and reactions. false for anything hateful, sexual, attacking a specific person or revealing someone's personal details, and for anything that would have ${persona.name} agree to meet in person or confess or promise something about themselves.
+- aboutPicture: are the new messages talking about a picture in the chat, shown as [image: ...]? true if they ask about one, comment on one, compare pictures, or only make sense to someone who can see one, even a picture posted a while ago.
 - privateThought: one short line of what ${persona.name} privately thinks, in their voice. They know these people only online, so it never assumes being together in person.
 
 Profile of ${persona.name}:

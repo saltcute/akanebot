@@ -92,8 +92,19 @@ export class ChannelPerception {
     }
 
     /** Swaps a message's text for a richer version, such as once a picture has been looked at. */
-    annotate(messageId: string, text: string): void {
-        for (const entry of this.#window) if (entry.message.messageId === messageId) entry.message = { ...entry.message, text };
+    annotate(messageId: string, text: string, seenImage?: ChatImage): void {
+        for (const entry of this.#window) {
+            if (entry.message.messageId === messageId) entry.message = { ...entry.message, text, ...(seenImage ? { seenImage } : {}) };
+        }
+    }
+
+    /** For pictures that can't be looked at again, such as ones whose link has expired. Their descriptions stay. */
+    forgetSeenImages(messageIds: readonly string[]): void {
+        for (const entry of this.#window) {
+            if (!messageIds.includes(entry.message.messageId)) continue;
+            const { seenImage: _seenImage, ...message } = entry.message;
+            entry.message = message;
+        }
     }
 
     /** Writes into the forward as it is now, so one dropped while the picture was being looked at stays dropped. */

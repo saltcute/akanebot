@@ -6,6 +6,7 @@ export const imageLookSchema = z.object({
     description: z.string(),
     reactionImage: z.boolean(),
     sensitive: z.boolean(),
+    explicit: z.boolean(),
     appeal: z.number(),
     useFor: z.string(),
 });
@@ -22,6 +23,7 @@ Fields:
 - description: one short plain sentence for someone who can't see it, including any short text visible in it. If it's sexual or graphically violent, say only that it's an image you'd rather not describe.
 - reactionImage: is it a meme, sticker or GIF of the kind people post to react to something or show a feeling? false for ordinary photos, screenshots, documents and adverts.
 - sensitive: true if it's sexual, graphically violent or hateful, attacks a real person, or shows anything that identifies someone, such as a personal photo of a real person, a name, handle, QR code, phone number, or a screenshot of a chat or profile. Well-known memes and cartoon characters are not sensitive.
+- explicit: true only if it's sexual or graphically violent.
 - appeal: 0 to 1, how much ${persona.name} would want to keep this to post later. Most pictures aren't worth keeping. What they like: ${taste}
 - useFor: a few words on the feeling or moment it would suit, such as "speechless" or "teasing someone". Empty if it isn't a reaction image.`;
 }

@@ -76,6 +76,8 @@ export type ChatMessage = ChannelRef & {
     text: string;
     /** Pictures attached to this message. Described only if the agent actually reads it. */
     images?: readonly ChatImage[];
+    /** The picture the agent looked at when it read this, so it can look again while the message is in view. Never set by an adapter. */
+    seenImage?: ChatImage;
     /** Emoji reactions other people have put on this message. */
     reactions?: readonly MessageReaction[];
     sentAt: number;

@@ -27,6 +27,7 @@ function describeConfig(config: AppConfig) {
         search: config.search,
         timing: config.timing,
         pacing: config.pacing,
+        pictures: config.pictures,
         limits: config.limits,
         memory: config.memory,
         control: { commandPrefix, admins, groups, statePath },

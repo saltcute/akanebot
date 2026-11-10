@@ -97,6 +97,7 @@ const runtime = new Runtime({
         dailyWritesPerUser: config.memory.dailyWritesPerUser,
     },
     pacing: config.pacing,
+    picturesPerReply: config.pictures.perReply,
     routine: true,
     search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
     fetchImage: fetchOverHttp,

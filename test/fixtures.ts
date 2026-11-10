@@ -39,6 +39,7 @@ export function features(overrides: Partial<GateFeatures> = {}): GateFeatures {
         lookUp: "",
         quickReaction: "",
         safeToRepeat: true,
+        aboutPicture: false,
         privateThought: "嗯",
         ...overrides,
     };

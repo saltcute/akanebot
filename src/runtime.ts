@@ -60,6 +60,7 @@ import { explainAliases } from "./reply/aliases.ts";
 import { exceedsCodeLimit, toBursts } from "./reply/bursts.ts";
 import { type GuardLimits, SendGuard } from "./reply/guards.ts";
 import { mentionablePeople, resolveMentions } from "./reply/mentions.ts";
+import { choosePictures, pictureLabel, type ShownPicture } from "./reply/pictures.ts";
 import {
     clockIn,
     renderGroupEvent,
@@ -106,6 +107,8 @@ export type RuntimeOptions = {
     search?: SearchBackend;
     /** Which accounts are the same person. */
     people?: People;
+    /** The most pictures from the chat shown to the reply model at once. Without it she only reads their descriptions. */
+    picturesPerReply?: number;
     /** Without it she can't download pictures, so she only collects ones that are just links. */
     fetchImage?: ImageFetcher;
 };
@@ -953,14 +956,32 @@ export class Runtime {
         ];
         const technical = competence.mode !== "casual";
         const offered = technical ? [] : await this.#offerImages(channel, newMessages, now);
-        const result = await llm.generate(technical ? "technical" : "reply", {
-            stable: renderReplyInstructions(persona),
-            transcript: `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}${transcript}`,
-            volatile: renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation }),
-            schema: replySchema,
-            maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
-            signal: lease.signal,
-        });
+        const role = technical ? "technical" : "reply";
+        const pictures = llm.canSee(role) ? choosePictures(window, firstNewIndex, features.aboutPicture, this.#options.picturesPerReply ?? 0) : [];
+        const context = `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}`;
+        const volatile = renderReplyState({ now, persona, features, competence, addressed: decision.addressed, situation });
+        const write = (shown: readonly ShownPicture[]) => {
+            const numbers = new Map(shown.map((picture) => [picture.messageId, picture.number]));
+            return llm.generate(role, {
+                stable: renderReplyInstructions(persona),
+                transcript: `${context}${shown.length > 0 ? renderTranscript(window, persona, firstNewIndex, numbers) : transcript}`,
+                volatile,
+                ...(shown.length > 0 ? { images: shown.map(({ image, number }) => ({ url: image.url, label: pictureLabel(number) })) } : {}),
+                schema: replySchema,
+                maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
+                signal: lease.signal,
+            });
+        };
+        let result = await write(pictures);
+        if (pictures.length > 0) {
+            trace.record("reply.pictures", { channel: key, ...idField, detail: { shown: pictures.length, result: result.kind } });
+            const rejected = result.kind === "refused" || (result.kind === "error" && !result.retryable);
+            if (rejected && !lease.signal.aborted) {
+                // A picture may be what it choked on, such as a link that has expired. She answers from the descriptions and doesn't try those again.
+                perception.forgetSeenImages(pictures.map((picture) => picture.messageId));
+                result = await write([]);
+            }
+        }
         if (result.kind !== "ok" || !result.data) {
             // Failures never reach the chat. The trace is where the operator finds them.
             trace.record("reply.silent", { channel: key, ...idField, detail: describeFailure(result) });
@@ -1124,7 +1145,8 @@ export class Runtime {
             const look = await this.#lookAt(image, persona, signal);
             if (!look) continue;
             const text = message.text.replace(IMAGE_PLACEHOLDER, `[image: ${look.description}]`);
-            perception.annotate(message.messageId, text);
+            // An explicit one is never looked at again. She keeps only the description, which says nothing.
+            perception.annotate(message.messageId, text, look.explicit ? undefined : image);
             this.memory.store.updateText(key, message.messageId, text);
             looked.push({ message, image, look });
         }

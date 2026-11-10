@@ -36,6 +36,7 @@ const CANNED_GATE = JSON.stringify({
     lookUp: "",
     quickReaction: "",
     safeToRepeat: true,
+    aboutPicture: false,
     privateThought: "(fake backend)",
 });
 
@@ -65,7 +66,7 @@ const adapter = new CliAdapter({
 const fakeFactory: BackendFactory = (_config, model) =>
     new FakeBackend(() => {
         if (model === "scripted-vision")
-            return JSON.stringify({ description: "(a picture)", reactionImage: false, sensitive: false, appeal: 0, useFor: "" });
+            return JSON.stringify({ description: "(a picture)", reactionImage: false, sensitive: false, explicit: false, appeal: 0, useFor: "" });
         if (model === "scripted-extract") return JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
         if (model === "scripted-consolidate") return JSON.stringify({ replaced: [] });
         if (model !== "scripted-gate") return JSON.stringify({ messages: [rng.pick(CANNED_REPLIES)] });
@@ -108,7 +109,13 @@ const runtime = new Runtime({
     controlStore: new MemoryControlStore(),
     // Off by default so you can test at any hour and without waiting.
     routine: process.argv.includes("--routine"),
-    ...(useFake ? {} : { search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)), fetchImage: fetchOverHttp }),
+    ...(useFake
+        ? {}
+        : {
+              picturesPerReply: config.pictures.perReply,
+              search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
+              fetchImage: fetchOverHttp,
+          }),
     ...(process.argv.includes("--paced") ? { pacing: config.pacing } : {}),
     // A separate database, so testing here never touches what the live bot remembers.
     memoryStore: new MemoryStore(useFake ? ":memory:" : SIM_DATABASE),

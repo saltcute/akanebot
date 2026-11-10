@@ -44,6 +44,8 @@ type Setup = {
     search?: SearchBackend;
     vision?: FakeResponder;
     fetchImage?: ImageFetcher;
+    picturesPerReply?: number;
+    replyIsBlind?: boolean;
 };
 
 const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
@@ -67,7 +69,7 @@ function asLook(respond: FakeResponder): FakeResponder {
 }
 
 function look(overrides: Partial<ImageLook> = {}): ImageLook {
-    return { description: "猫猫瞪眼", reactionImage: false, sensitive: false, appeal: 0, useFor: "", ...overrides };
+    return { description: "猫猫瞪眼", reactionImage: false, sensitive: false, explicit: false, appeal: 0, useFor: "", ...overrides };
 }
 
 function chatLines(transcript: string | undefined): string[] {
@@ -87,7 +89,7 @@ async function setup(options: Setup) {
     const vision = new FakeBackend(asLook(options.vision ?? (() => "一只橘猫")));
     const consolidateBackend = new FakeBackend(() => JSON.stringify({ replaced: [] }));
     const memoryStore = options.memoryStore ?? new MemoryStore(":memory:");
-    const reply = new FakeBackend(asMessages(options.reply ?? (() => "哈哈")));
+    const reply = new FakeBackend(asMessages(options.reply ?? (() => "哈哈")), options.replyIsBlind ? { vision: false } : {});
     const technical = new FakeBackend(asMessages(options.technical ?? (() => "技术回复")));
     const cost = new CostMeter({ clock, prices: { m: { input: 1_000_000, cachedInput: 0, output: 0 } }, dailyBudgetUsd: options.budget ?? 1000 });
     const llm = new LlmRegistry(
@@ -144,6 +146,7 @@ async function setup(options: Setup) {
         ...(options.search ? { search: options.search } : {}),
         ...(options.people ? { people: options.people } : {}),
         ...(options.fetchImage ? { fetchImage: options.fetchImage } : {}),
+        ...(options.picturesPerReply === undefined ? {} : { picturesPerReply: options.picturesPerReply }),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -1538,6 +1541,132 @@ describe("senses", () => {
             adapter.say("alice", `[img:${url}]`);
             await settle();
             expect(gate.calls[0]?.transcript).toContain("[image]");
+        });
+
+        describe("looking again while replying", () => {
+            const other = "https://example.com/dog.png";
+
+            it("shows the reply model a picture just posted, tied to its line in the chat", async () => {
+                const { adapter, gate, reply, trace, settle } = await setup({ picturesPerReply: 3 });
+                adapter.say("alice", `看 [img:${url}]`);
+                await settle();
+                expect(reply.calls[0]?.images).toEqual([{ url, label: "Picture 1:" }]);
+                expect(chatLines(reply.calls[0]?.transcript)).toEqual(["alice (picture 1): 看 [image: 一只橘猫]"]);
+                expect(gate.calls[0]?.transcript).not.toContain("(picture");
+                expect(trace.ofKind("reply.pictures")[0]?.detail).toEqual({ shown: 1, result: "ok" });
+            });
+
+            it("only reads descriptions unless it's switched on", async () => {
+                const { adapter, reply, settle } = await setup({});
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(reply.calls[0]?.images).toBeUndefined();
+            });
+
+            it("doesn't look again once the chat has moved on", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3 });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                adapter.say("alice", "今天好冷");
+                await settle();
+                expect(reply.calls[1]?.images).toBeUndefined();
+                expect(reply.calls[1]?.transcript).not.toContain("(picture");
+            });
+
+            it("looks at an earlier picture when the talk turns to it", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3, gates: [{}, { aboutPicture: true }] });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                adapter.say("bob", "刚才那张图里是什么品种");
+                await settle();
+                expect(reply.calls[1]?.images).toEqual([{ url, label: "Picture 1:" }]);
+            });
+
+            it("looks at a picture someone replies to", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3 });
+                const messageId = adapter.say("alice", `[img:${url}]`);
+                await settle();
+                adapter.say("bob", "这是哪", "group", { messageId, by: "alice", byUser: "cli:alice", text: "[image]", isSelf: false });
+                await settle();
+                expect(reply.calls[1]?.images).toEqual([{ url, label: "Picture 1:" }]);
+            });
+
+            it("brings earlier pictures along to compare, newest first up to the limit, numbered in chat order", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 2 });
+                adapter.say("alice", "[img:https://example.com/old.png]");
+                await settle();
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                adapter.say("bob", `[img:${other}]`);
+                await settle();
+                expect(reply.calls[2]?.images).toEqual([
+                    { url, label: "Picture 1:" },
+                    { url: other, label: "Picture 2:" },
+                ]);
+                expect(chatLines(reply.calls[2]?.transcript).filter((line) => line.includes("(picture"))).toEqual([
+                    "alice (picture 1): [image: 一只橘猫]",
+                    "bob (picture 2): [image: 一只橘猫]",
+                ]);
+            });
+
+            it("never looks again at an explicit one", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3, vision: () => JSON.stringify(look({ explicit: true })) });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(reply.calls).toHaveLength(1);
+                expect(reply.calls[0]?.images).toBeUndefined();
+            });
+
+            it("only looks at pictures it already looked at when reading", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3, vision: () => ({ kind: "error", retryable: true }) });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(reply.calls[0]?.images).toBeUndefined();
+            });
+
+            it("shows nothing to a model that can't see", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3, replyIsBlind: true });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(reply.calls[0]?.images).toBeUndefined();
+                expect(reply.calls[0]?.transcript).not.toContain("(picture");
+            });
+
+            it("answers from the description if the model rejects a picture, and doesn't try that one again", async () => {
+                const { adapter, reply, trace, settle } = await setup({
+                    picturesPerReply: 3,
+                    reply: (request) => (request.images ? { kind: "refused", usage: USAGE } : "哈哈"),
+                    gates: [{}, { aboutPicture: true }],
+                });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(reply.calls.map((call) => call.images?.length)).toEqual([1, undefined]);
+                expect(reply.calls[1]?.transcript).toContain("alice: [image: 一只橘猫]");
+                expect(adapter.sent.map((sent) => sent.text)).toEqual(["哈哈"]);
+                expect(trace.ofKind("reply.pictures")[0]?.detail).toEqual({ shown: 1, result: "refused" });
+                expect(trace.ofKind("alert")).toHaveLength(0);
+                adapter.say("bob", "那张图怎么了");
+                await settle();
+                expect(reply.calls).toHaveLength(3);
+                expect(reply.calls[2]?.images).toBeUndefined();
+            });
+
+            it("doesn't ask twice when the model is simply unreachable", async () => {
+                const { adapter, reply, settle } = await setup({ picturesPerReply: 3, reply: () => ({ kind: "error", retryable: true }) });
+                adapter.say("alice", `[img:${url}]`);
+                await settle();
+                expect(reply.calls).toHaveLength(1);
+            });
+
+            it("shows the technical model pictures too", async () => {
+                const { adapter, technical, settle } = await setup({
+                    picturesPerReply: 3,
+                    gate: { isTechnical: true, domain: "web", difficulty: 2 },
+                });
+                adapter.say("alice", `这个报错怎么回事 [img:${url}]`);
+                await settle();
+                expect(technical.calls[0]?.images).toEqual([{ url, label: "Picture 1:" }]);
+            });
         });
 
         describe("inside a forward", () => {
