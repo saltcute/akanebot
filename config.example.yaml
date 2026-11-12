@@ -41,6 +41,10 @@ links:
     maxContentTokens: 6000
   sites: true
   blockedHosts: []
+  # When the reader can't read a page, fetch it from this machine instead. Only the title and description are read, private
+  # addresses are refused and every redirect is checked, but the page's owner sees this machine's IP and that the link was opened.
+  direct:
+    enabled: false
 
 memory:
   path: data/memory.db

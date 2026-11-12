@@ -3,6 +3,7 @@ import type { Clock } from "../lib/clock.ts";
 import type { Usage } from "../llm/backend.ts";
 import { createLinkReader } from "../llm/factories.ts";
 import { linkReaderConfigSchema } from "../llm/links.ts";
+import { createDirectReader } from "./direct.ts";
 import { LinkOpener } from "./open.ts";
 import { httpSiteFetcher } from "./sites.ts";
 
@@ -14,6 +15,11 @@ export const linksConfigSchema = z
         sites: z.boolean().default(true),
         /** Hosts she never opens, on top of the built-in document and file-sharing hosts. A host covers its subdomains. */
         blockedHosts: z.array(z.string().min(1)).default([]),
+        /**
+         * Lets the bot fetch a page itself when the reader can't. It only reads a page's title and description, refuses every
+         * private address and checks each redirect, but whoever runs the page sees this machine's IP and that the link was opened.
+         */
+        direct: z.strictObject({ enabled: z.boolean().default(false) }).prefault({}),
     })
     .prefault({});
 
@@ -29,5 +35,6 @@ export function createLinkOpener(
         sites: config.sites ? { fetcher: httpSiteFetcher, options: { youtubeApiKey: options.youtubeApiKey } } : undefined,
         reader: createLinkReader(config.reader, options.onUsage),
         blockedHosts: config.blockedHosts,
+        direct: config.direct.enabled ? createDirectReader({ clock: options.clock, blockedHosts: config.blockedHosts }) : undefined,
     });
 }
