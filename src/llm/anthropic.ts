@@ -138,7 +138,8 @@ export class AnthropicLinkReader implements LinkReader {
                 output_config: { effort: "low" },
                 tools: [
                     {
-                        type: "web_fetch_20260209",
+                        // The newer version filters results with code, which a single page doesn't need and which nearly doubles the input.
+                        type: "web_fetch_20250910",
                         name: "web_fetch",
                         max_uses: 1,
                         max_content_tokens: this.#maxContentTokens,

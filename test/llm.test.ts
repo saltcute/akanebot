@@ -142,7 +142,7 @@ describe("AnthropicLinkReader", () => {
         expect(sent[0]?.system).toBe(LINK_INSTRUCTIONS);
         expect(sent[0]?.messages).toEqual([{ role: "user", content: "Page: https://example.com/a" }]);
         expect(sent[0]?.tools).toEqual([
-            { type: "web_fetch_20260209", name: "web_fetch", max_uses: 1, max_content_tokens: 100, allowed_domains: ["example.com"] },
+            { type: "web_fetch_20250910", name: "web_fetch", max_uses: 1, max_content_tokens: 100, allowed_domains: ["example.com"] },
         ]);
         expect(costs).toEqual([10]);
     });
