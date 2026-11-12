@@ -13,6 +13,7 @@ dailyBudgetUsd: 2
 # How many pictures from the chat she looks at again while writing one reply, so she can answer about them and compare them.
 # Each costs about as much as a few thousand characters of text. 0 leaves her with one-line descriptions only.
 # They're shrunk to maxEdge pixels on the long edge first, which keeps a phone screenshot from costing several times more. 0 sends them as they are.
+# A GIF is always shown as a sheet of a few of its frames, which fits inside maxEdge, or 1024 when it's 0.
 pictures:
   perReply: 3
   maxEdge: 1024

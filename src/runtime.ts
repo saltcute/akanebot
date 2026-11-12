@@ -34,13 +34,14 @@ import { type GateFeatures, gateFeaturesSchema, renderGateInstructions } from ".
 import { allAimedElsewhere, decideToRepeat, decideToSpeak, findFollowUp, findNamer, overruleMisaddress } from "./gate/policy.ts";
 import { findRepeatChain } from "./gate/repeat.ts";
 import { type DownloadResult, downloadImage, type ImageFetcher, linkedImage } from "./images/download.ts";
+import { type FrameSheet, frameSheet } from "./images/frames.ts";
 import { judgeImage } from "./images/keep.ts";
 import {
-    ANIMATION_LOOK_REQUEST,
     flattenCaption,
     type ImageLook,
     imageLookSchema,
-    LOOK_REQUEST,
+    lookRequest,
+    type Motion,
     REFUSED_LOOK,
     renderCaption,
     renderVisionInstructions,
@@ -231,12 +232,19 @@ export type BodySnapshot = {
 };
 
 const KILL_REASON = "kill";
+const DEFAULT_SHEET_EDGE = 1024;
 const ROUTINE_REASON = "routine";
 
 /** `names` is what each person here was last called, by user key. */
 type Channel = { ref: ChannelRef; adapter: Adapter; perception: ChannelPerception; names: Map<string, string> };
-type FetchedImage = { animated: boolean; inline?: InlineImage };
+/** `frames` is set for an animation whose file could be read, and is what any model is shown of it in place of the picture. */
+type FetchedImage = { animated: boolean; inline?: InlineImage; frames?: FrameSheet };
 type LookedAt = { message: ChatMessage; image: ChatImage; look: ImageLook };
+
+function motionOf({ animated, frames }: FetchedImage): Motion {
+    if (frames) return "frames";
+    return animated ? "firstFrame" : "still";
+}
 
 /** Why someone who asked for a picture isn't getting one: she doesn't feel like it, or has none she could post here. */
 type Declined = "unwilling" | "nothing";
@@ -1082,8 +1090,10 @@ export class Runtime {
         const write = (shown: readonly ShownPicture[]) => {
             const numbers = new Map(shown.map((picture) => [picture.messageId, picture.number]));
             const images = shown.map(({ image, number }, index) => {
-                const { inline, animated = false } = fetched[index] ?? {};
-                return { url: image.url, label: pictureLabel(number, animated), ...(inline ? { inline } : {}) };
+                const picture = fetched[index] ?? { animated: false };
+                const inline = picture.frames?.sheet ?? picture.inline;
+                const label = pictureLabel(number, motionOf(picture), picture.frames?.frames, picture.frames?.seconds);
+                return { url: image.url, label, ...(inline ? { inline } : {}) };
             });
             return llm.generate(role, {
                 stable: renderReplyInstructions(persona),
@@ -1276,10 +1286,10 @@ export class Runtime {
         for (const message of withImages) {
             const [image] = message.images ?? [];
             if (!image) continue;
-            const { animated } = await this.#fetched(message.platform, image);
-            const look = await this.#lookAt(image, animated, persona, signal);
+            const fetched = await this.#fetched(message.platform, image);
+            const look = await this.#lookAt(image, fetched, persona, signal);
             if (!look) continue;
-            const text = message.text.replace(IMAGE_PLACEHOLDER, () => renderCaption(look.description, animated));
+            const text = message.text.replace(IMAGE_PLACEHOLDER, () => renderCaption(look.description, motionOf(fetched)));
             // An explicit one is never looked at again. She keeps only the description, which says nothing.
             perception.annotate(message.messageId, text, look.explicit ? undefined : image);
             this.memory.store.updateText(key, message.messageId, text);
@@ -1291,19 +1301,21 @@ export class Runtime {
             .flatMap(({ messageId, platform, forwarded }) => forwardedImages(forwarded ?? []).map((image) => ({ messageId, platform, image })))
             .slice(0, MAX_IMAGES_PER_ATTEND - withImages.length);
         for (const { messageId, platform, image } of inForwards) {
-            const { animated } = await this.#fetched(platform, image);
-            const look = await this.#lookAt(image, animated, persona, signal);
-            if (look) perception.describeForwardedImage(messageId, image, renderCaption(look.description, animated));
+            const fetched = await this.#fetched(platform, image);
+            const look = await this.#lookAt(image, fetched, persona, signal);
+            if (look) perception.describeForwardedImage(messageId, image, renderCaption(look.description, motionOf(fetched)));
         }
         return looked;
     }
 
-    async #lookAt(image: ChatImage, animated: boolean, persona: Persona, signal: AbortSignal): Promise<ImageLook | undefined> {
+    /** An animation is judged on its frames, so one that turns explicit after a harmless start is never kept or shown again. */
+    async #lookAt(image: ChatImage, fetched: FetchedImage, persona: Persona, signal: AbortSignal): Promise<ImageLook | undefined> {
+        const { frames } = fetched;
         const result = await this.#options.llm.generate("vision", {
             stable: renderVisionInstructions(persona),
-            transcript: animated ? ANIMATION_LOOK_REQUEST : LOOK_REQUEST,
+            transcript: lookRequest(motionOf(fetched), frames?.frames, frames?.seconds),
             volatile: "",
-            images: [image],
+            images: [frames ? { url: image.url, inline: frames.sheet } : image],
             schema: imageLookSchema,
             maxOutput: VISION_MAX_OUTPUT,
             signal,
@@ -1317,9 +1329,9 @@ export class Runtime {
     }
 
     /**
-     * What the picture's own file says: whether it moves, and a copy small enough to be cheap to look at again. Kept against the
-     * picture itself, so it goes when its message leaves the window. One that can't be fetched or decoded is taken for a still
-     * picture and shown by its link.
+     * What the picture's own file says: whether it moves, a sheet of its frames if it does, and a copy small enough to be cheap
+     * to look at again. Kept against the picture itself, so it goes when its message leaves the window. One that can't be
+     * fetched or decoded is taken for a still picture and shown by its link.
      */
     #fetched(platform: Platform, image: ChatImage): Promise<FetchedImage> {
         const { fetchImage, clock, pictureMaxEdge = 0 } = this.#options;
@@ -1330,8 +1342,13 @@ export class Runtime {
         if (existing) return existing;
         const fetched = downloadImage(fetchImage, platform, image.url, clock).then(async (download): Promise<FetchedImage> => {
             if (download.kind !== "ok") return { animated: false };
+            if (await isAnimated(download.bytes)) {
+                // Frames have to be laid out whatever the shrinking setting, since an animation can't be shown as it is.
+                const frames = await frameSheet(download.bytes, pictureMaxEdge || DEFAULT_SHEET_EDGE);
+                return { animated: true, ...(frames ? { frames } : {}) };
+            }
             const inline = pictureMaxEdge > 0 ? await shrinkImage(download.bytes, pictureMaxEdge) : undefined;
-            return { animated: await isAnimated(download.bytes), ...(inline ? { inline } : {}) };
+            return { animated: false, ...(inline ? { inline } : {}) };
         });
         this.#fetchedImages.set(image, fetched);
         return fetched;

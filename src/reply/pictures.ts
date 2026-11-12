@@ -1,4 +1,5 @@
 import type { ChatImage, ChatMessage } from "../adapters/types.ts";
+import type { Motion } from "../images/look.ts";
 
 /** A picture shown to the reply model itself. `number` is how the transcript and the attached image refer to each other. */
 export type ShownPicture = { messageId: string; number: number; image: ChatImage };
@@ -26,6 +27,10 @@ export function choosePictures(window: readonly ChatMessage[], firstNewIndex: nu
 }
 
 /** Written just before each attached picture. */
-export function pictureLabel(number: number, animated = false): string {
-    return animated ? `Picture ${number} (the first frame of an animated GIF, which is all you can see):` : `Picture ${number}:`;
+export function pictureLabel(number: number, motion: Motion = "still", frames = 0, seconds = 0): string {
+    if (motion === "frames") {
+        return `Picture ${number} (an animated GIF of about ${seconds} seconds, shown as ${frames} of its frames in order, left to right and top to bottom):`;
+    }
+    if (motion === "firstFrame") return `Picture ${number} (the first frame of an animated GIF that didn't load past it):`;
+    return `Picture ${number}:`;
 }

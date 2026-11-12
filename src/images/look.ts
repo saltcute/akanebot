@@ -14,13 +14,28 @@ export const imageLookSchema = z.object({
 export type ImageLook = z.infer<typeof imageLookSchema>;
 
 export const LOOK_REQUEST = "Look at this picture.";
-/** A model only ever gets the first frame, so it's told, or it describes a moving picture as a still one. */
-export const ANIMATION_LOOK_REQUEST =
-    "Look at this picture. It's an animated GIF and this is only its first frame. Describe what this frame shows, and don't guess what happens next.";
+/**
+ * How much of a picture's motion she saw. A model only takes a still picture, so an animation is shown as a sheet of its
+ * frames. One whose file couldn't be read, or a GIF from Discord's picker, is only a link, and the model gets its first frame.
+ */
+export type Motion = "still" | "frames" | "firstFrame";
 
-/** How a picture she looked at reads in the chat. Code writes the word "animated", from the file itself. */
-export function renderCaption(description: string, animated: boolean): string {
-    return `[${animated ? "animated image" : "image"}: ${description}]`;
+/** What the vision model is told about the picture it's given, or it describes a moving picture as a still one. */
+export function lookRequest(motion: Motion, frames = 0, seconds = 0): string {
+    if (motion === "frames") {
+        return `Look at this picture. It's ${frames} frames from an animated GIF that plays for about ${seconds} seconds, in order left to right and top to bottom. Describe what happens in it as one moving picture, not frame by frame.`;
+    }
+    if (motion === "firstFrame") {
+        return "Look at this picture. It's an animated GIF and this is only its first frame. Describe what this frame shows, and don't guess what happens next.";
+    }
+    return LOOK_REQUEST;
+}
+
+/** How a picture she looked at reads in the chat. Code writes the word "animated", and whether she saw it move, from the file itself. */
+export function renderCaption(description: string, motion: Motion): string {
+    if (motion === "frames") return `[animated image: ${description}]`;
+    if (motion === "firstFrame") return `[animated image, first frame only: ${description}]`;
+    return `[image: ${description}]`;
 }
 
 /**

@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { People } from "../src/control/people.ts";
 import { downloadImage, type ImageFetcher, isImageSource, MAX_IMAGE_BYTES, sniffImageType } from "../src/images/download.ts";
+import { frameSheet, pickFrames, sheetGrid } from "../src/images/frames.ts";
 import { canUseHere, offerChance } from "../src/images/offer.ts";
 import { shrinkImage } from "../src/images/shrink.ts";
 import { ManualClock } from "../src/lib/clock.ts";
@@ -201,5 +202,72 @@ describe("shrinkImage", () => {
 
     it("gives up on bytes that aren't a picture", async () => {
         await expect(shrinkImage(Uint8Array.of(1, 2, 3), 300)).resolves.toBeUndefined();
+    });
+});
+
+describe("frameSheet", () => {
+    const gif = async (colours: readonly string[], delay?: number[], size = 20) => {
+        const frames = await Promise.all(
+            colours.map((background) =>
+                sharp({ create: { width: size, height: size, channels: 3, background } })
+                    .png()
+                    .toBuffer(),
+            ),
+        );
+        return sharp(frames, { join: { animated: true } })
+            .gif(delay ? { delay } : {})
+            .toBuffer();
+    };
+    const decode = (data: string | undefined) => sharp(Buffer.from(data ?? "", "base64"));
+
+    it("spreads the frames over the time it plays, keeping the first and the last", () => {
+        expect(pickFrames([100, 100, 100, 100, 100, 100, 100, 100, 100, 100], 6)).toEqual([0, 2, 4, 6, 8, 9]);
+        // Most of its time is on frame 1, so most of the picks are too.
+        expect(pickFrames([100, 2000, 100, 100], 4)).toEqual([0, 1, 3]);
+        expect(pickFrames([100, 100], 6)).toEqual([0, 1]);
+        expect(pickFrames([], 6)).toEqual([]);
+    });
+
+    it("lays the frames out as square as it can", () => {
+        expect([2, 3, 4, 5, 6].map(sheetGrid)).toEqual([
+            { columns: 2, rows: 1 },
+            { columns: 2, rows: 2 },
+            { columns: 2, rows: 2 },
+            { columns: 3, rows: 2 },
+            { columns: 3, rows: 2 },
+        ]);
+    });
+
+    it("shows the chosen frames in order, left to right and top to bottom", async () => {
+        const colours = ["#ff0000", "#00ff00", "#0000ff", "#ffff00"];
+        const sheet = await frameSheet(await gif(colours, [100, 100, 100, 100]), 1000);
+        expect(sheet).toMatchObject({ frames: 4, seconds: 0.4 });
+        const image = decode(sheet?.sheet.data);
+        expect(await image.metadata()).toMatchObject({ width: 44, height: 44, format: "webp" });
+        const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+        const at = (x: number, y: number) =>
+            Array.from(data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3));
+        const close = (pixel: number[], expected: number[]) => pixel.every((value, index) => Math.abs(value - (expected[index] ?? 0)) < 40);
+        expect(close(at(10, 10), [255, 0, 0])).toBe(true);
+        expect(close(at(34, 10), [0, 255, 0])).toBe(true);
+        expect(close(at(10, 34), [0, 0, 255])).toBe(true);
+        expect(close(at(34, 34), [255, 255, 0])).toBe(true);
+    });
+
+    it("fits the sheet inside the limit and shows at most six frames", async () => {
+        const colours = Array.from({ length: 12 }, (_, index) => `#${(index * 20).toString(16).padStart(2, "0")}0000`);
+        const sheet = await frameSheet(await gif(colours, undefined, 200), 300);
+        expect(sheet).toMatchObject({ frames: 6, seconds: 1.2 });
+        const { width = 0, height = 0 } = await decode(sheet?.sheet.data).metadata();
+        expect(Math.max(width, height)).toBeLessThanOrEqual(300);
+        expect(width).toBeGreaterThan(height);
+    });
+
+    it("gives up on a still picture or bytes that aren't one", async () => {
+        const still = await sharp({ create: { width: 20, height: 20, channels: 3, background: "#fff" } })
+            .png()
+            .toBuffer();
+        await expect(frameSheet(still, 300)).resolves.toBeUndefined();
+        await expect(frameSheet(Uint8Array.of(1, 2, 3), 300)).resolves.toBeUndefined();
     });
 });
