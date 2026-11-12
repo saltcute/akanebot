@@ -106,6 +106,8 @@ export type ChatMessage = ChannelRef & {
     isSelf: boolean;
     /** Delivered as history (for example after a reconnect) rather than live. */
     isBacklog: boolean;
+    /** A link the agent opened while reading this, and what took its place in the text. Never set by an adapter. */
+    readLink?: { url: string; caption: string };
     /** Its author changed it after sending. Never set by an adapter. */
     edited?: boolean;
     /** This line is a platform event rather than something someone said. `involves` is who it's about, as user keys, and `quotes` is the message it shows part of. */

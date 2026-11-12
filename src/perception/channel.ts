@@ -98,6 +98,13 @@ export class ChannelPerception {
         }
     }
 
+    /** Swaps a link for what she read there. Kept with the message, so an edit that leaves the link in can put it back. */
+    noteLink(messageId: string, text: string, readLink: { url: string; caption: string }): void {
+        for (const entry of this.#window) {
+            if (entry.message.messageId === messageId) entry.message = { ...entry.message, text, readLink };
+        }
+    }
+
     /** For an edit, or something the platform filled in after delivery. Who it's addressed to stays as it was when it arrived. */
     revise(messageId: string, text: string, mentions: ChatMessage["mentions"], edited: boolean): void {
         for (const entry of this.#window) {

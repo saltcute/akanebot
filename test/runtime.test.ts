@@ -11,9 +11,11 @@ import { ManualClock } from "../src/lib/clock.ts";
 import { CostMeter } from "../src/lib/cost.ts";
 import { Rng } from "../src/lib/rng.ts";
 import { DecisionTrace } from "../src/lib/trace.ts";
+import { LinkOpener } from "../src/links/open.ts";
 import type { LlmResult, Usage } from "../src/llm/backend.ts";
 import { NullEmbedder } from "../src/llm/embedder.ts";
 import { FakeBackend, type FakeResponder, type FakeResponse } from "../src/llm/fake.ts";
+import type { LinkReader, LinkReaderResult } from "../src/llm/links.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 import type { SearchBackend } from "../src/llm/search.ts";
 import { MemoryStore, type SavedImageDraft } from "../src/memory/store.ts";
@@ -48,6 +50,7 @@ type Setup = {
     picturesPerReply?: number;
     pictureMaxEdge?: number;
     replyIsBlind?: boolean;
+    links?: LinkOpener;
 };
 
 const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
@@ -150,6 +153,7 @@ async function setup(options: Setup) {
         ...(options.fetchImage ? { fetchImage: options.fetchImage } : {}),
         ...(options.picturesPerReply === undefined ? {} : { picturesPerReply: options.picturesPerReply }),
         ...(options.pictureMaxEdge === undefined ? {} : { pictureMaxEdge: options.pictureMaxEdge }),
+        ...(options.links ? { links: options.links } : {}),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -2512,5 +2516,131 @@ describe("CliAdapter mentions", () => {
     it("lists who else was mentioned", async () => {
         expect((await said("@akane @bob, 看 a@b.com"))?.mentions).toEqual(["bob"]);
         expect((await said("没人"))?.mentions).toBeUndefined();
+    });
+});
+
+describe("opening links", () => {
+    const curious = { links: { curiosity: 1, dailyCap: 10 } };
+    const page: LinkReaderResult = { kind: "read", title: "新闻", gist: "发生了一些事。" };
+    const caption = "[link: news.example · 新闻 — 发生了一些事。]";
+
+    function opener(result: LinkReaderResult | (() => Promise<LinkReaderResult>) = page) {
+        const read: string[] = [];
+        const reader: LinkReader = {
+            read: async (url) => {
+                read.push(url);
+                return typeof result === "function" ? result() : result;
+            },
+        };
+        return { links: new LinkOpener({ clock: new ManualClock(), reader }), read };
+    }
+
+    it("reads the page before deciding, and what she read takes the link's place everywhere", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { links, read } = opener();
+        const { adapter, gate, reply, trace, settle } = await setup({ links, memoryStore, persona: curious });
+        adapter.say("bob", "看 https://news.example/a?utm_source=qq 哈哈");
+        await settle();
+        expect(read).toEqual(["https://news.example/a"]);
+        expect(chatLines(gate.calls[0]?.transcript)).toEqual([`bob: 看 ${caption} 哈哈`]);
+        expect(chatLines(reply.calls[0]?.transcript)).toEqual([`bob: 看 ${caption} 哈哈`]);
+        expect(memoryStore.recentAttended("cli:group", 10).map((message) => message.text)).toContain(`看 ${caption} 哈哈`);
+        const events = trace.ofKind("link.read");
+        expect(events.map((event) => event.detail)).toEqual([{ site: "web", layer: "reader" }]);
+        expect(JSON.stringify(trace.all())).not.toContain("news.example");
+    });
+
+    it("opens nothing without curiosity, past the daily cap, or when it's already been seen", async () => {
+        const incurious = opener();
+        const first = await setup({ links: incurious.links, persona: { links: { curiosity: 0, dailyCap: 10 } } });
+        first.adapter.say("bob", "https://news.example/a");
+        await first.settle();
+        expect(incurious.read).toEqual([]);
+
+        const capped = opener();
+        const second = await setup({ links: capped.links, persona: { links: { curiosity: 1, dailyCap: 2 } } });
+        for (const [name, path] of [
+            ["bob", "1"],
+            ["carol", "2"],
+            ["dave", "3"],
+            ["erin", "1"],
+        ]) {
+            second.adapter.say(name ?? "", `https://news.example/${path}`);
+            await second.settle();
+        }
+        expect(capped.read).toEqual(["https://news.example/1", "https://news.example/2"]);
+
+        const carded = opener();
+        const third = await setup({ links: carded.links, persona: curious });
+        third.adapter.say("bob", "https://news.example/a [card: 标题]");
+        await third.settle();
+        expect(carded.read).toEqual([]);
+    });
+
+    it("doesn't let one person use up the day's links", async () => {
+        const { links, read } = opener();
+        const { adapter, settle } = await setup({ links, persona: { links: { curiosity: 1, dailyCap: 5 } } });
+        for (const path of ["1", "2", "3"]) {
+            adapter.say("bob", `https://news.example/${path}`);
+            await settle();
+        }
+        adapter.say("carol", "https://news.example/4");
+        await settle();
+        expect(read).toEqual(["https://news.example/1", "https://news.example/2", "https://news.example/4"]);
+    });
+
+    it("never opens a link that goes nowhere safe", async () => {
+        const { links, read } = opener();
+        const { adapter, trace, settle } = await setup({ links, persona: curious });
+        adapter.say("bob", "https://discord.gg/abc");
+        await settle();
+        adapter.say("bob", "https://192.168.1.1/admin");
+        await settle();
+        expect(read).toEqual([]);
+        expect(trace.ofKind("link.skipped").map((event) => event.detail?.reason)).toEqual(["action_link", "unsafe_url"]);
+    });
+
+    it("writes nothing if the message is taken back or its author opts out while the page loads", async () => {
+        for (const takeBack of ["remove", "opt-out"] as const) {
+            let finish: (result: LinkReaderResult) => void = () => {};
+            const { links } = opener(() => new Promise((resolve) => (finish = resolve)));
+            const memoryStore = new MemoryStore(":memory:");
+            const { adapter, trace, runtime, clock } = await setup({ links, memoryStore, persona: curious });
+            const id = adapter.say("bob", "https://news.example/a");
+            await clock.advance(1000);
+            if (takeBack === "remove") adapter.remove([id]);
+            else runtime.optOutPerson("cli:bob");
+            finish(page);
+            await runtime.whenIdle();
+            expect(trace.ofKind("link.read")).toEqual([]);
+            expect(JSON.stringify(memoryStore.recentAttended("cli:group", 10))).not.toContain("新闻");
+        }
+    });
+
+    it("gives up on a page that takes too long, and carries on reading", async () => {
+        const slow = new LinkOpener({
+            clock: new ManualClock(),
+            reader: { read: (_url, _host, signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve({ kind: "nothing" }))) },
+        });
+        const { adapter, gate, trace, settle } = await setup({ links: slow, persona: curious });
+        adapter.say("bob", "https://news.example/a");
+        await settle(31_000);
+        expect(trace.ofKind("link.skipped").map((event) => event.detail?.reason)).toEqual(["unreadable"]);
+        expect(chatLines(gate.calls[0]?.transcript)).toEqual(["bob: https://news.example/a"]);
+    });
+
+    it("keeps what she read when the chat app fills in a card afterwards, and drops it when the link is edited out", async () => {
+        const { links } = opener();
+        const { adapter, reply, settle } = await setup({ links, persona: curious });
+        const id = adapter.say("bob", "https://news.example/a");
+        await settle();
+        adapter.revise(id, "https://news.example/a [card: 标题]", false);
+        adapter.say("carol", "嗯");
+        await settle();
+        expect(chatLines(reply.calls.at(-1)?.transcript)).toContain(`bob: ${caption} [card: 标题]`);
+        adapter.revise(id, "算了");
+        adapter.say("carol", "好");
+        await settle();
+        expect(chatLines(reply.calls.at(-1)?.transcript)).toContain("bob (edited): 算了");
     });
 });

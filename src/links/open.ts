@@ -42,7 +42,11 @@ export function openChance(curiosity: number, context: { addressed: boolean; low
  * The one link she might open while reading these messages: newest first, someone sending her one before anything else.
  * Only links in what she actually read count, so one past her reading limit, in a forward or in a quote never does.
  */
-export function pickLink(messages: readonly ChatMessage[], maxCharsRead: number, skip: (url: string) => boolean): LinkCandidate | undefined {
+export function pickLink(
+    messages: readonly ChatMessage[],
+    maxCharsRead: number,
+    skip: (url: string, message: ChatMessage) => boolean,
+): LinkCandidate | undefined {
     const eligible = messages.filter(
         (message) =>
             !message.isSelf &&
@@ -54,7 +58,7 @@ export function pickLink(messages: readonly ChatMessage[], maxCharsRead: number,
     const newestFirst = eligible.toReversed();
     const sorted = [...newestFirst.filter(isAddressed), ...newestFirst.filter((message) => !isAddressed(message))];
     for (const message of sorted) {
-        const link = findLinks(message.text).find(({ url, start }) => start < maxCharsRead && !skip(url));
+        const link = findLinks(message.text).find(({ url, start }) => start < maxCharsRead && !skip(url, message));
         if (link) return { message, link };
     }
     return undefined;

@@ -51,6 +51,7 @@ import { type Clock, sleep } from "./lib/clock.ts";
 import type { CostMeter } from "./lib/cost.ts";
 import type { Rng } from "./lib/rng.ts";
 import type { DecisionTrace, TraceEvent } from "./lib/trace.ts";
+import { type LinkOpener, openChance, pickLink } from "./links/open.ts";
 import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
@@ -124,6 +125,8 @@ export type RuntimeOptions = {
     pictureMaxEdge?: number;
     /** Without it she can't download pictures, so she only collects ones that are just links. */
     fetchImage?: ImageFetcher;
+    /** Without it she never opens links, whatever the persona says. */
+    links?: LinkOpener;
 };
 
 /** One message inside a forward, as the operator sees it. The name is only what the forward claims. */
@@ -219,6 +222,8 @@ export type BodySnapshot = {
     battery: number;
     searchesToday: number;
     searchCap: number;
+    linksToday: number;
+    linkCap: number;
     guard: ReturnType<SendGuard["snapshot"]> & { channels: { channel: string; name: string; share: number; sample: number }[] };
     cost: ReturnType<CostMeter["summary"]>;
     memory: MemoryStats;
@@ -262,6 +267,12 @@ const DAY_MS = 86_400_000;
 /** Posting pictures back to back gets old fast, and so does the same picture twice in a week. */
 const IMAGE_COOLDOWN_MS = 15 * 60_000;
 const IMAGE_REUSE_AFTER_MS = 3 * DAY_MS;
+/** A link she's opened, or decided not to, isn't considered again for this long, wherever it's posted. */
+const LINK_MEMORY_MS = 6 * 3_600_000;
+/** Covers the vendor's fetch, the slowest way to read a page. */
+const LINK_TIMEOUT_MS = 30_000;
+/** No one person gets more than this share of the day's links, so one person posting a lot can't use them all. */
+const LINK_SHARE_PER_PERSON = 0.4;
 
 /** Wires adapters to perception, the body, the gate and the send guards. */
 export class Runtime {
@@ -274,6 +285,8 @@ export class Runtime {
     #reactionRng: Rng;
     #searchRng: Rng;
     #imageRng: Rng;
+    #linkRng: Rng;
+    #consideredLinks = new Map<string, number>();
     #fetchedImages = new WeakMap<ChatImage, Promise<FetchedImage>>();
     #lastImageSentAt = new Map<string, number>();
     #sharing: ReadonlySet<string>;
@@ -310,6 +323,7 @@ export class Runtime {
         this.#reactionRng = options.rng.fork("reaction");
         this.#searchRng = options.rng.fork("search");
         this.#imageRng = options.rng.fork("images");
+        this.#linkRng = options.rng.fork("links");
         this.vitals = new Vitals({ clock: options.clock, persona: () => this.#persona, store: options.memoryStore });
         if (options.routine) {
             this.#routine = new Routine({
@@ -447,6 +461,7 @@ export class Runtime {
                 channel.names.delete(account);
             }
         }
+        this.vitals.forgetLinksFrom(this.#people.personOf(user));
         return removed;
     }
 
@@ -483,6 +498,8 @@ export class Runtime {
             battery: this.vitals.battery(),
             searchesToday: this.vitals.searchesToday(),
             searchCap: persona.search.dailyCap,
+            linksToday: this.vitals.linksToday(),
+            linkCap: persona.links.dailyCap,
             guard: {
                 ...guard,
                 channels: guard.channels.map((channel) => ({ ...channel, name: this.channelName(channel.channel) ?? channel.channel })),
@@ -844,8 +861,15 @@ export class Runtime {
         if (!perception || !current || current.isSelf || current.groupEvent || current.text === message.text) return;
         // What she saw in a picture is written into the text, and the new version would lose it.
         if (current.images?.length || message.text.includes(IMAGE_PLACEHOLDER)) return;
-        perception.revise(message.messageId, message.text, message.mentions, edited);
-        this.memory.store.updateText(key, message.messageId, message.text);
+        // A link she opened stays opened while it's still there. An edit that takes it out takes what she read with it.
+        const { readLink } = current;
+        const at = readLink ? message.text.indexOf(readLink.url) : -1;
+        const text =
+            readLink && at >= 0 ? `${message.text.slice(0, at)}${readLink.caption}${message.text.slice(at + readLink.url.length)}` : message.text;
+        if (text === current.text) return;
+        perception.revise(message.messageId, text, message.mentions, edited);
+        if (readLink && at >= 0) perception.noteLink(message.messageId, text, readLink);
+        this.memory.store.updateText(key, message.messageId, text);
         this.#options.trace.record("message.revised", { channel: key, messageId: message.messageId, detail: { edited } });
     }
 
@@ -914,6 +938,7 @@ export class Runtime {
         if (skipped > 0) trace.record("body.skimmed", { channel: key, detail: { skipped } });
         if (perception.firstNewIndex() === undefined) return;
         const looked = await this.#lookAtImages(key, perception, persona, lease.signal);
+        await this.#maybeOpenLink(key, perception, persona, lease.signal);
         const firstNewIndex = perception.firstNewIndex();
         if (firstNewIndex === undefined) return;
         const seenSeq = perception.seq;
@@ -1367,6 +1392,54 @@ export class Runtime {
         });
         const trimmed = store.trimSavedImages(this.#persona.savedImages.maxKept);
         trace.record("image.saved", { ...idFields, detail: { id, mime: download.mime, size: download.bytes.length, trimmed } });
+    }
+
+    /**
+     * At most one link per read, and only if curiosity strikes and today's share has room. Runs before the gate, so what she read
+     * there is part of the chat she decides on. The result replaces the link in the text, so deletion and opt-out cover it too.
+     */
+    async #maybeOpenLink(key: string, perception: ChannelPerception, persona: Persona, signal: AbortSignal): Promise<void> {
+        const { links: opener, trace, clock } = this.#options;
+        const { curiosity, dailyCap } = persona.links;
+        const firstNew = perception.firstNewIndex();
+        if (!opener || curiosity <= 0 || firstNew === undefined || this.vitals.linksToday() >= dailyCap) return;
+        const now = clock.now();
+        for (const [url, at] of this.#consideredLinks) if (now - at > LINK_MEMORY_MS) this.#consideredLinks.delete(url);
+        const perPerson = Math.max(1, Math.ceil(dailyCap * LINK_SHARE_PER_PERSON));
+        const candidate = pickLink(
+            perception.window().slice(firstNew),
+            persona.maxCharsRead,
+            (url, message) => this.#consideredLinks.has(url) || this.vitals.linksFrom(this.#people.personOf(userKey(message))) >= perPerson,
+        );
+        if (!candidate) return;
+        const { message, link } = candidate;
+        const idFields = { channel: key, messageId: message.messageId };
+        this.#consideredLinks.set(link.url, now);
+        const chance = openChance(curiosity, { addressed: isAddressed(message), lowBattery: this.vitals.battery() < LOW_BATTERY });
+        if (!this.#linkRng.chance(chance)) {
+            trace.record("link.skipped", { ...idFields, detail: { reason: "not_curious" } });
+            return;
+        }
+        const user = userKey(message);
+        this.vitals.noteLink(this.#people.personOf(user));
+        const controller = new AbortController();
+        const cancelTimeout = clock.setTimer(LINK_TIMEOUT_MS, () => controller.abort());
+        const outcome = await opener.open(link.url, AbortSignal.any([signal, controller.signal])).finally(cancelTimeout);
+        if (outcome.kind === "skipped") {
+            trace.record("link.skipped", { ...idFields, detail: { reason: outcome.reason, site: outcome.site } });
+            return;
+        }
+        // It may have been taken back, edited, or its author may have opted out while the page was loading.
+        const current = perception.window().find((candidate) => candidate.messageId === message.messageId);
+        const at = current?.text.indexOf(link.url) ?? -1;
+        if (!current || at < 0 || this.#state.isOptedOut(user)) {
+            trace.record("link.skipped", { ...idFields, detail: { reason: "gone", site: outcome.site } });
+            return;
+        }
+        const text = `${current.text.slice(0, at)}${outcome.caption}${current.text.slice(at + link.url.length)}`;
+        perception.noteLink(message.messageId, text, { url: link.url, caption: outcome.caption });
+        this.memory.store.updateText(key, message.messageId, text);
+        trace.record("link.read", { ...idFields, detail: { site: outcome.site, layer: outcome.layer } });
     }
 
     /** Only when the gate spotted something unfamiliar, curiosity strikes, and today's cap has room. */
