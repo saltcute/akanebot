@@ -31,6 +31,6 @@ describe("reactions per platform", () => {
     });
 
     it("loads QQ reactions from the shipped persona", () => {
-        expect(reactionChoices(loadPersona("personas/akane.md"), "qq")).toContainEqual({ label: "捂脸", id: "264" });
+        expect(reactionChoices(loadPersona("personas/akane.md"), "qq")).toContainEqual({ label: "🤭", id: "264" });
     });
 });
