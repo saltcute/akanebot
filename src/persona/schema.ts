@@ -42,6 +42,8 @@ export const personaSettingsSchema = z.strictObject({
     socialBattery: z.number().int().positive(),
     maxCharsRead: z.number().int().positive(),
     search: z.strictObject({ curiosity: unit, dailyCap: z.number().int().min(0) }),
+    /** How likely she is to open a link she reads, and how many a day. Off unless the persona says otherwise. */
+    links: z.strictObject({ curiosity: unit, dailyCap: z.number().int().min(0) }).default({ curiosity: 0, dailyCap: 0 }),
     skills: z.record(z.string(), z.number().int().min(1).max(5)),
     slipRate: unit,
     lowEffort: unit.default(0),

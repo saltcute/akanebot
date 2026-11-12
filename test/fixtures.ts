@@ -13,6 +13,7 @@ export const PERSONA: Persona = {
     socialBattery: 60,
     maxCharsRead: 280,
     search: { curiosity: 0.3, dailyCap: 5 },
+    links: { curiosity: 0, dailyCap: 0 },
     skills: { dataStructures: 3, web: 4, mathProofs: 2 },
     slipRate: 0.25,
     maxCodeLines: 12,

@@ -17,6 +17,7 @@ socialBattery: 550 # messages per day before it gets short with people
 maxCharsRead: 280 # skims anything longer
 
 search: { curiosity: 0.3, dailyCap: 25 }
+links: { curiosity: 0.4, dailyCap: 15 } # chance of opening a link she reads (likelier when it's sent to her), and how many a day
 
 skills: # 1 = barely heard of it，3 = passed the course，5 = specialist
   programming: 3 # everyday coding: syntax，loops，debugging

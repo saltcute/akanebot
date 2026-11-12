@@ -19,6 +19,7 @@ Every setting in the persona file, and whether code acts on it yet. "Validated" 
 | `socialBattery` | Messages per day before it gets short with people, then stops joining in | Active |
 | `dailyLife` | One is picked each morning and colours the whole day | Active |
 | `search` | How curious it is about unfamiliar topics, and how many searches a day | Active |
+| `links` | Chance of opening a link it reads, raised when the link is sent to it and halved on a low battery, and how many a day. One person can use at most part of the day's share. Off by default | Active |
 | `lowEffort` | Chance of reacting with an emoji instead of writing something | Active |
 | `repeatRate` | Chance of joining in each time it reads people repeating the same line word for word | Active |
 | `savedImages.taste` | What it likes enough to keep, shown only to the model judging pictures | Prompt only |
