@@ -1,7 +1,10 @@
+// biome-ignore-all lint/style/useNamingConvention: the stubbed client speaks the Anthropic API wire format
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { AnthropicLinkReader } from "../src/llm/anthropic.ts";
 import type { LlmResult } from "../src/llm/backend.ts";
 import { FakeBackend, type FakeResponse } from "../src/llm/fake.ts";
+import { LINK_INSTRUCTIONS, parseLinkReply } from "../src/llm/links.ts";
 import { LlmRegistry, llmConfigSchema } from "../src/llm/registry.ts";
 
 const signal = new AbortController().signal;
@@ -107,5 +110,69 @@ describe("LlmRegistry", () => {
         await llm.generate("reply", request);
         await llm.generate("reply", request);
         expect(created).toBe(1);
+    });
+});
+
+describe("AnthropicLinkReader", () => {
+    function stubClient(reply: unknown) {
+        const sent: Record<string, unknown>[] = [];
+        const client = {
+            messages: {
+                create: async (params: Record<string, unknown>) => {
+                    sent.push(params);
+                    return reply;
+                },
+            },
+        };
+        return { client: client as never, sent };
+    }
+    const usage = { input_tokens: 10, output_tokens: 5 };
+    const fetched = { type: "web_fetch_tool_result", content: { type: "web_fetch_result", url: "u", content: {} } };
+
+    it("sends only fixed instructions and the address, and fetches once from the vetted host", async () => {
+        const reply = { stop_reason: "end_turn", usage, content: [fetched, { type: "text", text: "Title: A page\nGist: It says things." }] };
+        const { client, sent } = stubClient(reply);
+        const costs: number[] = [];
+        const reader = new AnthropicLinkReader({ client, model: "m", maxContentTokens: 100, onUsage: (u) => costs.push(u.inputTokens) });
+        expect(await reader.read("https://example.com/a", "example.com", new AbortController().signal)).toEqual({
+            kind: "read",
+            title: "A page",
+            gist: "It says things.",
+        });
+        expect(sent[0]?.system).toBe(LINK_INSTRUCTIONS);
+        expect(sent[0]?.messages).toEqual([{ role: "user", content: "Page: https://example.com/a" }]);
+        expect(sent[0]?.tools).toEqual([
+            { type: "web_fetch_20260209", name: "web_fetch", max_uses: 1, max_content_tokens: 100, allowed_domains: ["example.com"] },
+        ]);
+        expect(costs).toEqual([10]);
+    });
+
+    it("reads nothing when the fetch failed, never happened, or the model refused", async () => {
+        const failed = { type: "web_fetch_tool_result", content: { type: "web_fetch_tool_error", error_code: "url_not_accessible" } };
+        const text = { type: "text", text: "Title: guessed" };
+        for (const reply of [
+            { stop_reason: "end_turn", usage, content: [failed, text] },
+            { stop_reason: "end_turn", usage, content: [text] },
+            { stop_reason: "refusal", usage, content: [fetched, text] },
+        ]) {
+            const reader = new AnthropicLinkReader({ client: stubClient(reply).client, model: "m", maxContentTokens: 100, onUsage: () => {} });
+            expect(await reader.read("https://example.com", "example.com", new AbortController().signal)).toEqual({ kind: "nothing" });
+        }
+    });
+
+    it("reads nothing when the call throws", async () => {
+        const client = { messages: { create: async () => Promise.reject(new Error("down")) } } as never;
+        const reader = new AnthropicLinkReader({ client, model: "m", maxContentTokens: 100, onUsage: () => {} });
+        expect(await reader.read("https://example.com", "example.com", new AbortController().signal)).toEqual({ kind: "nothing" });
+    });
+});
+
+describe("parseLinkReply", () => {
+    it("reads the title and gist, and flags explicit pages", () => {
+        expect(parseLinkReply("Title: T\nGist: G")).toEqual({ kind: "read", title: "T", gist: "G" });
+        expect(parseLinkReply("Gist: only this")).toEqual({ kind: "read", gist: "only this" });
+        expect(parseLinkReply("EXPLICIT")).toEqual({ kind: "explicit" });
+        expect(parseLinkReply("")).toEqual({ kind: "nothing" });
+        expect(parseLinkReply("Sure! Here is the page.")).toEqual({ kind: "nothing" });
     });
 });

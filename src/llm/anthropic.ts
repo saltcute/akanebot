@@ -3,12 +3,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { ZodType } from "zod";
 import type { BackendCapabilities, LlmBackend, LlmRequest, LlmResult, Usage } from "./backend.ts";
+import { LINK_INSTRUCTIONS, type LinkReader, type LinkReaderConfig, type LinkReaderResult, parseLinkReply } from "./links.ts";
 import type { BackendFactory } from "./registry.ts";
 import { SEARCH_INSTRUCTIONS, type SearchBackend, type SearchConfig, type SearchResult } from "./search.ts";
 
 const REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const REQUEST_TIMEOUT_MS = 60_000;
 const SEARCH_TIMEOUT_MS = 45_000;
+const LINK_TIMEOUT_MS = 45_000;
 
 /** `effort`, `thinking` and `refusalFallback` come from the role's `options` in config. */
 export class AnthropicBackend implements LlmBackend {
@@ -108,6 +110,74 @@ export class AnthropicSearch implements SearchBackend {
             return { kind: "nothing" };
         }
     }
+}
+
+/**
+ * Uses Anthropic's server-side fetch, so the page is fetched from their servers and never from the bot's.
+ * Limited to one fetch of the vetted host, so a redirect or a link on the page can't take it anywhere else.
+ */
+export class AnthropicLinkReader implements LinkReader {
+    #client: Anthropic;
+    #model: string;
+    #maxContentTokens: number;
+    #onUsage: (usage: Usage, model: string) => void;
+
+    constructor(options: { client: Anthropic; model: string; maxContentTokens: number; onUsage: (usage: Usage, model: string) => void }) {
+        this.#client = options.client;
+        this.#model = options.model;
+        this.#maxContentTokens = options.maxContentTokens;
+        this.#onUsage = options.onUsage;
+    }
+
+    async read(url: string, host: string, signal: AbortSignal): Promise<LinkReaderResult> {
+        try {
+            const params = {
+                model: this.#model,
+                max_tokens: 1500,
+                system: LINK_INSTRUCTIONS,
+                output_config: { effort: "low" },
+                tools: [
+                    {
+                        type: "web_fetch_20260209",
+                        name: "web_fetch",
+                        max_uses: 1,
+                        max_content_tokens: this.#maxContentTokens,
+                        allowed_domains: [host],
+                    },
+                ],
+                messages: [{ role: "user", content: `Page: ${url}` }],
+            };
+            const message = (await this.#client.messages.create(params as never, {
+                signal,
+                timeout: LINK_TIMEOUT_MS,
+            })) as unknown as Anthropic.Message;
+            this.#onUsage(toUsage(message.usage), this.#model);
+            if (message.stop_reason !== "end_turn") return { kind: "nothing" };
+            // Only what comes after the fetch is the answer. Earlier text is the model thinking aloud.
+            const lastFetch = message.content.findLastIndex((block) => (block.type as string) === "web_fetch_tool_result");
+            if (lastFetch < 0 || fetchFailed(message.content[lastFetch])) return { kind: "nothing" };
+            const text = message.content
+                .slice(lastFetch + 1)
+                .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                .join("");
+            return parseLinkReply(text);
+        } catch {
+            return { kind: "nothing" };
+        }
+    }
+}
+
+/** A failed fetch still arrives as a result block, holding an error instead of the page. */
+function fetchFailed(block: unknown): boolean {
+    const content = (block as { content?: { type?: unknown } }).content;
+    return content?.type !== "web_fetch_result";
+}
+
+export function createAnthropicLinkReader(
+    config: Extract<LinkReaderConfig, { type: "anthropic" }>,
+    onUsage: (usage: Usage, model: string) => void,
+): LinkReader {
+    return new AnthropicLinkReader({ client: new Anthropic(), model: config.model, maxContentTokens: config.maxContentTokens, onUsage });
 }
 
 export function createAnthropicSearch(
