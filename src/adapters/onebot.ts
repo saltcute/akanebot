@@ -20,6 +20,8 @@ import type {
 
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_DESCRIBABLE_IMAGE_BYTES = 5_000_000;
+/** The same as a Discord card. */
+const MAX_CARD_CHARS = 300;
 const CALL_TIMEOUT_MS = 15_000;
 /** Everything behind a reply or an unfamiliar @ waits for this lookup, so it gives up sooner than other calls. */
 const LOOKUP_TIMEOUT_MS = 3000;
@@ -155,11 +157,63 @@ function describeSegment({ type, data }: Segment, selfId: string, { selfName, na
         case "forward":
             return "[forwarded messages]";
         case "json":
+            return shareCard(jsonCardParts(asText(data.data)));
         case "xml":
-            return "[shared card]";
+            return shareCard(xmlCardParts(asText(data.data)));
         default:
             return "";
     }
+}
+
+/** Where a share card links to, by name only: the address itself stays out of the text, so it can't be pasted back. */
+function cardHost(url: string): string | undefined {
+    try {
+        const { protocol, hostname } = new URL(url);
+        return protocol === "http:" || protocol === "https:" ? hostname.replace(/^www\./, "") : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Reads QQ's Ark JSON, the shape behind shared videos, articles and mini-programs. Each kind keeps its fields under a different key in `meta`.
+ * The prompt is what QQ itself shows in a chat list, as in "[QQ小程序]哔哩哔哩".
+ */
+function jsonCardParts(raw: string): (string | undefined)[] {
+    let card: unknown;
+    try {
+        card = JSON.parse(raw);
+    } catch {
+        return [];
+    }
+    if (typeof card !== "object" || card === null) return [];
+    const { prompt, meta } = card as { prompt?: unknown; meta?: unknown };
+    const detail =
+        typeof meta === "object" && meta !== null ? Object.values(meta).find((value) => typeof value === "object" && value !== null) : undefined;
+    const fields = (detail ?? {}) as Record<string, unknown>;
+    const title = asText(fields.title);
+    const desc = asText(fields.desc);
+    const link = asText(fields.jumpUrl) || asText(fields.qqdocurl) || asText(fields.url);
+    return [asText(fields.tag), title, desc, title || desc ? undefined : asText(prompt), cardHost(link)];
+}
+
+function xmlField(raw: string, pattern: RegExp): string {
+    return (pattern.exec(raw)?.[1] ?? "").replace(/&(?:amp|lt|gt|quot|apos|#\d+);/g, " ");
+}
+
+/** The older XML cards, which hold the same things as attributes and elements. */
+function xmlCardParts(raw: string): (string | undefined)[] {
+    const title = xmlField(raw, /<title[^>]*>([^<]*)<\/title>/);
+    const summary = xmlField(raw, /<summary[^>]*>([^<]*)<\/summary>/);
+    return [title, summary, title || summary ? undefined : xmlField(raw, /\bbrief="([^"]*)"/), cardHost(xmlField(raw, /\burl="([^"]*)"/))];
+}
+
+/** Flattened and stripped of brackets like a Discord card, so nothing in it can close the placeholder it sits in. */
+function shareCard(parts: readonly (string | undefined)[]): string {
+    const text = [...new Set(parts.map((part) => (part ?? "").replace(/[[\]\s]+/g, " ").trim()).filter(Boolean))]
+        .join(" · ")
+        .slice(0, MAX_CARD_CHARS);
+    return text === "" ? "[shared card]" : `[card: ${text}]`;
 }
 
 function mentionedOthers(segments: readonly Segment[], selfId: string, names: Lookup["names"]): string[] {

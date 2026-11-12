@@ -180,6 +180,27 @@ describe("OneBot message mapping", () => {
         expect(map([{ type: "face", data: { raw: { faceText: "/笑哭" } } }])?.text).toBe("/笑哭");
     });
 
+    it("reads a shared card's title and description, and names its site without the address", () => {
+        const miniApp = {
+            app: "com.tencent.miniapp_01",
+            prompt: "[QQ小程序]哔哩哔哩",
+            meta: { detail_1: { title: "哔哩哔哩", desc: "猫猫 [合集]", qqdocurl: "https://b23.tv/abc?share=1" } },
+        };
+        expect(map([{ type: "json", data: { data: JSON.stringify(miniApp) } }])?.text).toBe("[card: 哔哩哔哩 · 猫猫 合集 · b23.tv]");
+        const news = { prompt: "[分享]x", meta: { news: { tag: "知乎", title: "标题", desc: "", jumpUrl: "https://www.zhihu.com/q/1" } } };
+        expect(map([{ type: "json", data: { data: JSON.stringify(news) } }])?.text).toBe("[card: 知乎 · 标题 · zhihu.com]");
+        const xml = '<msg brief="[分享]b" url="https://example.com/a"><item><title>T</title><summary>S &amp; more</summary></item></msg>';
+        expect(map([{ type: "xml", data: { data: xml } }])?.text).toBe("[card: T · S more · example.com]");
+    });
+
+    it("falls back to what QQ shows in the chat list, and to a bare placeholder", () => {
+        expect(map([{ type: "json", data: { data: JSON.stringify({ prompt: "[群公告]明天放假" }) } }])?.text).toBe("[card: 群公告 明天放假]");
+        expect(map([{ type: "json", data: { data: "not json" } }])?.text).toBe("[shared card]");
+        expect(map([{ type: "json", data: { data: JSON.stringify({ meta: { x: { jumpUrl: "javascript:alert(1)" } } }) } }])?.text).toBe(
+            "[shared card]",
+        );
+    });
+
     it("skips messages with nothing to read", () => {
         expect(map([{ type: "reply", data: { id: "1" } }])).toBeUndefined();
         expect(map([{ type: "someNewThing", data: {} }])).toBeUndefined();
