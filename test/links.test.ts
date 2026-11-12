@@ -1,7 +1,11 @@
+// biome-ignore-all lint/style/useNamingConvention: the sites' own field names
+
 import { describe, expect, it } from "vitest";
-import { classifyLink } from "../src/links/classify.ts";
+import { ManualClock } from "../src/lib/clock.ts";
+import { classifyLink, type KnownLink } from "../src/links/classify.ts";
 import { findLinks } from "../src/links/find.ts";
 import { vetLink } from "../src/links/hygiene.ts";
+import { htmlToText, readKnownSite, type SiteFetcher } from "../src/links/sites.ts";
 
 function classify(raw: string) {
     const vetted = vetLink(raw);
@@ -120,5 +124,106 @@ describe("classifyLink", () => {
         "https://gist.github.com/a/b",
     ])("doesn't take %s for a known site", (raw) => {
         expect(classify(raw)).toBeUndefined();
+    });
+});
+
+describe("readKnownSite", () => {
+    function fakeFetcher(answers: Record<string, unknown>, redirects: Record<string, string> = {}) {
+        const requested: string[] = [];
+        const fetcher: SiteFetcher = {
+            json: async (url) => {
+                requested.push(url);
+                const host = new URL(url).hostname;
+                if (!(host in answers)) throw new Error("HTTP 404");
+                return answers[host];
+            },
+            redirect: async (url) => {
+                requested.push(url);
+                return redirects[url];
+            },
+        };
+        return { fetcher, requested };
+    }
+    const read = (link: KnownLink, fetcher: SiteFetcher, options = {}) =>
+        readKnownSite(link, fetcher, new ManualClock(), new AbortController().signal, options);
+
+    it("reads a YouTube title and channel from oEmbed, built from the ID alone", async () => {
+        const { fetcher, requested } = fakeFetcher({ "www.youtube.com": { title: "Never Gonna", author_name: "Rick" } });
+        expect(await read({ site: "youtube", id: "dQw4w9WgXcQ" }, fetcher)).toEqual({ title: "Never Gonna", by: "Rick" });
+        expect(requested).toEqual(["https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&format=json"]);
+    });
+
+    it("adds the description through the Data API when there's a key", async () => {
+        const { fetcher, requested } = fakeFetcher({
+            "www.googleapis.com": { items: [{ snippet: { title: "T", channelTitle: "C", description: "long\n\ndesc" } }] },
+        });
+        expect(await read({ site: "youtube", id: "dQw4w9WgXcQ" }, fetcher, { youtubeApiKey: "k" })).toEqual({
+            title: "T",
+            by: "C",
+            gist: "long desc",
+        });
+        expect(requested[0]).toBe("https://www.googleapis.com/youtube/v3/videos?part=snippet&id=dQw4w9WgXcQ&key=k");
+    });
+
+    it("reads a post's words from X's embed markup, without its links", async () => {
+        const html =
+            '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">just setting up &amp; <a href="https://t.co/x">https://t.co/x</a> pic.twitter.com/abc</p>&mdash; jack <a href="https://x.com/jack/status/20">March 21, 2006</a></blockquote>';
+        const { fetcher, requested } = fakeFetcher({ "publish.x.com": { author_name: "jack", html } });
+        expect(await read({ site: "x", id: "20" }, fetcher)).toEqual({ by: "jack", gist: "just setting up & (picture)" });
+        expect(requested[0]).toBe("https://publish.x.com/oembed?url=https%3A%2F%2Ftwitter.com%2Fi%2Fstatus%2F20&omit_script=1&dnt=true");
+    });
+
+    it("reads Bilibili by BV or av number, and nothing when the API says no", async () => {
+        const video = { code: 0, data: { title: "猫", owner: { name: "up主" }, desc: "简介" } };
+        const { fetcher, requested } = fakeFetcher({ "api.bilibili.com": video });
+        expect(await read({ site: "bilibili", id: "BV1xx411c7mD" }, fetcher)).toEqual({ title: "猫", by: "up主", gist: "简介" });
+        await read({ site: "bilibili", id: "av170001" }, fetcher);
+        expect(requested).toEqual([
+            "https://api.bilibili.com/x/web-interface/view?bvid=BV1xx411c7mD",
+            "https://api.bilibili.com/x/web-interface/view?aid=170001",
+        ]);
+        const missing = fakeFetcher({ "api.bilibili.com": { code: -404 } });
+        expect(await read({ site: "bilibili", id: "BV1xx411c7mD" }, missing.fetcher)).toBeUndefined();
+    });
+
+    it("follows a b23.tv code only to a Bilibili video", async () => {
+        const video = { code: 0, data: { title: "猫" } };
+        const good = fakeFetcher(
+            { "api.bilibili.com": video },
+            { "https://b23.tv/aBc123X": "https://www.bilibili.com/video/BV1xx411c7mD?share_source=copy" },
+        );
+        expect(await read({ site: "bilibili", id: "aBc123X", short: true }, good.fetcher)).toEqual({ title: "猫" });
+        expect(good.requested[1]).toBe("https://api.bilibili.com/x/web-interface/view?bvid=BV1xx411c7mD");
+        const elsewhere = fakeFetcher({ "api.bilibili.com": video }, { "https://b23.tv/aBc123X": "https://evil.example/video/BV1xx411c7mD" });
+        expect(await read({ site: "bilibili", id: "aBc123X", short: true }, elsewhere.fetcher)).toBeUndefined();
+        expect(elsewhere.requested).toEqual(["https://b23.tv/aBc123X"]);
+    });
+
+    it("reads a GitHub repository's description and language", async () => {
+        const { fetcher } = fakeFetcher({
+            "api.github.com": { full_name: "nodejs/node", description: "Node.js JavaScript runtime", language: "JavaScript" },
+        });
+        expect(await read({ site: "github", id: "nodejs/node" }, fetcher)).toEqual({
+            title: "nodejs/node",
+            gist: "Node.js JavaScript runtime (JavaScript)",
+        });
+    });
+
+    it("gives up when the read takes too long", async () => {
+        const clock = new ManualClock();
+        const fetcher: SiteFetcher = {
+            json: (_url, signal) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))),
+            redirect: async () => undefined,
+        };
+        const pending = readKnownSite({ site: "github", id: "a/b" }, fetcher, clock, new AbortController().signal);
+        const outcome = expect(pending).rejects.toThrow("aborted");
+        await clock.advance(10_000);
+        await outcome;
+    });
+});
+
+describe("htmlToText", () => {
+    it("drops tags and decodes entities", () => {
+        expect(htmlToText("a<br>b &lt;i&gt; &#39;c&#x27; <b>d</b>")).toBe("a b <i> 'c' d");
     });
 });
