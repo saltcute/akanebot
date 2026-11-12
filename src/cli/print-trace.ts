@@ -27,6 +27,10 @@ export function printTraceEvent(event: TraceEvent): void {
         console.log(`  [memory] wrote ${detail.written} from ${detail.messages} messages`);
     } else if (event.kind === "search.done") {
         console.log(`  [looked up "${detail.query}"] ${detail.note || "(found nothing)"}`);
+    } else if (event.kind === "link.read") {
+        console.log(`  [opened a link] ${detail.site} via ${detail.layer}`);
+    } else if (event.kind === "link.skipped") {
+        console.log(`  [didn't open a link] ${detail.reason}${detail.site ? ` (${detail.site})` : ""}`);
     } else if (event.kind === "send.shadow") {
         console.log(`  [would say] ${detail.text}`);
     } else if (event.kind === "gate.decision") {

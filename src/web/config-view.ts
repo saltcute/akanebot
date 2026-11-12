@@ -25,6 +25,7 @@ function describeConfig(config: AppConfig) {
         llm: describeLlmConfig(config),
         embedder: config.embedder,
         search: config.search,
+        links: config.links,
         timing: config.timing,
         pacing: config.pacing,
         pictures: config.pictures,

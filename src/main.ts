@@ -11,6 +11,7 @@ import { CostMeter } from "./lib/cost.ts";
 import { Rng } from "./lib/rng.ts";
 import { DecisionTrace } from "./lib/trace.ts";
 import { appendTraceEvent, deleteTracesBefore } from "./lib/trace-file.ts";
+import { createLinkOpener } from "./links/config.ts";
 import { createEmbedder } from "./llm/embedder.ts";
 import { BACKEND_FACTORIES, createSearchBackend } from "./llm/factories.ts";
 import { LlmRegistry } from "./llm/registry.ts";
@@ -101,6 +102,11 @@ const runtime = new Runtime({
     pictureMaxEdge: config.pictures.maxEdge,
     routine: true,
     search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
+    links: createLinkOpener(config.links, {
+        clock,
+        onUsage: (usage, model) => cost.add(usage, model),
+        youtubeApiKey: process.env.YOUTUBE_API_KEY || undefined,
+    }),
     fetchImage: fetchOverHttp,
 });
 

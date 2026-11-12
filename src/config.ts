@@ -3,6 +3,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { peopleSchema } from "./control/people.ts";
 import { pricesSchema } from "./lib/cost.ts";
+import { linksConfigSchema } from "./links/config.ts";
 import { embedderConfigSchema } from "./llm/embedder.ts";
 import { llmConfigSchema } from "./llm/registry.ts";
 import { searchConfigSchema } from "./llm/search.ts";
@@ -42,6 +43,8 @@ export const appConfigSchema = z.strictObject({
         .prefault({}),
     embedder: embedderConfigSchema,
     search: searchConfigSchema,
+    /** How she opens links people post. Whether she does at all is up to the persona's `links`. */
+    links: linksConfigSchema,
     memory: z.strictObject({
         path: z.string().min(1).default("data/memory.db"),
         /** A conversation counts as over after this many minutes without anything attended. */

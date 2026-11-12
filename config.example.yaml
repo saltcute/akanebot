@@ -30,6 +30,18 @@ search:
   model: claude-sonnet-5-5
   maxUses: 2
 
+# Opening links people post. Whether she opens one at all is the persona's `links`.
+# YouTube, X, Bilibili and GitHub are read from their own APIs with only the ID; set YOUTUBE_API_KEY in .env to get video descriptions.
+# Any other page goes to the reader, which fetches it from the vendor's servers so this machine never connects to it. Set type: none to turn that off.
+# Invites, logins, unsubscribe links, document and file-sharing hosts, and links that carry a key are never opened.
+links:
+  reader:
+    type: anthropic
+    model: claude-sonnet-5-5
+    maxContentTokens: 6000
+  sites: true
+  blockedHosts: []
+
 memory:
   path: data/memory.db
   segmentGapMinutes: 20

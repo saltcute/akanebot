@@ -34,6 +34,8 @@ const SHOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
     "image.offered": ["ids", "requested", "chance"],
     "image.saved": ["id", "mime", "size", "trimmed"],
     "image.skipped": ["reason"],
+    "link.read": ["site", "layer"],
+    "link.skipped": ["reason", "site"],
     "gate.silent": ["result"],
     "group_event.seen": ["kind"],
     "memory.consolidated": ["embedded", "merged", "promoted", "superseded", "archived"],

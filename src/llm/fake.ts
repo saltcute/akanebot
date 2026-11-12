@@ -1,4 +1,5 @@
 import { type BackendCapabilities, type LlmBackend, type LlmRequest, type LlmResult, NO_USAGE } from "./backend.ts";
+import type { LinkReader, LinkReaderResult } from "./links.ts";
 
 /** A plain string is the reply text, parsed as JSON when the request has a schema. */
 export type FakeResponse = string | LlmResult<unknown>;
@@ -40,4 +41,11 @@ function parseStructured<T>(text: string, request: LlmRequest<T>): LlmResult<T> 
     const parsed = request.schema?.safeParse(raw);
     if (!parsed?.success) return { kind: "error", retryable: false, detail: "fake response failed the schema" };
     return { kind: "ok", text, data: parsed.data, usage: NO_USAGE };
+}
+
+/** Opens every page to the same placeholder, for the simulator. Makes no network calls. */
+export class CannedLinkReader implements LinkReader {
+    async read(_url: string, host: string): Promise<LinkReaderResult> {
+        return { kind: "read", title: `A page on ${host}`, gist: "Something you skimmed without taking much in." };
+    }
 }

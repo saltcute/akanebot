@@ -8,9 +8,11 @@ import { SystemClock } from "../lib/clock.ts";
 import { CostMeter } from "../lib/cost.ts";
 import { Rng } from "../lib/rng.ts";
 import { DecisionTrace } from "../lib/trace.ts";
+import { createLinkOpener } from "../links/config.ts";
+import { LinkOpener } from "../links/open.ts";
 import { createEmbedder, NullEmbedder } from "../llm/embedder.ts";
 import { BACKEND_FACTORIES, createSearchBackend } from "../llm/factories.ts";
-import { FakeBackend } from "../llm/fake.ts";
+import { CannedLinkReader, FakeBackend } from "../llm/fake.ts";
 import { type BackendFactory, LlmRegistry, llmConfigSchema } from "../llm/registry.ts";
 import { MemoryStore } from "../memory/store.ts";
 import { loadPersona } from "../persona/loader.ts";
@@ -111,11 +113,16 @@ const runtime = new Runtime({
     // Off by default so you can test at any hour and without waiting.
     routine: process.argv.includes("--routine"),
     ...(useFake
-        ? {}
+        ? { links: new LinkOpener({ clock, reader: new CannedLinkReader() }) }
         : {
               picturesPerReply: config.pictures.perReply,
               pictureMaxEdge: config.pictures.maxEdge,
               search: createSearchBackend(config.search, (usage, model) => cost.add(usage, model)),
+              links: createLinkOpener(config.links, {
+                  clock,
+                  onUsage: (usage, model) => cost.add(usage, model),
+                  youtubeApiKey: process.env.YOUTUBE_API_KEY || undefined,
+              }),
               fetchImage: fetchOverHttp,
           }),
     ...(process.argv.includes("--paced") ? { pacing: config.pacing } : {}),
