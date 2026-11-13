@@ -980,7 +980,8 @@ export class Runtime {
         const newest = newMessages.at(-1);
         const namer = findNamer(newMessages, persona);
         const followedUp = findFollowUp(window, firstNewIndex, persona);
-        const asker = newMessages.findLast(isAddressed) ?? namer ?? followedUp ?? newest;
+        // Someone who only might be answering her is treated as anyone else in the room, apart from the better odds.
+        const asker = newMessages.findLast(isAddressed) ?? namer ?? (followedUp?.sure ? followedUp.message : undefined) ?? newest;
         const askerKey = asker ? userKey(asker) : undefined;
         const store = this.memory.store;
         const mentioned = lease.candidate.priority >= ADDRESSED_PRIORITY;
@@ -997,7 +998,8 @@ export class Runtime {
             outOfDepth: competence.mode === "out_of_depth",
             aimedElsewhere: allAimedElsewhere(newMessages, persona),
             named: namer !== undefined,
-            followUp: followedUp !== undefined,
+            followUp: followedUp?.sure === true,
+            possibleFollowUp: followedUp?.sure === false,
         };
         const decision = decideToSpeak(features, persona, mentioned, this.#gateRng, speakContext);
         // Answering her counts as talking to her, but only a direct ask gets chased up when she ignores it.

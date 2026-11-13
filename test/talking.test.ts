@@ -131,6 +131,14 @@ describe("decideToSpeak", () => {
         expect(followUp.probability).toBeLessThan(decideToSpeak(features(), persona, true, rng()).probability);
     });
 
+    it("gives a line that only might be for it better odds than chatter, and doesn't call it being talked to", () => {
+        const persona = { ...PERSONA, ignoreDirectAsks: 0 };
+        const possible = decideToSpeak(features({ interest: 0 }), persona, false, rng(), { ...NEUTRAL_CONTEXT, possibleFollowUp: true });
+        expect(possible).toMatchObject({ addressed: false, followUp: false, possibleFollowUp: true });
+        expect(possible.probability).toBeGreaterThan(decideToSpeak(features({ interest: 0 }), persona, false, rng()).probability);
+        expect(possible.probability).toBeLessThan(0.3);
+    });
+
     it("doesn't force a follow-up just because the last one went unanswered", () => {
         const context = { ...NEUTRAL_CONTEXT, followUp: true, forceAnswer: true };
         expect(decideToSpeak(features(), PERSONA, false, rng(), context).probability).toBeLessThan(1);
@@ -239,12 +247,12 @@ describe("noticing it's being talked to", () => {
 
     it("takes the next line from someone else as an answer to it", () => {
         const window = [line("a", "图是假的"), own("庞佐错觉呗"), line("a", "不对吧")];
-        expect(findFollowUp(window, 2, persona)?.text).toBe("不对吧");
+        expect(findFollowUp(window, 2, persona)?.message.text).toBe("不对吧");
     });
 
     it("looks past the same person's earlier lines and app notices", () => {
         const window = [own("那你安分点"), line("a", "嘿嘿"), line("event", "[a was muted]", { groupEvent: { involves: [] } }), line("a", "好的")];
-        expect(findFollowUp(window, 3, persona)?.text).toBe("好的");
+        expect(findFollowUp(window, 3, persona)?.message.text).toBe("好的");
     });
 
     it("isn't fooled when someone else spoke in between, or the line is aimed elsewhere", () => {
@@ -258,12 +266,49 @@ describe("noticing it's being talked to", () => {
     it("doesn't take a line after an echo or a reaction as an answer to it", () => {
         expect(findFollowUp([line("a", "草"), line("b", "草"), own("草"), line("c", "笑死 这群人")], 3, persona)).toBeUndefined();
         expect(findFollowUp([line("a", "图是假的"), own('[reacted 笑哭 to a: "图是假的"]'), line("b", "哈哈哈")], 2, persona)).toBeUndefined();
-        expect(findFollowUp([line("a", "图是假的"), own("[sent a picture: a cat shrugging]"), line("a", "哈哈哈")], 2, persona)?.text).toBe("哈哈哈");
+        expect(findFollowUp([line("a", "图是假的"), own("[sent a picture: a cat shrugging]"), line("a", "哈哈哈")], 2, persona)?.message.text).toBe(
+            "哈哈哈",
+        );
+    });
+
+    it("is sure of the person it was answering, whatever they send", () => {
+        expect(findFollowUp([line("a", "图是假的"), own("庞佐错觉呗"), line("a", "不对吧")], 2, persona)?.sure).toBe(true);
+        expect(findFollowUp([line("a", "图是假的"), own("庞佐错觉呗"), line("a", "[image: a cat shrugging]")], 2, persona)?.sure).toBe(true);
+    });
+
+    it("is sure of a short line from someone else who was already in the conversation", () => {
+        const window = [line("b", "这啥"), line("a", "塔2的"), own("这是塔2新角色吗"), line("b", "对")];
+        expect(findFollowUp(window, 3, persona)).toMatchObject({ message: { text: "对" }, sure: true });
+    });
+
+    it("is unsure of someone arriving cold, or sending only a picture or a face", () => {
+        expect(findFollowUp([line("a", "图是假的"), own("庞佐错觉呗"), line("c", "唐")], 2, persona)?.sure).toBe(false);
+        const window = [line("b", "这啥"), line("a", "塔2的"), own("这是塔2新角色吗")];
+        expect(findFollowUp([...window, line("b", "[animated image: a cat peeking sideways]")], 3, persona)?.sure).toBe(false);
+        expect(findFollowUp([...window, line("b", "/捂脸")], 3, persona)?.sure).toBe(false);
+    });
+
+    it("is unsure of a line other people are passing around", () => {
+        const before = [line("c", "爆了"), line("a", "哈哈"), line("b", "出生小茜"), own("造谣成本这么低是吧")];
+        expect(findFollowUp([...before, line("a", "不是吧")], 4, persona)).toMatchObject({ message: { text: "不是吧" }, sure: true });
+        expect(findFollowUp([...before, line("a", "爆了")], 4, persona)).toMatchObject({ message: { text: "爆了" }, sure: false });
+        const after = [line("b", "吃面"), line("a", "战个痛快"), own("这面看着好怪"), line("b", "羡慕"), line("c", "羡慕")];
+        expect(findFollowUp(after, 3, persona)).toMatchObject({ message: { text: "羡慕" }, sure: false });
+    });
+
+    it("is unsure of someone carrying on from their own line to somebody else", () => {
+        const window = [line("b", "看看"), line("a", "哈哈"), own("不理你了"), line("b", "@bob", { mentions: ["bob"] }), line("b", "好恶心")];
+        expect(findFollowUp(window, 3, persona)).toMatchObject({ message: { text: "好恶心" }, sure: false });
+    });
+
+    it("prefers an older line it's sure of to a newer one it isn't", () => {
+        const window = [line("a", "图是假的"), own("庞佐错觉呗"), line("a", "不对吧"), line("c", "[image: a game screenshot]")];
+        expect(findFollowUp(window, 2, persona)).toMatchObject({ message: { text: "不对吧" }, sure: true });
     });
 
     it("lets the moment pass after a few minutes", () => {
         const slept = own("睡了");
-        const window = [slept, line("a", "晚安", { sentAt: slept.sentAt + 6 * 60_000 })];
+        const window = [slept, line("a", "晚安", { sentAt: slept.sentAt + 3 * 60_000 })];
         expect(findFollowUp(window, 1, persona)).toBeUndefined();
     });
 });

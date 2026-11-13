@@ -1,6 +1,6 @@
 import type { TraceEvent } from "../lib/trace.ts";
 
-const GATE_DECISION_KEYS = ["speak", "probability", "addressed", "mode", "slip", "battery", "addressOverruled"];
+const GATE_DECISION_KEYS = ["speak", "probability", "addressed", "followUp", "possibleFollowUp", "mode", "slip", "battery", "addressOverruled"];
 const GATE_FEATURE_KEYS = [
     "addressedToMe",
     "interest",

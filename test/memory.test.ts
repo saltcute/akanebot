@@ -766,6 +766,7 @@ describe("speaking under pressure", () => {
         aimedElsewhere: false,
         named: false,
         followUp: false,
+        possibleFollowUp: false,
         ...overrides,
     });
     const join = (overrides = {}) => decideToSpeak(features({ interest: 0.6 }), PERSONA, false, rng(), context(overrides)).probability;
