@@ -1,6 +1,6 @@
 # Model comparison plan (milestone 7)
 
-**Status:** deferred on 2026-11-08, nothing built yet. Milestones 1 to 6 are done. Results should go in `docs/model-comparison.md`.
+**Status:** deferred on 2026-11-08. The reply replay was built on 2026-11-13 (see below); the rest is still to do. Milestones 1 to 6 are done. Results should go in `docs/model-comparison.md`.
 
 ## Goal
 
@@ -18,6 +18,12 @@ Find out which model should do each job, and whether smaller models under the LL
 - `FakeBackend` for tests, `AnthropicBackend`, and `LlmRegistry` with per-role fallback.
 - `CostMeter` for spend, and `DecisionTrace` for every gate decision.
 - Separate `Embedder` and `SearchBackend` interfaces.
+
+## Reply replay (built 2026-11-13)
+
+With `replay.capture: true`, the runtime keeps each reply request exactly as the model saw it (instructions, transcript with memories and people, state) along with the answer and its token usage. `pnpm replay run` sends captures unchanged to each model under `replay.candidates`, with a spending cap. `pnpm replay rate` shows two answers to the same chat in random order for a blind pick, and `pnpm replay report` gives cost per reply, a per-day projection, length, silence and win rates. The code is in `src/eval/replay.ts` and `src/cli/replay.ts`.
+
+Limits: pictures aren't kept, so replies that saw them are left out unless `--with-pictures` is passed, and then candidates get only the descriptions. The original answer's latency wasn't recorded. A reply is judged on its own, never by what the chat did next.
 
 ## What to build
 

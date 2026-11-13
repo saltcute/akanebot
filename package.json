@@ -11,6 +11,7 @@
     "explain": "node --disable-warning=ExperimentalWarning src/cli/explain.ts",
     "sim": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli/sim.ts",
     "memory": "node --disable-warning=ExperimentalWarning src/cli/memory.ts",
+    "replay": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/cli/replay.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
