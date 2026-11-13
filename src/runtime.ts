@@ -765,7 +765,10 @@ export class Runtime {
 
     /** The live window, or what a restart would restore if nobody has spoken here yet. */
     #visibleMessages(key: string): readonly ChatMessage[] {
-        return this.#channels.get(key)?.perception.window() ?? this.memory.restoreWindow(key, this.#options.timing.windowSize);
+        return (
+            this.#channels.get(key)?.perception.window() ??
+            this.memory.restoreWindow(key, this.#options.timing.windowSize).map(({ message }) => message)
+        );
     }
 
     /** For the operator only. These stay out of the window, so the agent never sees words it didn't send. */
@@ -803,8 +806,10 @@ export class Runtime {
     }
 
     #admit(channel: Channel, message: ChatMessage): void {
-        this.memory.recordIncoming(message);
-        if (this.#state.isMuted(channelKey(channel.ref))) channel.perception.recordSeen(message);
+        // Muted means she doesn't speak. The chat still goes by on her screen, and she reads it when she next looks.
+        const muted = this.#state.isMuted(channelKey(channel.ref));
+        this.memory.recordIncoming(message, muted);
+        if (muted) channel.perception.recordOverheard(message);
         else {
             channel.perception.ingest(message);
             if (isAddressed(message)) this.#routine?.noteMention();
@@ -923,8 +928,9 @@ export class Runtime {
             onReady: (candidate) => this.body.offer(candidate),
         });
         const channel: Channel = { ref: { platform: ref.platform, channelId: ref.channelId }, adapter, perception, names: new Map() };
-        for (const message of this.memory.restoreWindow(key, this.#options.timing.windowSize)) {
-            perception.recordSeen(message);
+        for (const { message, attended } of this.memory.restoreWindow(key, this.#options.timing.windowSize)) {
+            if (attended) perception.recordSeen(message);
+            else perception.recordOverheard(message);
             if (!message.isSelf && !message.sender.isBot) channel.names.set(userKey(message), message.sender.displayName);
         }
         this.#channels.set(key, channel);
@@ -973,7 +979,8 @@ export class Runtime {
         }
 
         const newMessages = window.slice(firstNewIndex).filter((message) => isSpoken(message) && !message.isSelf);
-        this.memory.markAttended(key, newMessages);
+        // What went by while she was muted sits above the new messages, so she has now read that too.
+        this.memory.markAttended(key, [...perception.takeOverheard(window), ...newMessages]);
         this.#considerKeeping(key, looked);
         const features: GateFeatures = overruleMisaddress(gate.data, newMessages, persona);
         const now = clock.now();

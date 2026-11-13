@@ -486,6 +486,33 @@ describe("control plane", () => {
             expect(sentTexts(adapter).at(-1)).toBe("哈哈");
         });
 
+        it("reads what went by while muted the next time she looks, so it can become a memory", async () => {
+            const { adapter, memoryStore, settle } = await setup({});
+            adapter.say("admin", "/akanebot mute 5");
+            await settle();
+            adapter.say("alice", "说过的话");
+            await settle();
+            expect(memoryStore.openSegment("cli:group")).toEqual([]);
+            await settle(5 * 60_000);
+            adapter.say("alice", "现在呢");
+            await settle();
+            expect(memoryStore.openSegment("cli:group").map((message) => message.text)).toEqual(["说过的话", "现在呢", "哈哈"]);
+        });
+
+        it("still has what went by while muted after a restart", async () => {
+            const memoryStore = new MemoryStore(":memory:");
+            const first = await setup({ memoryStore });
+            first.adapter.say("admin", "/akanebot mute 5");
+            await first.settle();
+            first.adapter.say("alice", "说过的话");
+            await first.settle();
+            const second = await setup({ memoryStore, startAt: 10 * 60_000 });
+            second.adapter.say("alice", "现在呢");
+            await second.settle();
+            expect(chatLines(second.reply.calls[0]?.transcript)).toEqual(["alice: 说过的话", "--- new ---", "alice: 现在呢"]);
+            expect(memoryStore.openSegment("cli:group").map((message) => message.text)).toEqual(["说过的话", "现在呢", "哈哈"]);
+        });
+
         it("can be lifted early", async () => {
             const { adapter, settle } = await setup({});
             adapter.say("admin", "/akanebot mute");

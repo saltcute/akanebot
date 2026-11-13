@@ -54,7 +54,7 @@ export class ChannelPerception {
     #clock: Clock;
     #timing: PerceptionTiming;
     #onReady: (candidate: Candidate) => void;
-    #window: { message: ChatMessage; seq: number }[] = [];
+    #window: { message: ChatMessage; seq: number; overheard?: boolean }[] = [];
     #seq = 0;
     #settledSeq = 0;
     #firstUnhandledAt: number | undefined;
@@ -89,6 +89,21 @@ export class ChannelPerception {
     recordSeen(message: ChatMessage): void {
         this.#window.push({ message, seq: 0 });
         if (this.#window.length > this.#timing.windowSize) this.#window.shift();
+    }
+
+    /** For a muted channel: context like {@link recordSeen}, but she hasn't read it yet. She does the next time she looks here. */
+    recordOverheard(message: ChatMessage): void {
+        this.recordSeen(message);
+        const entry = this.#window.at(-1);
+        if (entry) entry.overheard = true;
+    }
+
+    /** What went by while muted and was in the transcript she just read. Reading it once is enough, so each message is handed over one time. */
+    takeOverheard(read: readonly ChatMessage[]): ChatMessage[] {
+        const readIds = new Set(read.map((message) => message.messageId));
+        const overheard = this.#window.filter((entry) => entry.overheard && readIds.has(entry.message.messageId));
+        for (const entry of overheard) entry.overheard = false;
+        return overheard.map((entry) => entry.message);
     }
 
     /** Swaps a message's text for a richer version, such as once a picture has been looked at. */

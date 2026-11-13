@@ -170,6 +170,7 @@ export type RelationshipRow = {
 
 type LoggedRow = {
     attended: number;
+    seen: number;
     segmented: number;
     channel: string;
     messageId: string;
@@ -203,6 +204,7 @@ CREATE TABLE IF NOT EXISTS rawLog (
     channel TEXT NOT NULL, messageId TEXT NOT NULL, userKey TEXT NOT NULL, displayName TEXT NOT NULL,
     isSelf INTEGER NOT NULL, text TEXT NOT NULL, sentAt INTEGER NOT NULL,
     attended INTEGER NOT NULL DEFAULT 0, segmented INTEGER NOT NULL DEFAULT 0, reactions TEXT, replyTo TEXT, accountName TEXT,
+    seen INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (channel, messageId)
 );
 CREATE INDEX IF NOT EXISTS rawLogOpen ON rawLog (channel, attended, segmented, sentAt);
@@ -269,9 +271,10 @@ export class MemoryStore {
         this.#db.close();
     }
 
-    logMessage(message: ChatMessage, userKey: string, attended: boolean): void {
+    /** `seen` is for a message that went by while she was muted: on her screen, but not read until she next looks. */
+    logMessage(message: ChatMessage, userKey: string, attended: boolean, seen = false): void {
         this.#run(
-            "INSERT OR IGNORE INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended, replyTo, accountName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO rawLog (channel, messageId, userKey, displayName, isSelf, text, sentAt, attended, replyTo, accountName, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             channelKey(message),
             message.messageId,
             userKey,
@@ -282,6 +285,7 @@ export class MemoryStore {
             attended ? 1 : 0,
             message.replyTo ? JSON.stringify(message.replyTo) : null,
             message.sender.accountName ?? null,
+            seen ? 1 : 0,
         );
     }
 
@@ -291,6 +295,7 @@ export class MemoryStore {
         if (!columns.includes("reactions")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN reactions TEXT");
         if (!columns.includes("replyTo")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN replyTo TEXT");
         if (!columns.includes("accountName")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN accountName TEXT");
+        if (!columns.includes("seen")) this.#db.exec("ALTER TABLE rawLog ADD COLUMN seen INTEGER NOT NULL DEFAULT 0");
         // Everything remembered before sharing existed stays in its own group.
         const memoryColumns = this.#all<{ name: string }>("PRAGMA table_info(memories)").map((column) => column.name);
         if (!memoryColumns.includes("reach")) this.#db.exec("ALTER TABLE memories ADD COLUMN reach TEXT NOT NULL DEFAULT 'group'");
@@ -318,6 +323,16 @@ export class MemoryStore {
             limit,
         );
         return rows.reverse().map(toChatMessage);
+    }
+
+    /** What was on her screen: what she read, plus what went by while she was muted and is still waiting to be read. */
+    recentVisible(channel: string, limit: number): { message: ChatMessage; attended: boolean }[] {
+        const rows = this.#all<LoggedRow>(
+            "SELECT * FROM rawLog WHERE channel = ? AND (attended = 1 OR seen = 1) ORDER BY sentAt DESC, rowid DESC LIMIT ?",
+            channel,
+            limit,
+        );
+        return rows.reverse().map((row) => ({ message: toChatMessage(row), attended: row.attended === 1 }));
     }
 
     /** Attended messages not yet digested into memories, oldest first. */

@@ -93,8 +93,9 @@ export class MemorySystem {
     }
 
     /** Reaches the raw log whether or not the agent ever reads it. */
-    recordIncoming(message: ChatMessage): void {
-        this.store.logMessage(message, userKey(message), false);
+    /** `seen` marks one that went by while she was muted, which she reads the next time she looks at the chat. */
+    recordIncoming(message: ChatMessage, seen = false): void {
+        this.store.logMessage(message, userKey(message), false, seen);
     }
 
     recordOwn(message: ChatMessage): void {
@@ -111,8 +112,8 @@ export class MemorySystem {
     }
 
     /** What the agent can still see of recent talk after a restart. */
-    restoreWindow(channel: string, limit: number): ChatMessage[] {
-        return this.store.recentAttended(channel, limit);
+    restoreWindow(channel: string, limit: number): { message: ChatMessage; attended: boolean }[] {
+        return this.store.recentVisible(channel, limit);
     }
 
     async recall(channel: string, newMessages: readonly ChatMessage[]): Promise<{ block: string; recalled: Recalled[] }> {
