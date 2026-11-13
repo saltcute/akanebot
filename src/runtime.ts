@@ -1338,10 +1338,9 @@ export class Runtime {
         const firstNew = perception.firstNewIndex();
         if (firstNew === undefined) return [];
         const looked: LookedAt[] = [];
-        const unread = perception
-            .window()
-            .slice(firstNew)
-            .filter((message) => !message.isSelf);
+        // What went by while she was muted is being read for the first time too, so its pictures count, under the same cap.
+        const overheard = new Set(perception.overheard());
+        const unread = perception.window().filter((message, index) => (index >= firstNew || overheard.has(message)) && !message.isSelf);
         const withImages = unread
             .filter((message) => message.images?.length && message.text.includes(IMAGE_PLACEHOLDER))
             .slice(-MAX_IMAGES_PER_ATTEND);

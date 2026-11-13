@@ -499,6 +499,20 @@ describe("control plane", () => {
             expect(memoryStore.openSegment("cli:group").map((message) => message.text)).toEqual(["说过的话", "现在呢", "哈哈"]);
         });
 
+        it("looks at a picture that went by while muted, once she reads the chat again", async () => {
+            const { adapter, vision, reply, settle } = await setup({});
+            adapter.say("admin", "/akanebot mute 5");
+            await settle();
+            adapter.say("alice", "看 [img:https://example.com/cat.png]");
+            await settle();
+            expect(vision.calls).toHaveLength(0);
+            await settle(5 * 60_000);
+            adapter.say("alice", "现在呢");
+            await settle();
+            expect(vision.calls).toHaveLength(1);
+            expect(reply.calls[0]?.transcript).toContain("一只橘猫");
+        });
+
         it("still has what went by while muted after a restart", async () => {
             const memoryStore = new MemoryStore(":memory:");
             const first = await setup({ memoryStore });

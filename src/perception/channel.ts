@@ -98,6 +98,11 @@ export class ChannelPerception {
         if (entry) entry.overheard = true;
     }
 
+    /** What went by while muted and hasn't been read yet. */
+    overheard(): ChatMessage[] {
+        return this.#window.filter((entry) => entry.overheard).map((entry) => entry.message);
+    }
+
     /** What went by while muted and was in the transcript she just read. Reading it once is enough, so each message is handed over one time. */
     takeOverheard(read: readonly ChatMessage[]): ChatMessage[] {
         const readIds = new Set(read.map((message) => message.messageId));
