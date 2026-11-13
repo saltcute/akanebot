@@ -136,6 +136,7 @@ const runtime = new Runtime({
         rawRetentionMs: config.memory.rawRetentionDays * 86_400_000,
         dailyWritesPerUser: config.memory.dailyWritesPerUser,
     },
+    captureReplies: config.replay.capture,
 });
 
 const stopWatching = watchPersona({

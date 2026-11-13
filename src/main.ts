@@ -108,6 +108,7 @@ const runtime = new Runtime({
         youtubeApiKey: process.env.YOUTUBE_API_KEY || undefined,
     }),
     fetchImage: fetchOverHttp,
+    captureReplies: config.replay.capture,
 });
 
 const stopWatching = watchPersona({

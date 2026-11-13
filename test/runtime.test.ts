@@ -51,6 +51,7 @@ type Setup = {
     pictureMaxEdge?: number;
     replyIsBlind?: boolean;
     links?: LinkOpener;
+    captureReplies?: boolean;
 };
 
 const EMPTY_EXTRACTION = JSON.stringify({ summary: "", importance: 0, emotion: 0, memories: [] });
@@ -154,6 +155,7 @@ async function setup(options: Setup) {
         ...(options.picturesPerReply === undefined ? {} : { picturesPerReply: options.picturesPerReply }),
         ...(options.pictureMaxEdge === undefined ? {} : { pictureMaxEdge: options.pictureMaxEdge }),
         ...(options.links ? { links: options.links } : {}),
+        ...(options.captureReplies ? { captureReplies: true } : {}),
     });
     await runtime.start();
     const settle = async (ms = 1000) => {
@@ -2655,5 +2657,62 @@ describe("opening links", () => {
         adapter.say("carol", "好");
         await settle();
         expect(chatLines(reply.calls.at(-1)?.transcript)).toContain("bob (edited): 算了");
+    });
+});
+
+describe("capturing replies for replay", () => {
+    it("keeps the request and answer exactly as the model had them", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, reply, settle } = await setup({ memoryStore, captureReplies: true });
+        adapter.say("alice", "今天好冷");
+        await settle();
+        const [capture] = memoryStore.replyCaptures();
+        expect(capture).toMatchObject({ channel: "cli:group", role: "reply", model: "m", sawPictures: false, output: { messages: ["哈哈"] } });
+        expect(capture?.stable).toBe(reply.calls[0]?.stable);
+        expect(capture?.transcript).toBe(reply.calls[0]?.transcript);
+        expect(capture?.volatile).toBe(reply.calls[0]?.volatile);
+    });
+
+    it("keeps nothing unless it's turned on", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, settle } = await setup({ memoryStore });
+        adapter.say("alice", "今天好冷");
+        await settle();
+        expect(memoryStore.replyCaptures()).toEqual([]);
+    });
+
+    it("never keeps a reply that saw a forward", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, settle } = await setup({ memoryStore, captureReplies: true });
+        adapter.say("alice", "看这个", "group", undefined, [{ by: "carol", text: "转发的话" }]);
+        await settle();
+        expect(memoryStore.replyCaptures()).toEqual([]);
+    });
+
+    it("forgets a capture when a message it shows is taken back or edited", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, settle } = await setup({ memoryStore, captureReplies: true });
+        const id = adapter.say("bob", "我家地址是");
+        await settle();
+        expect(memoryStore.replyCaptures()).toHaveLength(1);
+        adapter.remove([id]);
+        expect(memoryStore.replyCaptures()).toEqual([]);
+
+        const later = adapter.say("bob", "明天见");
+        await settle();
+        expect(memoryStore.replyCaptures()).toHaveLength(1);
+        memoryStore.updateText("cli:group", later, "后天见");
+        expect(memoryStore.replyCaptures()).toEqual([]);
+    });
+
+    it("forgets a capture when anyone in it is forgotten", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { adapter, runtime, settle } = await setup({ memoryStore, captureReplies: true });
+        adapter.say("bob", "在吗");
+        adapter.say("alice", "今天好冷");
+        await settle();
+        expect(memoryStore.replyCaptures()).toHaveLength(1);
+        runtime.forgetPerson("cli:bob");
+        expect(memoryStore.replyCaptures()).toEqual([]);
     });
 });

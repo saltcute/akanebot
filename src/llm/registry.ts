@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { LlmBackend, LlmRequest, LlmResult, Usage } from "./backend.ts";
 
-const roleTargetSchema = z.strictObject({
+export const roleTargetSchema = z.strictObject({
     backend: z.string().min(1),
     model: z.string().min(1),
     options: z.record(z.string(), z.unknown()).default({}),
@@ -74,6 +74,11 @@ export class LlmRegistry {
         const result = await this.#call(role, target, request);
         if (result.kind !== "error" || !target.fallback || request.signal.aborted) return result;
         return this.#call(role, target.fallback, request);
+    }
+
+    /** The model a role asks first. */
+    modelOf(role: string): string | undefined {
+        return this.#config.roles[role]?.model;
     }
 
     /** Whether a role can be shown pictures, whichever of its models ends up answering. */

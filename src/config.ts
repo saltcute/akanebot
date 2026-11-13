@@ -5,7 +5,7 @@ import { peopleSchema } from "./control/people.ts";
 import { pricesSchema } from "./lib/cost.ts";
 import { linksConfigSchema } from "./links/config.ts";
 import { embedderConfigSchema } from "./llm/embedder.ts";
-import { llmConfigSchema } from "./llm/registry.ts";
+import { llmConfigSchema, roleTargetSchema } from "./llm/registry.ts";
 import { searchConfigSchema } from "./llm/search.ts";
 import { pacingSchema } from "./reply/timing.ts";
 
@@ -78,6 +78,17 @@ export const appConfigSchema = z.strictObject({
     dailyBudgetUsd: z.number().positive(),
     /** A OneBot 11 server such as NapCat, needed for any `qq` group. Its access token, if any, comes from ONEBOT_TOKEN. */
     qq: z.strictObject({ url: z.string().min(1) }).optional(),
+    /** Keeps reply requests so `pnpm replay` can try other models on them. Captures stay in the memory database and are forgotten with what they show. */
+    replay: z
+        .strictObject({
+            capture: z.boolean().default(false),
+            /** Each is tried in place of the reply model, by the name given here. "original" means what she actually said. */
+            candidates: z
+                .record(z.string(), roleTargetSchema)
+                .refine((candidates) => !("original" in candidates), { message: '"original" is reserved for what she actually said' })
+                .default({}),
+        })
+        .prefault({}),
     /** The operator's web UI. The login token comes from AKANEBOT_WEB_TOKEN, or is generated at startup. */
     web: z
         .strictObject({

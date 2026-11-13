@@ -4,6 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { ChatMessage, MessageReaction, Platform, QuotedMessage } from "../adapters/types.ts";
 import { channelKey } from "../adapters/types.ts";
 import { NO_LINKS, type People } from "../control/people.ts";
+import type { Usage } from "../llm/backend.ts";
 
 export type MemoryKind = "episode" | "fact" | "claim" | "event";
 
@@ -113,6 +114,50 @@ export type LoggedSpeaker = { userKey: string; displayName: string; accountName:
 /** The name one account currently goes by in one group. */
 export type GroupName = { userKey: string; channel: string; displayName: string };
 
+/**
+ * One reply request exactly as the model saw it, kept so other models can be tried on it later.
+ * `refs` is everything its text shows, so forgetting any of them deletes the whole capture.
+ */
+export type ReplyCaptureDraft = {
+    channel: string;
+    messageId: string | undefined;
+    capturedAt: number;
+    role: string;
+    model: string;
+    stable: string;
+    transcript: string;
+    volatile: string;
+    maxOutput: number;
+    /** The answer came from a request with pictures attached, which a replay can't repeat. */
+    sawPictures: boolean;
+    output: unknown;
+    usage: Usage;
+    refs: { messages: readonly string[]; users: readonly string[]; memories: readonly number[]; images: readonly number[] };
+};
+export type ReplyCapture = Omit<ReplyCaptureDraft, "refs"> & { id: number };
+
+export type ReplayOutput = {
+    captureId: number;
+    candidate: string;
+    model: string;
+    result: "ok" | "refused" | "truncated" | "error";
+    output: unknown;
+    usage: Usage | undefined;
+    latencyMs: number;
+    ranAt: number;
+};
+
+/** `winner` is one of the two, or "tie". */
+export type ReplayRating = { captureId: number; first: string; second: string; winner: string; ratedAt: number };
+
+type ReplyCaptureRow = Omit<ReplyCapture, "sawPictures" | "output" | "usage" | "messageId"> & {
+    messageId: string | null;
+    sawPictures: number;
+    output: string;
+    usage: string;
+};
+type ReplayOutputRow = Omit<ReplayOutput, "output" | "usage"> & { output: string | null; usage: string | null };
+
 export type RelationshipRow = {
     channel: string;
     userKey: string;
@@ -186,6 +231,25 @@ CREATE TABLE IF NOT EXISTS savedImages (
 );
 CREATE INDEX IF NOT EXISTS savedImagesUser ON savedImages (userKey, savedAt);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS replyCaptures (
+    id INTEGER PRIMARY KEY, channel TEXT NOT NULL, messageId TEXT, capturedAt INTEGER NOT NULL, role TEXT NOT NULL, model TEXT NOT NULL,
+    stable TEXT NOT NULL, transcript TEXT NOT NULL, volatile TEXT NOT NULL, maxOutput INTEGER NOT NULL, sawPictures INTEGER NOT NULL,
+    output TEXT NOT NULL, usage TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS replyCaptureRefs (
+    captureId INTEGER NOT NULL REFERENCES replyCaptures (id) ON DELETE CASCADE, kind TEXT NOT NULL, ref TEXT NOT NULL,
+    PRIMARY KEY (captureId, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS replyCaptureRefsByRef ON replyCaptureRefs (kind, ref);
+CREATE TABLE IF NOT EXISTS replayOutputs (
+    captureId INTEGER NOT NULL REFERENCES replyCaptures (id) ON DELETE CASCADE, candidate TEXT NOT NULL, model TEXT NOT NULL,
+    result TEXT NOT NULL, output TEXT, usage TEXT, latencyMs INTEGER NOT NULL, ranAt INTEGER NOT NULL,
+    PRIMARY KEY (captureId, candidate)
+);
+CREATE TABLE IF NOT EXISTS replayRatings (
+    id INTEGER PRIMARY KEY, captureId INTEGER NOT NULL REFERENCES replyCaptures (id) ON DELETE CASCADE,
+    first TEXT NOT NULL, second TEXT NOT NULL, winner TEXT NOT NULL, ratedAt INTEGER NOT NULL
+);
 `;
 
 /** All persistent memory. The raw log in here is for tooling and extraction, and is never shown to the agent directly. */
@@ -240,6 +304,7 @@ export class MemoryStore {
 
     updateText(channel: string, messageId: string, text: string): void {
         this.#run("UPDATE rawLog SET text = ? WHERE channel = ? AND messageId = ?", text, channel, messageId);
+        this.#dropCaptures("message", messageRef(channel, messageId));
     }
 
     markAttended(channel: string, messageIds: readonly string[]): void {
@@ -299,7 +364,9 @@ export class MemoryStore {
 
     /** Also clears the text quoted in replies to it. Memory sources stay, because forgetting and write quotas rely on them. False if it wasn't logged. */
     deleteLogged(channel: string, messageId: string): boolean {
+        this.#dropCaptures("message", messageRef(channel, messageId));
         this.#run("DELETE FROM savedImages WHERE scope = ? AND messageId = ?", channel, messageId);
+        this.#dropCapturesOfDeletedImages();
         const { changes } = this.#run("DELETE FROM rawLog WHERE channel = ? AND messageId = ?", channel, messageId);
         if (changes === 0) return false;
         this.#run("UPDATE rawLog SET replyTo = NULL WHERE channel = ? AND json_extract(replyTo, '$.messageId') = ?", channel, messageId);
@@ -500,6 +567,7 @@ export class MemoryStore {
         this.#run("UPDATE memories SET supersededBy = NULL WHERE supersededBy = ?", id);
         this.#run("DELETE FROM memorySources WHERE memoryId = ?", id);
         this.#run("DELETE FROM memories WHERE id = ?", id);
+        this.#dropCaptures("memory", String(id));
     }
 
     /** Removes everything derived from a person, including shared summaries they contributed to. Returns how many memories went. */
@@ -512,7 +580,9 @@ export class MemoryStore {
             this.#removeReactionsBy(account);
             this.#run("DELETE FROM relationships WHERE userKey = ?", account);
             this.#run("DELETE FROM savedImages WHERE userKey = ?", account);
+            this.#dropCaptures("user", account);
         }
+        this.#dropCapturesOfDeletedImages();
         return ids.size;
     }
 
@@ -589,6 +659,7 @@ export class MemoryStore {
 
     purgeRawBefore(cutoff: number): void {
         this.#run("DELETE FROM rawLog WHERE sentAt < ? AND (segmented = 1 OR attended = 0)", cutoff);
+        this.#run("DELETE FROM replyCaptures WHERE capturedAt < ?", cutoff);
     }
 
     getRelationship(channel: string, user: string): RelationshipRow | undefined {
@@ -750,6 +821,7 @@ export class MemoryStore {
     }
 
     deleteSavedImage(id: number): boolean {
+        this.#dropCaptures("image", String(id));
         return this.#run("DELETE FROM savedImages WHERE id = ?", id).changes > 0;
     }
 
@@ -761,7 +833,97 @@ export class MemoryStore {
             )`,
             maxKept,
         );
+        this.#dropCapturesOfDeletedImages();
         return Number(changes);
+    }
+
+    captureReply(draft: ReplyCaptureDraft): number {
+        const { lastInsertRowid } = this.#run(
+            `INSERT INTO replyCaptures (channel, messageId, capturedAt, role, model, stable, transcript, volatile, maxOutput, sawPictures, output, usage)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            draft.channel,
+            draft.messageId ?? null,
+            draft.capturedAt,
+            draft.role,
+            draft.model,
+            draft.stable,
+            draft.transcript,
+            draft.volatile,
+            draft.maxOutput,
+            draft.sawPictures ? 1 : 0,
+            JSON.stringify(draft.output),
+            JSON.stringify(draft.usage),
+        );
+        const id = Number(lastInsertRowid);
+        const refs = [
+            ...draft.refs.messages.map((messageId) => ["message", messageRef(draft.channel, messageId)] as const),
+            ...draft.refs.users.map((user) => ["user", user] as const),
+            ...draft.refs.memories.map((memory) => ["memory", String(memory)] as const),
+            ...draft.refs.images.map((image) => ["image", String(image)] as const),
+        ];
+        for (const [kind, ref] of refs) this.#run("INSERT OR IGNORE INTO replyCaptureRefs (captureId, kind, ref) VALUES (?, ?, ?)", id, kind, ref);
+        return id;
+    }
+
+    replyCaptures(): ReplyCapture[] {
+        return this.#all<ReplyCaptureRow>("SELECT * FROM replyCaptures ORDER BY id").map((row) => ({
+            ...row,
+            messageId: row.messageId ?? undefined,
+            sawPictures: row.sawPictures === 1,
+            output: JSON.parse(row.output) as unknown,
+            usage: JSON.parse(row.usage) as Usage,
+        }));
+    }
+
+    /** Running a candidate again on the same capture replaces its answer. */
+    saveReplayOutput(output: ReplayOutput): void {
+        this.#run(
+            `INSERT OR REPLACE INTO replayOutputs (captureId, candidate, model, result, output, usage, latencyMs, ranAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            output.captureId,
+            output.candidate,
+            output.model,
+            output.result,
+            output.output === undefined ? null : JSON.stringify(output.output),
+            output.usage ? JSON.stringify(output.usage) : null,
+            output.latencyMs,
+            output.ranAt,
+        );
+    }
+
+    replayOutputs(): ReplayOutput[] {
+        return this.#all<ReplayOutputRow>("SELECT * FROM replayOutputs ORDER BY captureId, candidate").map((row) => ({
+            ...row,
+            output: row.output === null ? undefined : (JSON.parse(row.output) as unknown),
+            usage: row.usage === null ? undefined : (JSON.parse(row.usage) as Usage),
+        }));
+    }
+
+    saveReplayRating(rating: ReplayRating): void {
+        this.#run(
+            "INSERT INTO replayRatings (captureId, first, second, winner, ratedAt) VALUES (?, ?, ?, ?, ?)",
+            rating.captureId,
+            rating.first,
+            rating.second,
+            rating.winner,
+            rating.ratedAt,
+        );
+    }
+
+    replayRatings(): ReplayRating[] {
+        return this.#all<ReplayRating>("SELECT captureId, first, second, winner, ratedAt FROM replayRatings ORDER BY id");
+    }
+
+    #dropCaptures(kind: string, ref: string): void {
+        this.#run("DELETE FROM replyCaptures WHERE id IN (SELECT captureId FROM replyCaptureRefs WHERE kind = ? AND ref = ?)", kind, ref);
+    }
+
+    /** A capture that offered a picture goes with it, however the picture went. */
+    #dropCapturesOfDeletedImages(): void {
+        this.#run(
+            `DELETE FROM replyCaptures WHERE id IN (
+                SELECT captureId FROM replyCaptureRefs WHERE kind = 'image' AND ref NOT IN (SELECT CAST(id AS TEXT) FROM savedImages)
+            )`,
+        );
     }
 
     getMeta(key: string): string | undefined {
@@ -816,6 +978,10 @@ function toLoggedMessage(row: LoggedRow): LoggedMessage {
         sentAt: row.sentAt,
         quoted: quote ? { senderName: quote.by, text: quote.text } : undefined,
     };
+}
+
+function messageRef(channel: string, messageId: string): string {
+    return `${channel}\0${messageId}`;
 }
 
 function toChatMessage(row: LoggedRow): ChatMessage {

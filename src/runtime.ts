@@ -56,7 +56,7 @@ import { type LinkOpener, openChance, pickLink } from "./links/open.ts";
 import type { Embedder } from "./llm/embedder.ts";
 import type { LlmRegistry } from "./llm/registry.ts";
 import type { SearchBackend } from "./llm/search.ts";
-import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore, SavedImageQuery, SavedImageView } from "./memory/store.ts";
+import type { LoggedMessage, LogQuery, MemoryStats, MemoryStore, ReplyCaptureDraft, SavedImageQuery, SavedImageView } from "./memory/store.ts";
 import { type MemorySettings, MemorySystem } from "./memory/system.ts";
 import {
     ADDRESSED_PRIORITY,
@@ -128,6 +128,8 @@ export type RuntimeOptions = {
     fetchImage?: ImageFetcher;
     /** Without it she never opens links, whatever the persona says. */
     links?: LinkOpener;
+    /** Keeps each reply request and answer in the memory database, for trying other models on later. */
+    captureReplies?: boolean;
 };
 
 /** One message inside a forward, as the operator sees it. The name is only what the forward claims. */
@@ -1086,6 +1088,7 @@ export class Runtime {
         const pictures = llm.canSee(role) ? choosePictures(window, firstNewIndex, features.aboutPicture, this.#options.picturesPerReply ?? 0) : [];
         const context = `${renderPeople(people)}${memories}${lookup}${renderSavedImages(offered)}`;
         const volatile = renderReplyState({ now, persona, features, competence, addressed: talkedTo, situation });
+        const stable = renderReplyInstructions(persona);
         const fetched = await Promise.all(pictures.map(({ image }) => this.#fetched(channel.ref.platform, image)));
         const write = (shown: readonly ShownPicture[]) => {
             const numbers = new Map(shown.map((picture) => [picture.messageId, picture.number]));
@@ -1096,7 +1099,7 @@ export class Runtime {
                 return { url: image.url, label, ...(inline ? { inline } : {}) };
             });
             return llm.generate(role, {
-                stable: renderReplyInstructions(persona),
+                stable,
                 transcript: `${context}${shown.length > 0 ? renderTranscript(window, persona, firstNewIndex, numbers) : transcript}`,
                 volatile,
                 ...(images.length > 0 ? { images } : {}),
@@ -1106,6 +1109,7 @@ export class Runtime {
             });
         };
         let result = await write(pictures);
+        let sawPictures = pictures.length > 0;
         if (pictures.length > 0) {
             trace.record("reply.pictures", { channel: key, ...idField, detail: { shown: pictures.length, result: result.kind } });
             const rejected = result.kind === "refused" || (result.kind === "error" && !result.retryable);
@@ -1113,6 +1117,7 @@ export class Runtime {
                 // A picture may be what it choked on, such as a link that has expired. She answers from the descriptions and doesn't try those again.
                 perception.forgetSeenImages(pictures.map((picture) => picture.messageId));
                 result = await write([]);
+                sawPictures = false;
             }
         }
         if (result.kind !== "ok" || !result.data) {
@@ -1120,6 +1125,20 @@ export class Runtime {
             trace.record("reply.silent", { channel: key, ...idField, detail: describeFailure(result) });
             if (!lease.signal.aborted) this.#alert("reply_failed", { channel: key, ...describeFailure(result) });
             return;
+        }
+        if (this.#options.captureReplies) {
+            this.#captureReply(key, messageId, window, {
+                role,
+                stable,
+                transcript: `${context}${transcript}`,
+                volatile,
+                maxOutput: technical ? TECHNICAL_MAX_OUTPUT : REPLY_MAX_OUTPUT,
+                sawPictures,
+                output: result.data,
+                usage: result.usage,
+                memories: recalled.map(({ memory }) => memory.id),
+                images: offered.map(({ id }) => id),
+            });
         }
 
         const bursts = toBursts(result.data.messages, lowBattery ? 1 : undefined);
@@ -1178,6 +1197,38 @@ export class Runtime {
      * The roll comes first, so most replies cost nothing extra. The model only picks among the few it's shown.
      * Being asked skips the wait between pictures, since the battery and the send guards already stop her being farmed for them.
      */
+    /** A forward is never saved, so a reply that saw one isn't kept either. */
+    #captureReply(
+        key: string,
+        messageId: string | undefined,
+        window: readonly ChatMessage[],
+        request: Omit<ReplyCaptureDraft, "channel" | "messageId" | "capturedAt" | "model" | "refs"> & {
+            memories: readonly number[];
+            images: readonly number[];
+        },
+    ): void {
+        if (window.some((message) => message.forwarded)) return;
+        const { memories, images, ...captured } = request;
+        const messages = window.flatMap((message) => [
+            message.messageId,
+            ...(message.replyTo ? [message.replyTo.messageId] : []),
+            ...(message.groupEvent?.quotes ? [message.groupEvent.quotes] : []),
+        ]);
+        const users = window.flatMap((message) => [
+            ...(message.groupEvent ? message.groupEvent.involves : [userKey(message)]),
+            ...(message.replyTo ? [message.replyTo.byUser] : []),
+            ...(message.reactions ?? []).map((reaction) => reaction.byUser),
+        ]);
+        this.memory.store.captureReply({
+            ...captured,
+            channel: key,
+            messageId,
+            capturedAt: this.#options.clock.now(),
+            model: this.#options.llm.modelOf(request.role) ?? "",
+            refs: { messages, users, memories, images },
+        });
+    }
+
     async #offerImages(channel: Channel, newMessages: readonly ChatMessage[], now: number, state: OfferState): Promise<ImageOffer> {
         const { trace } = this.#options;
         const key = channelKey(channel.ref);
