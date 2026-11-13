@@ -157,36 +157,43 @@ function describeSegment({ type, data }: Segment, selfId: string, { selfName, na
         case "forward":
             return "[forwarded messages]";
         case "json":
-            return shareCard(jsonCardParts(asText(data.data)));
         case "xml":
-            return shareCard(xmlCardParts(asText(data.data)));
+            return shareCard(readCard({ type, data })?.parts ?? []);
         default:
             return "";
     }
 }
 
-/** Where a share card links to, by name only: the address itself stays out of the text, so it can't be pasted back. */
-function cardHost(url: string): string | undefined {
+type Card = { parts: (string | undefined)[]; link: string | undefined };
+
+/** A card's address, if it's one a browser would open. */
+function webLink(url: string): URL | undefined {
     try {
-        const { protocol, hostname } = new URL(url);
-        return protocol === "http:" || protocol === "https:" ? hostname.replace(/^www\./, "") : undefined;
+        const parsed = new URL(url);
+        return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : undefined;
     } catch {
         return undefined;
     }
+}
+
+/** Where a share card links to goes in the text by name only, so the address can't be pasted back. `cardLink` carries the rest. */
+function withLink(parts: (string | undefined)[], url: string): Card {
+    const link = webLink(url);
+    return { parts: [...parts, link?.hostname.replace(/^www\./, "")], link: link?.href };
 }
 
 /**
  * Reads QQ's Ark JSON, the shape behind shared videos, articles and mini-programs. Each kind keeps its fields under a different key in `meta`.
  * The prompt is what QQ itself shows in a chat list, as in "[QQ小程序]哔哩哔哩".
  */
-function jsonCardParts(raw: string): (string | undefined)[] {
+function jsonCard(raw: string): Card {
     let card: unknown;
     try {
         card = JSON.parse(raw);
     } catch {
-        return [];
+        return { parts: [], link: undefined };
     }
-    if (typeof card !== "object" || card === null) return [];
+    if (typeof card !== "object" || card === null) return { parts: [], link: undefined };
     const { prompt, meta } = card as { prompt?: unknown; meta?: unknown };
     const detail =
         typeof meta === "object" && meta !== null ? Object.values(meta).find((value) => typeof value === "object" && value !== null) : undefined;
@@ -194,7 +201,7 @@ function jsonCardParts(raw: string): (string | undefined)[] {
     const title = asText(fields.title);
     const desc = asText(fields.desc);
     const link = asText(fields.jumpUrl) || asText(fields.qqdocurl) || asText(fields.url);
-    return [asText(fields.tag), title, desc, title || desc ? undefined : asText(prompt), cardHost(link)];
+    return withLink([asText(fields.tag), title, desc, title || desc ? undefined : asText(prompt)], link);
 }
 
 function xmlField(raw: string, pattern: RegExp): string {
@@ -202,10 +209,18 @@ function xmlField(raw: string, pattern: RegExp): string {
 }
 
 /** The older XML cards, which hold the same things as attributes and elements. */
-function xmlCardParts(raw: string): (string | undefined)[] {
+function xmlCard(raw: string): Card {
     const title = xmlField(raw, /<title[^>]*>([^<]*)<\/title>/);
     const summary = xmlField(raw, /<summary[^>]*>([^<]*)<\/summary>/);
-    return [title, summary, title || summary ? undefined : xmlField(raw, /\bbrief="([^"]*)"/), cardHost(xmlField(raw, /\burl="([^"]*)"/))];
+    // Only `&amp;` is common in an address, and the rest would spoil one anyway.
+    const url = (/\burl="([^"]*)"/.exec(raw)?.[1] ?? "").replaceAll("&amp;", "&");
+    return withLink([title, summary, title || summary ? undefined : xmlField(raw, /\bbrief="([^"]*)"/)], url);
+}
+
+function readCard({ type, data }: Segment): Card | undefined {
+    if (type === "json") return jsonCard(asText(data.data));
+    if (type === "xml") return xmlCard(asText(data.data));
+    return undefined;
 }
 
 /** Flattened and stripped of brackets like a Discord card, so nothing in it can close the placeholder it sits in. */
@@ -306,6 +321,7 @@ export function toChatMessage(
     const sentAt = event.time * 1000;
     const mentions = mentionedOthers(event.message, event.self_id, lookup.names);
     const forwarded = toForwardedLines(event.message.find(({ type }) => type === "forward")?.data.content, event.self_id, lookup);
+    const cardLink = event.message.map(readCard).find((card) => card?.link)?.link;
     return {
         platform: "qq",
         channelId: event.group_id,
@@ -325,6 +341,7 @@ export function toChatMessage(
         repliesToSelf: replyTo !== "" && repliedToSelf(replyTo),
         ...(replyTo ? { replyToMessageId: replyTo } : {}),
         ...(forwarded.length > 0 ? { forwarded } : {}),
+        ...(cardLink ? { cardLink } : {}),
         isSelf: event.user_id === event.self_id,
         isBacklog: now - sentAt > MAX_LIVE_AGE_MS,
     };

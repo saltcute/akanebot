@@ -98,8 +98,8 @@ export class ChannelPerception {
         }
     }
 
-    /** Swaps a link for what she read there. Kept with the message, so an edit that leaves the link in can put it back. */
-    noteLink(messageId: string, text: string, readLink: { url: string; caption: string }): void {
+    /** Swaps a link, or the card it was behind, for what she read there. Kept with the message, so an edit that leaves it in can put it back. */
+    noteLink(messageId: string, text: string, readLink: NonNullable<ChatMessage["readLink"]>): void {
         for (const entry of this.#window) {
             if (entry.message.messageId === messageId) entry.message = { ...entry.message, text, readLink };
         }

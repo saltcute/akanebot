@@ -100,14 +100,19 @@ export type ChatMessage = ChannelRef & {
     replyToMessageId?: string;
     /** Absent on a reply if the platform couldn't say what it was replying to, or that person has been forgotten. */
     replyTo?: QuotedMessage;
+    /**
+     * Where a shared card leads, when the card shows in the text without its address. She can open it as she would a link in the text,
+     * and what she reads takes the card's place. Never put in the text, so it can't be pasted back.
+     */
+    cardLink?: string;
     /** What a forward carried, in the order it was sent. Absent if it couldn't be opened. Never saved, and not the sender's own words. */
     forwarded?: readonly ForwardedLine[];
     /** The agent's own account sent this. */
     isSelf: boolean;
     /** Delivered as history (for example after a reconnect) rather than live. */
     isBacklog: boolean;
-    /** A link the agent opened while reading this, and what took its place in the text. Never set by an adapter. */
-    readLink?: { url: string; caption: string };
+    /** What the agent read at a link while reading this, and the text it took the place of: the link, or the card it was behind. Never set by an adapter. */
+    readLink?: { replaced: string; caption: string };
     /** Its author changed it after sending. Never set by an adapter. */
     edited?: boolean;
     /** This line is a platform event rather than something someone said. `involves` is who it's about, as user keys, and `quotes` is the message it shows part of. */

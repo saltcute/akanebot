@@ -305,6 +305,16 @@ describe("pickLink", () => {
         expect(pickLink([message(`${"x".repeat(300)} https://a.example`)], 280, never)).toBeUndefined();
     });
 
+    it("opens a card's own link in place of the card, but not one past what she reads or that she's told to skip", () => {
+        const card = message("看 [card: 标题 · zhihu.com] 哈", { cardLink: "https://www.zhihu.com/q/1" });
+        expect(pickLink([card], 280, never)?.link).toEqual({ url: "https://www.zhihu.com/q/1", start: 2, end: 24 });
+        const both = message("https://a.example [card: A]", { cardLink: "https://b.example" });
+        expect(pickLink([both], 280, never)?.link.url).toBe("https://b.example");
+        expect(pickLink([both], 280, (url) => url === "https://b.example")).toBeUndefined();
+        expect(pickLink([message(`${"x".repeat(300)} [card: A]`, { cardLink: "https://b.example" })], 280, never)).toBeUndefined();
+        expect(pickLink([message("[link: b.example · A]", { cardLink: "https://b.example" })], 280, never)).toBeUndefined();
+    });
+
     it("passes over links it's told to skip", () => {
         const both = message("https://a.example https://b.example");
         expect(pickLink([both], 280, (url) => url === "https://a.example")?.link.url).toBe("https://b.example");

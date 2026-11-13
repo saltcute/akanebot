@@ -6,6 +6,7 @@ import {
     OneBotAdapter,
     type OneBotSocket,
     toChatMessage,
+    toForwardedLines,
     toGroupEvent,
     toQuotedMessage,
     toReactionEvents,
@@ -191,6 +192,23 @@ describe("OneBot message mapping", () => {
         expect(map([{ type: "json", data: { data: JSON.stringify(news) } }])?.text).toBe("[card: 知乎 · 标题 · zhihu.com]");
         const xml = '<msg brief="[分享]b" url="https://example.com/a"><item><title>T</title><summary>S &amp; more</summary></item></msg>';
         expect(map([{ type: "xml", data: { data: xml } }])?.text).toBe("[card: T · S more · example.com]");
+    });
+
+    it("keeps a card's address on the message for her to open, never in the text, a quote or a forward", () => {
+        const news = { meta: { news: { title: "标题", jumpUrl: "https://www.zhihu.com/q/1?a=1" } } };
+        const card = { type: "json", data: { data: JSON.stringify(news) } };
+        expect(map([card])).toMatchObject({ text: "[card: 标题 · zhihu.com]", cardLink: "https://www.zhihu.com/q/1?a=1" });
+        const xml = '<msg url="https://example.com/a?x=1&amp;y=2"><item><title>T</title></item></msg>';
+        expect(map([{ type: "xml", data: { data: xml } }])?.cardLink).toBe("https://example.com/a?x=1&y=2");
+        expect(map([{ type: "json", data: { data: JSON.stringify({ meta: { x: { title: "T", jumpUrl: "mqqapi://x" } } }) } }])).not.toHaveProperty(
+            "cardLink",
+        );
+        expect(map([text("hi")])).not.toHaveProperty("cardLink");
+        const lookup = { selfName: "小茜", names: new Map<string, string>() };
+        const quoted = toQuotedMessage({ user_id: 7, message: [card], sender: {} }, "1", { self_id: "100", group_id: "200" }, lookup);
+        expect(JSON.stringify(quoted)).not.toContain("zhihu.com/q");
+        const lines = toForwardedLines([{ user_id: 7, message: [card], sender: {} }], "100", lookup);
+        expect(JSON.stringify(lines)).not.toContain("zhihu.com/q");
     });
 
     it("falls back to what QQ shows in the chat list, and to a bare placeholder", () => {

@@ -873,9 +873,11 @@ export class Runtime {
         if (current.images?.length || message.text.includes(IMAGE_PLACEHOLDER)) return;
         // A link she opened stays opened while it's still there. An edit that takes it out takes what she read with it.
         const { readLink } = current;
-        const at = readLink ? message.text.indexOf(readLink.url) : -1;
+        const at = readLink ? message.text.indexOf(readLink.replaced) : -1;
         const text =
-            readLink && at >= 0 ? `${message.text.slice(0, at)}${readLink.caption}${message.text.slice(at + readLink.url.length)}` : message.text;
+            readLink && at >= 0
+                ? `${message.text.slice(0, at)}${readLink.caption}${message.text.slice(at + readLink.replaced.length)}`
+                : message.text;
         if (text === current.text) return;
         perception.revise(message.messageId, text, message.mentions, edited);
         if (readLink && at >= 0) perception.noteLink(message.messageId, text, readLink);
@@ -1464,7 +1466,7 @@ export class Runtime {
 
     /**
      * At most one link per read, and only if curiosity strikes and today's share has room. Runs before the gate, so what she read
-     * there is part of the chat she decides on. The result replaces the link in the text, so deletion and opt-out cover it too.
+     * there is part of the chat she decides on. The result replaces the link, or the card it was behind, so deletion and opt-out cover it too.
      */
     async #maybeOpenLink(key: string, perception: ChannelPerception, persona: Persona, signal: AbortSignal): Promise<void> {
         const { links: opener, trace, clock } = this.#options;
@@ -1499,13 +1501,14 @@ export class Runtime {
         }
         // It may have been taken back, edited, or its author may have opted out while the page was loading.
         const current = perception.window().find((candidate) => candidate.messageId === message.messageId);
-        const at = current?.text.indexOf(link.url) ?? -1;
+        const replaced = message.text.slice(link.start, link.end);
+        const at = current?.text.indexOf(replaced) ?? -1;
         if (!current || at < 0 || this.#state.isOptedOut(user)) {
             trace.record("link.skipped", { ...idFields, detail: { reason: "gone", site: outcome.site } });
             return;
         }
-        const text = `${current.text.slice(0, at)}${outcome.caption}${current.text.slice(at + link.url.length)}`;
-        perception.noteLink(message.messageId, text, { url: link.url, caption: outcome.caption });
+        const text = `${current.text.slice(0, at)}${outcome.caption}${current.text.slice(at + replaced.length)}`;
+        perception.noteLink(message.messageId, text, { replaced, caption: outcome.caption });
         this.memory.store.updateText(key, message.messageId, text);
         trace.record("link.read", { ...idFields, detail: { site: outcome.site, layer: outcome.layer } });
     }

@@ -76,7 +76,14 @@ export class CliAdapter implements Adapter {
             ...[...rawText.matchAll(/\[img:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1] }] : [])),
             ...[...rawText.matchAll(/\[gif:(\S+?)\]/g)].flatMap((match) => (match[1] ? [{ url: match[1], link: match[1] }] : [])),
         ];
-        const text = rawText.replace(/\[(?:img|gif):\S+?\]/g, "[image]");
+        // "[share:https://... title]" stands in for a QQ card, which shows its title and site but keeps its address out of the text.
+        const share = /\[share:(\S+?)(?: ([^\]]*))?\]/.exec(rawText);
+        const cardLink = share?.[1] && URL.canParse(share[1]) ? share[1] : undefined;
+        const text = rawText
+            .replace(/\[(?:img|gif):\S+?\]/g, "[image]")
+            .replace(/\[share:(\S+?)(?: ([^\]]*))?\]/g, (_match, url: string, title = "") =>
+                URL.canParse(url) ? `[card: ${[title.trim(), new URL(url).hostname].filter(Boolean).join(" · ")}]` : "[shared card]",
+            );
         const mentioned = [...text.matchAll(MENTION_TOKEN)].flatMap((match) => (match[1] ? [match[1]] : []));
         const mentionsSelf = mentioned.some((name) => this.#ownNames.has(name.toLowerCase()));
         const mentions = mentioned.filter((name) => !this.#ownNames.has(name.toLowerCase()));
@@ -93,6 +100,7 @@ export class CliAdapter implements Adapter {
             repliesToSelf: false,
             ...(replyTo ? { replyTo, replyToMessageId: replyTo.messageId } : {}),
             ...(forwarded ? { forwarded } : {}),
+            ...(cardLink ? { cardLink } : {}),
             isSelf: false,
             isBacklog: false,
         };

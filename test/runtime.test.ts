@@ -2565,6 +2565,19 @@ describe("opening links", () => {
         expect(JSON.stringify(trace.all())).not.toContain("news.example");
     });
 
+    it("opens the link inside a shared card, and what she read takes the card's place", async () => {
+        const memoryStore = new MemoryStore(":memory:");
+        const { links, read } = opener();
+        const { adapter, gate, reply, trace, settle } = await setup({ links, memoryStore, persona: curious });
+        adapter.say("bob", "[share:https://news.example/a?utm_source=qq 新闻]");
+        await settle();
+        expect(read).toEqual(["https://news.example/a"]);
+        expect(chatLines(gate.calls[0]?.transcript)).toEqual([`bob: ${caption}`]);
+        expect(chatLines(reply.calls[0]?.transcript)).toEqual([`bob: ${caption}`]);
+        expect(memoryStore.recentAttended("cli:group", 10).map((message) => message.text)).toContain(caption);
+        expect(JSON.stringify(trace.all())).not.toContain("news.example/a");
+    });
+
     it("opens nothing without curiosity, past the daily cap, or when it's already been seen", async () => {
         const incurious = opener();
         const first = await setup({ links: incurious.links, persona: { links: { curiosity: 0, dailyCap: 10 } } });

@@ -8,7 +8,7 @@ import { type FoundLink, findLinks } from "./find.ts";
 import { type LinkRejection, vetLink } from "./hygiene.ts";
 import { readKnownSite, type SiteFetcher, type SiteOptions } from "./sites.ts";
 
-/** A platform's own preview, which she's already seen, so there's nothing more to open. */
+/** A platform's own preview, which she's already seen, so there's nothing more to open unless it hid where it leads. */
 const CARD_PREFIX = "[card:";
 
 /** Which way a page was read, for the trace: a known site's own API, the vendor's fetch, or the bot itself. */
@@ -38,9 +38,17 @@ export function openChance(curiosity: number, context: { addressed: boolean; low
     return context.lowBattery ? base / 2 : base;
 }
 
+/** A shared card that kept its address out of the text. Opening it replaces the whole card, which sits where `link` says. */
+function cardLink(message: ChatMessage): FoundLink | undefined {
+    const start = message.text.indexOf(CARD_PREFIX);
+    const end = message.text.indexOf("]", start) + 1;
+    return message.cardLink && start >= 0 && end > 0 ? { url: message.cardLink, start, end } : undefined;
+}
+
 /**
  * The one link she might open while reading these messages: newest first, someone sending her one before anything else.
  * Only links in what she actually read count, so one past her reading limit, in a forward or in a quote never does.
+ * A card's own link is one too, but a link already under a card isn't, because the card showed what's there.
  */
 export function pickLink(
     messages: readonly ChatMessage[],
@@ -48,17 +56,14 @@ export function pickLink(
     skip: (url: string, message: ChatMessage) => boolean,
 ): LinkCandidate | undefined {
     const eligible = messages.filter(
-        (message) =>
-            !message.isSelf &&
-            !message.isBacklog &&
-            !message.groupEvent &&
-            !message.text.includes(CARD_PREFIX) &&
-            !message.text.includes(LINK_CAPTION_PREFIX),
+        (message) => !message.isSelf && !message.isBacklog && !message.groupEvent && !message.text.includes(LINK_CAPTION_PREFIX),
     );
     const newestFirst = eligible.toReversed();
     const sorted = [...newestFirst.filter(isAddressed), ...newestFirst.filter((message) => !isAddressed(message))];
     for (const message of sorted) {
-        const link = findLinks(message.text).find(({ url, start }) => start < maxCharsRead && !skip(url, message));
+        const card = cardLink(message);
+        const links = card ? [card] : message.text.includes(CARD_PREFIX) ? [] : findLinks(message.text);
+        const link = links.find(({ url, start }) => start < maxCharsRead && !skip(url, message));
         if (link) return { message, link };
     }
     return undefined;
