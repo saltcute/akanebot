@@ -255,6 +255,12 @@ describe("noticing it's being talked to", () => {
         expect(findFollowUp([own("拉啊"), line("a", "对", { replyTo: quote })], 1, persona)).toBeUndefined();
     });
 
+    it("doesn't take a line after an echo or a reaction as an answer to it", () => {
+        expect(findFollowUp([line("a", "草"), line("b", "草"), own("草"), line("c", "笑死 这群人")], 3, persona)).toBeUndefined();
+        expect(findFollowUp([line("a", "图是假的"), own('[reacted 笑哭 to a: "图是假的"]'), line("b", "哈哈哈")], 2, persona)).toBeUndefined();
+        expect(findFollowUp([line("a", "图是假的"), own("[sent a picture: a cat shrugging]"), line("a", "哈哈哈")], 2, persona)?.text).toBe("哈哈哈");
+    });
+
     it("lets the moment pass after a few minutes", () => {
         const slept = own("睡了");
         const window = [slept, line("a", "晚安", { sentAt: slept.sentAt + 6 * 60_000 })];

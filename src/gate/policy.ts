@@ -2,6 +2,7 @@ import type { ChatMessage } from "../adapters/types.ts";
 import type { Rng } from "../lib/rng.ts";
 import { isAddressed } from "../perception/channel.ts";
 import type { Persona } from "../persona/schema.ts";
+import { OWN_REACTION_PREFIX } from "../reply/prompt.ts";
 import type { GateFeatures } from "./features.ts";
 
 export type SpeakDecision = { speak: boolean; probability: number; addressed: boolean; followUp: boolean };
@@ -73,6 +74,13 @@ export function findNamer(newMessages: readonly ChatMessage[], persona: Persona)
     return newMessages.findLast((message) => !message.sender.isBot && names.some((name) => withoutMentions(message).includes(name)));
 }
 
+/** A reaction isn't a message, and a line she echoed was the chain's, not hers, so nobody is answering either. */
+function canBeAnswered(window: readonly ChatMessage[], own: ChatMessage): boolean {
+    if (own.text.startsWith(OWN_REACTION_PREFIX)) return false;
+    const previous = window.slice(0, window.indexOf(own)).findLast((message) => !message.groupEvent);
+    return previous?.text.trim() !== own.text.trim();
+}
+
 /**
  * A new line that comes straight after one of hers, from someone not talking to anyone else, is almost always an answer to it.
  * The gate model reads "嘿嘿" or "不对吧" as undirected, so code settles it from who spoke last.
@@ -86,7 +94,13 @@ export function findFollowUp(window: readonly ChatMessage[], firstNewIndex: numb
             .slice(0, index)
             .findLast((earlier) => !earlier.groupEvent && (earlier.isSelf || earlier.sender.id !== message.sender.id));
         // Saying her line back is carrying on a chain she joined, not answering her.
-        if (before?.isSelf && message.sentAt - before.sentAt <= FOLLOW_UP_MS && message.text.trim() !== before.text.trim()) return message;
+        if (
+            before?.isSelf &&
+            canBeAnswered(window, before) &&
+            message.sentAt - before.sentAt <= FOLLOW_UP_MS &&
+            message.text.trim() !== before.text.trim()
+        )
+            return message;
     }
     return undefined;
 }
